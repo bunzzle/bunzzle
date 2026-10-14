@@ -3,16 +3,10 @@ import type { Migration } from "./migrations/index.ts";
 import { migrations as defaultMigrations } from "./migrations/index.ts";
 
 export interface OpenOptions {
-  /** File path, or ":memory:" for tests. */
   path: string;
   migrations?: readonly Migration[];
 }
 
-/**
- * Opens the database with the durability settings the crash-safety design relies on
- * (architecture.md §4): WAL so readers never block the writer, and synchronous=FULL so
- * a committed transaction survives power loss, not just a process crash.
- */
 export function openDatabase({ path, migrations = defaultMigrations }: OpenOptions): Database {
   const db = new Database(path, { create: true, strict: true });
   db.run("PRAGMA journal_mode = WAL");
@@ -23,7 +17,6 @@ export function openDatabase({ path, migrations = defaultMigrations }: OpenOptio
   return db;
 }
 
-/** Applies pending migrations in order, each in its own transaction. Returns versions applied. */
 export function migrate(db: Database, migrations: readonly Migration[]): number[] {
   assertOrdered(migrations);
   db.run(`CREATE TABLE IF NOT EXISTS schema_migrations (

@@ -17,7 +17,6 @@ export interface Config {
 
 export class ConfigError extends Error {}
 
-/** Reads configuration from environment variables. Throws ConfigError listing every problem. */
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   const parsed = schema.safeParse(env);
   if (!parsed.success) {

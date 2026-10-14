@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
-// Starts the real CLI as a child process, the same way a user would run it.
 const MAIN = `${import.meta.dir}/../../src/cli/main.ts`;
 const dataDir = `${Bun.env["TMPDIR"] ?? "/tmp"}/bunzzle-serve-${crypto.randomUUID()}`;
 

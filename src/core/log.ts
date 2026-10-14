@@ -10,7 +10,6 @@ export interface Logger {
   child(fields: Record<string, unknown>): Logger;
 }
 
-/** JSON-lines logger: one object per line on stdout (errors on stderr). */
 export function createLogger(
   level: LogLevel = "info",
   base: Record<string, unknown> = {},

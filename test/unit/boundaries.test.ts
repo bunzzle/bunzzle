@@ -1,6 +1,3 @@
-// Architecture rules enforced as tests (architecture.md §13, §14):
-//  1. src/core never imports from outside src/core (keeps the framework extractable).
-//  2. Nothing in src imports node: modules (Bun built-ins only).
 import { describe, expect, test } from "bun:test";
 
 const SRC = `${import.meta.dir}/../../src`;
