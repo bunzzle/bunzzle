@@ -16,7 +16,9 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "check": "bun run typecheck && bun run lint && bun test",
-    "build": "bun build src/cli/main.ts --compile --minify --sourcemap --outfile dist/bunzzle"
+    "build": "bun build src/cli/main.ts --compile --minify --sourcemap --outfile dist/bunzzle",
+    "bench": "bun bench/queue.ts",
+    "crash": "bun bench/crash.ts"
   },
   "engines": {
     "bun": ">=1.4.0"

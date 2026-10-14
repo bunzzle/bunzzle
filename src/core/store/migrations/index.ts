@@ -1,6 +1,5 @@
-// SQL files are imported as text so `bun build --compile` embeds them in the binary.
-// Add new migrations to the end of this list; never edit or reorder an applied one.
 import init from "./0001_init.sql" with { type: "text" };
+import queue from "./0002_queue.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -8,4 +7,7 @@ export interface Migration {
   sql: string;
 }
 
-export const migrations: readonly Migration[] = [{ version: 1, name: "init", sql: init }];
+export const migrations: readonly Migration[] = [
+  { version: 1, name: "init", sql: init },
+  { version: 2, name: "queue", sql: queue },
+];
