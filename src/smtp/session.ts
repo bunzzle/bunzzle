@@ -42,7 +42,16 @@ export const DEFAULT_TIMEOUTS: Timeouts = {
   quit: 5_000,
 };
 
-export type Phase = "connect" | "greeting" | "ehlo" | "starttls" | "mail" | "rcpt" | "data" | "dot";
+export type Phase =
+  | "dns"
+  | "connect"
+  | "greeting"
+  | "ehlo"
+  | "starttls"
+  | "mail"
+  | "rcpt"
+  | "data"
+  | "dot";
 
 export type RecipientStatus = "delivered" | "deferred" | "bounced" | "unknown";
 
@@ -90,6 +99,7 @@ class Abort extends Error {
     readonly tryNext: boolean,
     message: string,
     readonly reply: Reply | null = null,
+    readonly enhanced: string | null = null,
   ) {
     super(message);
   }
@@ -100,6 +110,13 @@ const enc = new TextEncoder();
 function statusOf(code: number): RecipientStatus {
   if (code >= 200 && code < 300) return "delivered";
   return code >= 500 ? "bounced" : "deferred";
+}
+
+function networkStatus(phase: Phase, err: SmtpError): string {
+  if (phase === "connect") return "4.4.1";
+  if (err.kind === "tls") return "4.7.5";
+  if (err.kind === "protocol") return "4.5.0";
+  return "4.4.2";
 }
 
 export function dotStuff(data: string): string {
@@ -203,6 +220,8 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
             "deferred",
             true,
             `TLS required (${input.policy.rule}) but the certificate of ${input.host} is not valid: ${info.error}`,
+            null,
+            "4.7.5",
           );
         }
         phase = "ehlo";
@@ -215,6 +234,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
           true,
           `TLS required but STARTTLS was refused: ${replyText(r)}`,
           r,
+          "4.7.10",
         );
       }
     } else if (input.policy.required) {
@@ -223,6 +243,8 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
         "deferred",
         true,
         `TLS required (${input.policy.rule}) but ${input.host} does not offer STARTTLS`,
+        null,
+        "4.7.10",
       );
     }
     result.extensions = [...ext.keys()];
@@ -235,6 +257,8 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
         "bounced",
         false,
         `message is ${size} bytes, server accepts at most ${maxSize}`,
+        null,
+        "5.3.4",
       );
     }
     if (input.smtpUtf8 && !ext.has("SMTPUTF8")) {
@@ -243,6 +267,8 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
         "bounced",
         false,
         `${input.host} does not support SMTPUTF8 addresses`,
+        null,
+        "5.6.7",
       );
     }
 
@@ -254,7 +280,8 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
     const pipelining = ext.has("PIPELINING");
 
     const rejectMail = (r: Reply) => {
-      if (r.code !== 250) throw new Abort("mail", statusOf(r.code), r.code < 500, replyText(r), r);
+      if (r.code !== 250)
+        throw new Abort("mail", statusOf(r.code), r.code === 421, replyText(r), r);
     };
     const rcptReplies: Reply[] = [];
     let dataReply: Reply | null = null;
@@ -341,7 +368,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
     if (err instanceof Abort) abort = err;
     else if (err instanceof SmtpError) {
       if (err.kind === "tls") tls.error = err.message;
-      abort = new Abort(phase, "deferred", true, err.message);
+      abort = new Abort(phase, "deferred", true, err.message, null, networkStatus(phase, err));
     } else throw err;
     result.phase = abort.phase;
     result.error = abort.message;
@@ -353,7 +380,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
         status: abort.status,
         phase: abort.phase,
         code: abort.reply?.code ?? null,
-        enhanced: abort.reply?.enhanced ?? null,
+        enhanced: abort.reply?.enhanced ?? abort.enhanced,
         reply: abort.message,
       });
     }

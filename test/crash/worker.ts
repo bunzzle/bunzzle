@@ -22,7 +22,14 @@ const scheduler = new Scheduler({
   leaseMs: 10_000,
   reconcileMs: 0,
   sweepMs: 50,
-  retry: { maxAttempts: 100, maxAgeMs: 3_600_000, baseDelayMs: 2, maxDelayMs: 50 },
+  retry: {
+    stepsMs: [2, 10, 25],
+    everyMs: 50,
+    jitter: 1,
+    maxAttempts: 100,
+    maxAgeMs: 3_600_000,
+    noticesMs: [],
+  },
   handle: async (job, signal) => {
     let res: Response;
     try {

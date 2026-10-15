@@ -2,7 +2,7 @@
 
 Self-hosted email delivery engine for apps. Delivers straight to your recipients' mail servers. Bun-native, one binary, one SQLite file.
 
-> Status: early development (milestone M3). Not usable in production yet.
+> Status: early development (milestone M4). Not usable in production yet.
 
 ## Develop
 
@@ -33,6 +33,8 @@ Configuration is read from environment variables. See `.env.example`.
 ```
 
 The sending server needs outbound port 25 and a reverse DNS (PTR) record matching `--ehlo`.
+
+When a recipient is refused, `send` says what the reply means: who it is about (the recipient, the message, your sender setup, your IP's reputation or the sending rate) and what Bunzzle does about it. Only a permanent problem with the recipient's own address ever marks it for suppression.
 
 ## License
 

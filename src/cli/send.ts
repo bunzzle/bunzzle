@@ -5,6 +5,7 @@ import { cachingResolver } from "../dns/cache.ts";
 import { createResolver, parseServer, systemServers } from "../dns/resolver.ts";
 import { type Address, domainOf, parseAddress } from "../mime/address.ts";
 import { buildMessage, newMessageId } from "../mime/builder.ts";
+import { type Classification, classify } from "../replies/classify.ts";
 import { type DeliveryReport, deliver } from "../smtp/deliver.ts";
 import { parseArgs, UsageError } from "./args.ts";
 
@@ -31,6 +32,36 @@ async function readText(path: string | undefined): Promise<string | undefined> {
   return f.text();
 }
 
+const MEANING: Record<string, string> = {
+  retry: "will retry",
+  "fail-recipient": "recipient failed",
+  "fail-message": "message failed",
+  "pause-path": "path paused",
+  "slow-path": "path slowed",
+};
+
+function verdictsOf(r: DeliveryReport): Classification[] {
+  const atDot = r.recipients.filter((x) => x.phase === "dot").length;
+  return r.recipients.map((x) =>
+    classify({
+      phase: x.phase,
+      code: x.code,
+      enhanced: x.enhanced,
+      text: x.reply,
+      provider: r.provider?.id ?? null,
+      shared: x.phase === "dot" && atDot > 1,
+    }),
+  );
+}
+
+function describeVerdict(v: Classification): string {
+  if (v.action === "done") return "";
+  const parts = [v.class, `about the ${v.scope}`, MEANING[v.action] ?? v.action];
+  if (v.suppress) parts.push("would suppress");
+  if (v.alert) parts.push("operator alert");
+  return `  [${parts.join(", ")}]`;
+}
+
 function describeReport(r: DeliveryReport): string {
   const lines: string[] = [];
   const d = r.destination;
@@ -53,9 +84,11 @@ function describeReport(r: DeliveryReport): string {
       if (s.error) lines.push(`    stopped at ${s.phase}: ${s.error}`);
     }
   }
-  for (const rc of r.recipients) {
-    lines.push(`  ${rc.status.padEnd(9)} ${rc.address}  ${rc.reply}`);
-  }
+  const verdicts = verdictsOf(r);
+  r.recipients.forEach((rc, i) => {
+    const v = verdicts[i] as Classification;
+    lines.push(`  ${rc.status.padEnd(9)} ${rc.address}  ${rc.reply}${describeVerdict(v)}`);
+  });
   return lines.join("\n");
 }
 
@@ -170,7 +203,14 @@ export async function sendCommand(argv: string[], config: Config): Promise<numbe
   );
 
   if (args.flags.has("json")) {
-    console.log(JSON.stringify({ messageId: built.messageId, reports }, null, 2));
+    const withVerdicts = reports.map((r) => {
+      const verdicts = verdictsOf(r);
+      return {
+        ...r,
+        recipients: r.recipients.map((x, i) => ({ ...x, verdict: verdicts[i] })),
+      };
+    });
+    console.log(JSON.stringify({ messageId: built.messageId, reports: withVerdicts }, null, 2));
   } else {
     console.log(
       `Message-ID: ${built.messageId}${keyFile ? "  (DKIM: RSA + Ed25519)" : "  (unsigned)"}\n`,

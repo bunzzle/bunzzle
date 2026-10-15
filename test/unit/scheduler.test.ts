@@ -7,7 +7,14 @@ import { Writer } from "../../src/core/store/writer.ts";
 import { type JobHandler, Scheduler } from "../../src/scheduler/scheduler.ts";
 
 const quietLog = createLogger("error", {}, () => {});
-const fastRetry = { maxAttempts: 5, maxAgeMs: 60_000, baseDelayMs: 1, maxDelayMs: 5 };
+const fastRetry = {
+  stepsMs: [1, 2],
+  everyMs: 5,
+  jitter: 0,
+  maxAttempts: 5,
+  maxAgeMs: 60_000,
+  noticesMs: [],
+};
 
 function setup(handle: JobHandler, extra: { concurrency?: number; leaseMs?: number } = {}) {
   const db = openDatabase({ path: ":memory:" });

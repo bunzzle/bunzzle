@@ -51,29 +51,40 @@ export function tlsPolicy(requireTls: boolean, provider: Provider | null): TlsPo
 function allRecipients(
   input: DeliveryInput,
   status: RecipientStatus,
-  code: string | null,
+  enhanced: string,
   reply: string,
 ): RecipientResult[] {
   return input.recipients.map((address) => ({
     address,
     status,
-    phase: "connect",
+    phase: "dns",
     code: null,
-    enhanced: code,
+    enhanced,
     reply,
   }));
+}
+
+export function findDestination(domain: string, opts: DeliveryOptions): Promise<Destination> {
+  return lookupDestination(domain, {
+    resolver: opts.resolver,
+    ...(opts.families ? { families: opts.families } : {}),
+    ...(opts.allowPrivate ? { allowPrivate: true } : {}),
+    ...(opts.ownAddresses ? { ownAddresses: opts.ownAddresses } : {}),
+  });
 }
 
 export async function deliver(
   input: DeliveryInput,
   opts: DeliveryOptions,
 ): Promise<DeliveryReport> {
-  const destination = await lookupDestination(input.domain, {
-    resolver: opts.resolver,
-    ...(opts.families ? { families: opts.families } : {}),
-    ...(opts.allowPrivate ? { allowPrivate: true } : {}),
-    ...(opts.ownAddresses ? { ownAddresses: opts.ownAddresses } : {}),
-  });
+  return deliverTo(await findDestination(input.domain, opts), input, opts);
+}
+
+export async function deliverTo(
+  destination: Destination,
+  input: DeliveryInput,
+  opts: DeliveryOptions,
+): Promise<DeliveryReport> {
   const report: DeliveryReport = {
     domain: destination.domain,
     destination,
@@ -88,7 +99,7 @@ export async function deliver(
     return report;
   }
   if (destination.kind === "defer") {
-    report.recipients = allRecipients(input, "deferred", null, destination.reason);
+    report.recipients = allRecipients(input, "deferred", "4.4.3", destination.reason);
     return report;
   }
 

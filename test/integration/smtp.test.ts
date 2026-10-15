@@ -92,7 +92,7 @@ describe("SMTP session", () => {
     );
     expect(r.phase).toBe("starttls");
     expect(r.tryNext).toBe(true);
-    expect(r.recipients[0]?.status).toBe("deferred");
+    expect(r.recipients[0]).toMatchObject({ status: "deferred", enhanced: "4.7.5" });
     expect(commandsOf().some((c) => c.startsWith("MAIL"))).toBe(false);
   });
 
@@ -148,6 +148,12 @@ describe("SMTP session", () => {
     expect(r.recipients[0]?.status).toBe("deferred");
   });
 
+  test("other MAIL temporary errors stay with this MX", async () => {
+    const r = await session({ mail: "451 4.3.0 Local error\r\n" });
+    expect(r.tryNext).toBe(false);
+    expect(r.recipients[0]).toMatchObject({ status: "deferred", enhanced: "4.3.0" });
+  });
+
   test("MAIL 550 bounces and stops", async () => {
     const r = await session({ mail: "550 5.7.1 Sender rejected\r\n" });
     expect(r.tryNext).toBe(false);
@@ -186,14 +192,14 @@ describe("SMTP session", () => {
 
   test("message larger than the server's SIZE bounces before MAIL", async () => {
     const r = await session({ extensions: ["SIZE 10", "STARTTLS"] });
-    expect(r.recipients[0]?.status).toBe("bounced");
+    expect(r.recipients[0]).toMatchObject({ status: "bounced", enhanced: "5.3.4" });
     expect(r.error).toContain("at most 10");
     expect(commandsOf().some((c) => c.startsWith("MAIL"))).toBe(false);
   });
 
   test("SMTPUTF8 message to a server without SMTPUTF8 bounces", async () => {
     const r = await session({ extensions: ["STARTTLS"] }, { smtpUtf8: true });
-    expect(r.recipients[0]?.status).toBe("bounced");
+    expect(r.recipients[0]).toMatchObject({ status: "bounced", enhanced: "5.6.7" });
   });
 
   test("SMTPUTF8 message declares it on MAIL FROM", async () => {
@@ -213,6 +219,7 @@ describe("SMTP session", () => {
     const r = await session({ greeting: "" }, { timeouts: { greeting: 300 } });
     expect(r.phase).toBe("greeting");
     expect(r.error).toContain("timed out");
+    expect(r.recipients[0]?.enhanced).toBe("4.4.2");
     expect(Date.now() - started).toBeLessThan(2000);
   });
 
@@ -259,7 +266,7 @@ describe("Bun socket behaviour we depend on", () => {
     mx?.stop();
     const bad = await session({}, { localAddress: "192.0.2.1" });
     expect(bad.phase).toBe("connect");
-    expect(bad.recipients[0]?.status).toBe("deferred");
+    expect(bad.recipients[0]).toMatchObject({ status: "deferred", enhanced: "4.4.1" });
   });
 });
 

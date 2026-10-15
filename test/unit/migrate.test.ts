@@ -54,6 +54,48 @@ describe("migrate", () => {
     expect(db.query("SELECT name FROM sqlite_master WHERE name = 'ok'").get()).toBeNull();
   });
 
+  test("upgrading an M2 queue keeps every job and its state", () => {
+    const db = new Database(":memory:", { strict: true });
+    db.run("PRAGMA foreign_keys = ON");
+    migrate(db, migrations.slice(0, 2));
+    db.run(
+      "INSERT INTO messages (id, type, payload, created_at) VALUES ('m1', 't', '1', 5), ('m2', 't', '2', 6)",
+    );
+    db.run(`INSERT INTO jobs (message_id, state, run_after, attempt, last_error, updated_at)
+            VALUES ('m1', 'ready', 10, 2, 'busy', 7), ('m2', 'unknown', 11, 1, NULL, 8)`);
+    expect(migrate(db, migrations)).toEqual([3]);
+    const rows = db
+      .query<Record<string, unknown>, []>(
+        "SELECT id, message_id, target, state, run_after, attempt, last_error, expires_at, notices FROM jobs ORDER BY id",
+      )
+      .all();
+    expect(rows).toEqual([
+      {
+        id: "m1",
+        message_id: "m1",
+        target: "",
+        state: "ready",
+        run_after: 10,
+        attempt: 2,
+        last_error: "busy",
+        expires_at: null,
+        notices: 0,
+      },
+      {
+        id: "m2",
+        message_id: "m2",
+        target: "",
+        state: "unknown",
+        run_after: 11,
+        attempt: 1,
+        last_error: null,
+        expires_at: null,
+        notices: 0,
+      },
+    ]);
+    expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+
   test("rejects gaps in version numbers", () => {
     const db = new Database(":memory:");
     expect(() => migrate(db, [{ version: 2, name: "x", sql: "SELECT 1" }])).toThrow(/no gaps/);

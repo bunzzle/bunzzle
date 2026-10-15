@@ -146,8 +146,18 @@ describe("bunzzle send", () => {
     ]);
     expect(r.code).toBe(1);
     const out = JSON.parse(r.stdout) as {
-      reports: { recipients: { address: string; status: string }[] }[];
+      reports: {
+        recipients: { address: string; status: string; verdict: { class: string } }[];
+      }[];
     };
+    const classes = Object.fromEntries(
+      out.reports.flatMap((x) => x.recipients).map((x) => [x.address, x.verdict.class]),
+    );
+    expect(classes).toEqual({
+      "you@example.test": "accepted",
+      "nobody@example.test": "user-unknown",
+      "x@nullmx.test": "null-mx",
+    });
     const statuses = Object.fromEntries(
       out.reports.flatMap((x) => x.recipients).map((x) => [x.address, x.status]),
     );
@@ -156,6 +166,26 @@ describe("bunzzle send", () => {
       "nobody@example.test": "bounced",
       "x@nullmx.test": "bounced",
     });
+  });
+
+  test("explains a rejected recipient in plain words", async () => {
+    const r = await cli([
+      "send",
+      "--from",
+      "hello@bunzzle.test",
+      "--to",
+      "nobody@example.test",
+      "--subject",
+      "x",
+      "--text",
+      "x",
+      "--dkim-keys",
+      `${dir}/dkim.json`,
+    ]);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toContain(
+      "bounced   nobody@example.test  550 User unknown  [user-unknown, about the recipient, recipient failed, would suppress]",
+    );
   });
 
   test("refuses to sign for a domain the keys do not belong to", async () => {

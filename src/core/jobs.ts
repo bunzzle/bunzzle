@@ -1,7 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { appendEvent } from "./events.ts";
-import type { Outcome } from "./outcome.ts";
-import { backoff, type RetryPolicy } from "./retry.ts";
+import type { Outcome, Settled } from "./outcome.ts";
+import { type RetryPolicy, retryDelay } from "./retry.ts";
+
+export type { Settled } from "./outcome.ts";
 
 export type JobState = "ready" | "leased" | "unknown" | "done" | "dead";
 
@@ -14,64 +16,110 @@ export interface NewMessage {
   metadata?: Record<string, unknown>;
   priority?: number;
   runAfter?: number;
+  targets?: string[];
+  expiresAt?: number;
+}
+
+export function jobId(messageId: string, target: string): string {
+  return target ? `${messageId}/${target}` : messageId;
 }
 
 export function enqueue(db: Database, m: NewMessage, now: number): string {
   const id = m.id ?? Bun.randomUUIDv7();
+  const targets = m.targets?.length ? [...new Set(m.targets)] : [""];
   db.query<unknown, [string, string, string, string, number]>(
     "INSERT INTO messages (id, type, payload, metadata, created_at) VALUES (?, ?, ?, ?, ?)",
   ).run(id, m.type, JSON.stringify(m.payload), JSON.stringify(m.metadata ?? {}), now);
-  db.query<unknown, [string, number, number, number]>(
-    `INSERT INTO jobs (message_id, state, priority, run_after, updated_at)
-     VALUES (?, 'ready', ?, ?, ?)`,
-  ).run(id, m.priority ?? 0, m.runAfter ?? now, now);
-  appendEvent(db, { messageId: id, kind: "queued", source: SOURCE, at: now });
+  const insert = db.query<unknown, [string, string, string, number, number, number | null, number]>(
+    `INSERT INTO jobs (id, message_id, target, state, priority, run_after, expires_at, updated_at)
+     VALUES (?, ?, ?, 'ready', ?, ?, ?, ?)`,
+  );
+  for (const target of targets) {
+    insert.run(
+      jobId(id, target),
+      id,
+      target,
+      m.priority ?? 0,
+      m.runAfter ?? now,
+      m.expiresAt ?? null,
+      now,
+    );
+  }
+  appendEvent(db, {
+    messageId: id,
+    kind: "queued",
+    source: SOURCE,
+    at: now,
+    ...(m.targets?.length ? { data: { targets } } : {}),
+  });
   return id;
 }
 
 export interface ClaimedJob {
   id: string;
+  messageId: string;
+  target: string;
   type: string;
   payload: unknown;
   metadata: Record<string, unknown>;
   createdAt: number;
+  expiresAt: number | null;
   attempt: number;
+}
+
+interface LeasedRow {
+  id: string;
+  message_id: string;
+  target: string;
+  attempt: number;
+  expires_at: number | null;
 }
 
 export function claim(db: Database, now: number, limit: number, leaseMs: number): ClaimedJob[] {
   if (limit <= 0) return [];
   const leased = db
-    .query<{ message_id: string; attempt: number }, [number, number, number, number]>(
+    .query<LeasedRow, [number, number, number, number]>(
       `UPDATE jobs SET state = 'leased', attempt = attempt + 1, lease_until = ?, updated_at = ?
-       WHERE message_id IN (
-         SELECT message_id FROM jobs
+       WHERE id IN (
+         SELECT id FROM jobs
          WHERE state = 'ready' AND run_after <= ?
          ORDER BY priority, run_after
          LIMIT ?
        )
-       RETURNING message_id, attempt`,
+       RETURNING id, message_id, target, attempt, expires_at`,
     )
     .all(now + leaseMs, now, now, limit);
   if (leased.length === 0) return [];
 
-  const attempts = new Map(leased.map((r) => [r.message_id, r.attempt]));
-  return db
-    .query<
-      { id: string; type: string; payload: string; metadata: string; created_at: number },
-      [string]
-    >(
-      `SELECT id, type, payload, metadata, created_at FROM messages
-       WHERE id IN (SELECT value FROM json_each(?))`,
-    )
-    .all(JSON.stringify([...attempts.keys()]))
-    .map((m) => ({
-      id: m.id,
-      type: m.type,
-      payload: JSON.parse(m.payload),
-      metadata: JSON.parse(m.metadata),
-      createdAt: m.created_at,
-      attempt: attempts.get(m.id) ?? 0,
-    }));
+  const messages = new Map(
+    db
+      .query<
+        { id: string; type: string; payload: string; metadata: string; created_at: number },
+        [string]
+      >(
+        `SELECT id, type, payload, metadata, created_at FROM messages
+         WHERE id IN (SELECT value FROM json_each(?))`,
+      )
+      .all(JSON.stringify([...new Set(leased.map((r) => r.message_id))]))
+      .map((m) => [m.id, m]),
+  );
+  return leased.flatMap((r) => {
+    const m = messages.get(r.message_id);
+    if (!m) return [];
+    return [
+      {
+        id: r.id,
+        messageId: r.message_id,
+        target: r.target,
+        type: m.type,
+        payload: JSON.parse(m.payload),
+        metadata: JSON.parse(m.metadata),
+        createdAt: m.created_at,
+        expiresAt: r.expires_at,
+        attempt: r.attempt,
+      },
+    ];
+  });
 }
 
 export interface SettleOptions {
@@ -80,24 +128,31 @@ export interface SettleOptions {
   random?: () => number;
 }
 
-export type Settled = "done" | "dead" | "retry" | "unknown" | "stale";
+export type SettledJob = Pick<
+  ClaimedJob,
+  "id" | "messageId" | "target" | "attempt" | "createdAt" | "expiresAt"
+>;
 
 export function settle(
   db: Database,
-  job: Pick<ClaimedJob, "id" | "attempt" | "createdAt">,
+  job: SettledJob,
   outcome: Outcome,
   now: number,
   opts: SettleOptions,
 ): Settled {
-  const guard = "WHERE message_id = ? AND attempt = ? AND state IN ('leased', 'unknown')";
+  const guard = "WHERE id = ? AND attempt = ? AND state IN ('leased', 'unknown')";
   const event = (kind: string, data?: Record<string, unknown>) =>
     appendEvent(db, {
-      messageId: job.id,
+      messageId: job.messageId,
       kind,
       source: SOURCE,
       at: now,
-      data: { attempt: job.attempt, ...data },
+      data: { attempt: job.attempt, ...(job.target ? { target: job.target } : {}), ...data },
     });
+  const finish = (settled: Exclude<Settled, "stale">): Settled => {
+    outcome.apply?.(db, settled, now);
+    return settled;
+  };
 
   switch (outcome.kind) {
     case "continue":
@@ -110,41 +165,63 @@ export function settle(
         .run(now, job.id, job.attempt);
       if (r.changes === 0) return "stale";
       event("done");
-      return "done";
+      return finish("done");
     }
-    case "fail":
-      return toDead(db, job, now, `${outcome.code}: ${outcome.reason}`, guard, () =>
+    case "fail": {
+      const dead = toDead(db, job, now, `${outcome.code}: ${outcome.reason}`, guard, () =>
         event("dead", { code: outcome.code, reason: outcome.reason }),
       );
+      return dead === "stale" ? dead : finish(dead);
+    }
     case "defer": {
       const { retry } = opts;
-      if (job.attempt >= retry.maxAttempts || now - job.createdAt >= retry.maxAgeMs) {
-        const why = `retries exhausted after ${job.attempt} attempts: ${outcome.reason}`;
-        return toDead(db, job, now, why, guard, () =>
-          event("dead", { code: "retries_exhausted", reason: outcome.reason }),
+      const expired = job.expiresAt !== null && now >= job.expiresAt;
+      if (expired || job.attempt >= retry.maxAttempts || now - job.createdAt >= retry.maxAgeMs) {
+        const code = expired ? "expired" : "retries_exhausted";
+        const why = expired
+          ? `expired after ${job.attempt} attempts: ${outcome.reason}`
+          : `retries exhausted after ${job.attempt} attempts: ${outcome.reason}`;
+        const dead = toDead(db, job, now, why, guard, () =>
+          event("dead", { code, reason: outcome.reason }),
         );
+        return dead === "stale" ? dead : finish(dead);
       }
-      const delay = outcome.delayMs ?? backoff(retry, job.attempt, opts.random);
-      const r = db
-        .query<unknown, [number, string, number, string, number]>(
-          `UPDATE jobs SET state = 'ready', run_after = ?, last_error = ?, lease_until = NULL,
-             check_after = NULL, updated_at = ? ${guard}`,
+      let delay = outcome.delayMs ?? retryDelay(retry, job.attempt, opts.random);
+      if (job.expiresAt !== null) delay = Math.min(delay, job.expiresAt - now);
+      const row = db
+        .query<{ notices: number }, [string, number]>(
+          `SELECT notices FROM jobs WHERE id = ? AND attempt = ?
+             AND state IN ('leased', 'unknown')`,
         )
-        .run(now + delay, outcome.reason, now, job.id, job.attempt);
-      if (r.changes === 0) return "stale";
+        .get(job.id, job.attempt);
+      if (!row) return "stale";
+      let notices = row.notices;
+      const due: number[] = [];
+      while (
+        notices < retry.noticesMs.length &&
+        now - job.createdAt >= (retry.noticesMs[notices] as number)
+      ) {
+        due.push(retry.noticesMs[notices] as number);
+        notices++;
+      }
+      db.query<unknown, [number, string, number, number, string, number]>(
+        `UPDATE jobs SET state = 'ready', run_after = ?, last_error = ?, notices = ?,
+           lease_until = NULL, check_after = NULL, updated_at = ? ${guard}`,
+      ).run(now + delay, outcome.reason, notices, now, job.id, job.attempt);
       event("deferred", { reason: outcome.reason, delay_ms: delay });
-      return "retry";
+      for (const after of due) event("delayed", { after_ms: after, reason: outcome.reason });
+      return finish("retry");
     }
     case "unknown": {
       const r = db
         .query<unknown, [number, string, number, string, number]>(
           `UPDATE jobs SET state = 'unknown', check_after = ?, last_error = ?, lease_until = NULL,
-             updated_at = ? WHERE message_id = ? AND attempt = ? AND state = 'leased'`,
+             updated_at = ? WHERE id = ? AND attempt = ? AND state = 'leased'`,
         )
         .run(now + opts.reconcileMs, outcome.reason, now, job.id, job.attempt);
       if (r.changes === 0) return "stale";
       event("unknown", { reason: outcome.reason });
-      return "unknown";
+      return finish("unknown");
     }
   }
 }
@@ -156,7 +233,7 @@ function toDead(
   why: string,
   guard: string,
   record: () => void,
-): Settled {
+): "dead" | "stale" {
   const r = db
     .query<unknown, [string, number, string, number]>(
       `UPDATE jobs SET state = 'dead', last_error = ?, lease_until = NULL, check_after = NULL,
@@ -176,6 +253,22 @@ export function recoverAfterCrash(db: Database, now: number, reconcileMs: number
   return markLeasesUnknown(db, Number.MAX_SAFE_INTEGER, now, reconcileMs, "process restarted");
 }
 
+interface ChangedRow {
+  message_id: string;
+  target: string;
+  attempt: number;
+}
+
+function changedEvent(db: Database, r: ChangedRow, kind: string, now: number, extra = {}) {
+  appendEvent(db, {
+    messageId: r.message_id,
+    kind,
+    source: SOURCE,
+    at: now,
+    data: { attempt: r.attempt, ...(r.target ? { target: r.target } : {}), ...extra },
+  });
+}
+
 function markLeasesUnknown(
   db: Database,
   cutoff: number,
@@ -184,42 +277,26 @@ function markLeasesUnknown(
   reason: string,
 ): number {
   const rows = db
-    .query<{ message_id: string; attempt: number }, [number, string, number, number]>(
+    .query<ChangedRow, [number, string, number, number]>(
       `UPDATE jobs SET state = 'unknown', check_after = ?1, last_error = ?2, lease_until = NULL,
          updated_at = ?3
        WHERE state = 'leased' AND lease_until <= ?4
-       RETURNING message_id, attempt`,
+       RETURNING message_id, target, attempt`,
     )
     .all(now + reconcileMs, reason, now, cutoff);
-  for (const r of rows) {
-    appendEvent(db, {
-      messageId: r.message_id,
-      kind: "unknown",
-      source: SOURCE,
-      at: now,
-      data: { attempt: r.attempt, reason },
-    });
-  }
+  for (const r of rows) changedEvent(db, r, "unknown", now, { reason });
   return rows.length;
 }
 
 export function resendUnresolved(db: Database, now: number): number {
   const rows = db
-    .query<{ message_id: string; attempt: number }, [number, number]>(
+    .query<ChangedRow, [number, number]>(
       `UPDATE jobs SET state = 'ready', run_after = ?1, check_after = NULL, updated_at = ?1
        WHERE state = 'unknown' AND check_after <= ?2
-       RETURNING message_id, attempt`,
+       RETURNING message_id, target, attempt`,
     )
     .all(now, now);
-  for (const r of rows) {
-    appendEvent(db, {
-      messageId: r.message_id,
-      kind: "duplicate_risk",
-      source: SOURCE,
-      at: now,
-      data: { attempt: r.attempt },
-    });
-  }
+  for (const r of rows) changedEvent(db, r, "duplicate_risk", now);
   return rows.length;
 }
 

@@ -14,7 +14,7 @@ export interface MxScenario {
   mail?: string;
   rcpt?: (address: string) => string;
   data?: string;
-  final?: string | "drop";
+  final?: string | ((session: number) => string);
 }
 
 export interface MxSession {
@@ -121,11 +121,13 @@ export function startFakeMx(scenario: MxScenario = {}): FakeMx {
         state.buffer = state.buffer.slice(empty ? 3 : end + 5);
         state.inData = false;
         state.session.messages.push(body.replace(/^\.\./gm, "."));
-        if (scenario.final === "drop") {
+        const f = scenario.final;
+        const final = typeof f === "function" ? f(sessions.indexOf(state.session)) : f;
+        if (final === "drop") {
           state.active.terminate();
           return;
         }
-        state.active.write(scenario.final ?? "250 2.0.0 Ok: queued as 12345\r\n");
+        state.active.write(final ?? "250 2.0.0 Ok: queued as 12345\r\n");
         continue;
       }
       const i = state.buffer.indexOf("\r\n");
