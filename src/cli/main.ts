@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
-import { ConfigError, loadConfig } from "../config.ts";
+import { type Config, ConfigError, loadConfig } from "../config.ts";
 import { createLogger } from "../core/log.ts";
+import { readMasterKeyText } from "../crypto/load.ts";
 import { generateMasterKey, MasterKeyError } from "../crypto/master.ts";
 import { KeyFileError } from "../dkim/keys.ts";
 import { AddressError } from "../mime/address.ts";
@@ -110,13 +111,25 @@ async function serve() {
   await runSupervisor(config, log);
 }
 
+async function signerMasterKey(config: Config): Promise<string> {
+  const piped = (await Bun.stdin.text()).trim();
+  if (piped) return piped;
+  const text = await readMasterKeyText(config);
+  if (!text) {
+    throw new ConfigError(
+      "the signer needs the master key: on its standard input from `bunzzle serve`, or BUNZZLE_MASTER_KEY_FILE",
+    );
+  }
+  return text;
+}
+
 async function role(name: string | undefined) {
   if (!ROLES.includes(name as Role)) throw new UsageError(`unknown role: ${name}`);
   const config = loadConfig();
   const log = createLogger(config.logLevel, { service: "bunzzle", role: name });
   switch (name as Role) {
     case "signer":
-      return runSigner(config, log, (await Bun.stdin.text()).trim());
+      return runSigner(config, log, await signerMasterKey(config));
     case "core":
       return runCore(config, log);
     case "delivery":

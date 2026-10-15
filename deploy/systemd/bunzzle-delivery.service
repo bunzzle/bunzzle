@@ -1,0 +1,54 @@
+[Unit]
+Description=Bunzzle delivery: DNS, SMTP and webhooks to the internet, no keys or database
+Documentation=https://github.com/bunzzle/bunzzle/blob/main/docs/install.md
+PartOf=bunzzle.target
+StartLimitIntervalSec=0
+After=bunzzle-signer.service bunzzle-core.service
+
+[Service]
+Type=exec
+User=bunzzle-delivery
+Group=bunzzle-delivery
+EnvironmentFile=/etc/bunzzle/bunzzle.env
+Environment=BUNZZLE_RUN_DIR=/run/bunzzle
+ExecStart=/usr/local/bin/bunzzle role delivery
+Restart=always
+RestartSec=1
+RestartSteps=5
+RestartMaxDelaySec=5
+TimeoutStartSec=30
+TimeoutStopSec=15
+ReadWritePaths=/run/bunzzle
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LimitNOFILE=65536
+ExecStartPost=/bin/sh -c 'until [ -S /run/bunzzle/delivery.sock ]; do sleep 0.1; done'
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+DevicePolicy=closed
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+KeyringMode=private
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @debug @obsolete @cpu-emulation @clock @module @raw-io @reboot @swap
+SystemCallErrorNumber=EPERM
+UMask=0077
+
+[Install]
+WantedBy=bunzzle.target

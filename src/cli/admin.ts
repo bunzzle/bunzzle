@@ -18,14 +18,27 @@ interface DomainView {
   records: DomainRecordView[];
 }
 
+const SYSTEM_RUN_DIR = "/run/bunzzle";
+
+async function runDirOf(config: Config): Promise<string> {
+  if (process.env["BUNZZLE_RUN_DIR"]) return config.runDir;
+  const system = sockets(SYSTEM_RUN_DIR).core;
+  const isSocket = await Bun.file(system)
+    .stat()
+    .then((s) => s.isSocket())
+    .catch(() => false);
+  return isSocket ? SYSTEM_RUN_DIR : config.runDir;
+}
+
 async function call<T>(config: Config, method: string, params: unknown): Promise<T> {
-  const core = new RpcClient(sockets(config.runDir).core);
+  const runDir = await runDirOf(config);
+  const core = new RpcClient(sockets(runDir).core);
   try {
     return await core.call<T>(method, params, { timeoutMs: 60_000 });
   } catch (err) {
     if (err instanceof RpcError && err.code === "unavailable") {
       throw new UsageError(
-        `cannot reach Bunzzle at ${config.runDir}/core.sock: is \`bunzzle serve\` running (same BUNZZLE_RUN_DIR)?`,
+        `cannot reach Bunzzle at ${runDir}/core.sock: is \`bunzzle serve\` running (same BUNZZLE_RUN_DIR)?`,
       );
     }
     if (err instanceof RpcError && (err.code === "invalid" || err.code === "not-found")) {

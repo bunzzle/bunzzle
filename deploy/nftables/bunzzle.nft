@@ -1,0 +1,11 @@
+table inet bunzzle {
+  chain output {
+    type filter hook output priority filter; policy accept;
+    ct state established,related accept
+    oifname "lo" accept
+    meta skuid { "bunzzle-signer", "bunzzle-core", "bunzzle-api", "bunzzle-inbound" } counter drop
+    meta skuid "bunzzle-delivery" udp dport 53 accept
+    meta skuid "bunzzle-delivery" tcp dport { 25, 53, 443 } accept
+    meta skuid "bunzzle-delivery" counter drop
+  }
+}

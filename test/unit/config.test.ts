@@ -31,6 +31,7 @@ describe("loadConfig", () => {
       anomalyFloor: 500,
       dkimRotateDays: 90,
       cloudflareToken: null,
+      cloudflareTokenFile: null,
       cloudflareUrl: "https://api.cloudflare.com/client/v4",
     });
   });
@@ -93,5 +94,15 @@ describe("loadConfig", () => {
       expect((err as Error).message).toContain("BUNZZLE_PORT");
       expect((err as Error).message).toContain("BUNZZLE_LOG_LEVEL");
     }
+  });
+
+  test("the Cloudflare token comes from the environment or a file, not both", () => {
+    expect(loadConfig({ BUNZZLE_CLOUDFLARE_API_TOKEN_FILE: "/run/credentials/cf" })).toMatchObject({
+      cloudflareToken: null,
+      cloudflareTokenFile: "/run/credentials/cf",
+    });
+    expect(() =>
+      loadConfig({ BUNZZLE_CLOUDFLARE_API_TOKEN: "t", BUNZZLE_CLOUDFLARE_API_TOKEN_FILE: "/f" }),
+    ).toThrow(ConfigError);
   });
 });

@@ -1,0 +1,3 @@
+d /run/bunzzle      1770 root bunzzle -
+d /var/lib/bunzzle  0755 root root    -
+d /etc/bunzzle      0755 root root    -

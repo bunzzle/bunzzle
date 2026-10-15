@@ -1,0 +1,40 @@
+name: Fuzz
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: Iterations per target
+        default: "200000"
+      seed:
+        description: Seed (empty for a new one)
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - name: Fuzz every parser that reads outside input
+        env:
+          BUNZZLE_FUZZ_ITERATIONS: ${{ inputs.iterations || '200000' }}
+          BUNZZLE_FUZZ_SEED: ${{ inputs.seed || format('{0}{1}', github.run_id, matrix.shard) }}
+        run: |
+          echo "seed $BUNZZLE_FUZZ_SEED, $BUNZZLE_FUZZ_ITERATIONS iterations per target"
+          bun test test/fuzz

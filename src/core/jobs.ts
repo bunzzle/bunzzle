@@ -94,29 +94,35 @@ export function claim(
   filter: ClaimFilter = {},
 ): ClaimedJob[] {
   if (limit <= 0) return [];
-  const leased = db
-    .query<LeasedRow, [number, number, number, string, string, number]>(
-      `UPDATE jobs SET state = 'leased', attempt = attempt + 1, lease_until = ?, updated_at = ?
-       WHERE id IN (
-         SELECT id FROM jobs
-         WHERE state = 'ready' AND run_after <= ?
-           AND (path IS NULL OR (
-             path NOT IN (SELECT value FROM json_each(?))
-             AND (priority = 0 OR path NOT IN (SELECT value FROM json_each(?)))
-           ))
-         ORDER BY priority, run_after
-         LIMIT ?
-       )
-       RETURNING id, message_id, target, attempt, expires_at, unresolved_attempt, priority, path`,
-    )
-    .all(
-      now + leaseMs,
-      now,
-      now,
-      JSON.stringify(filter.paused ?? []),
-      JSON.stringify(filter.full ?? []),
-      limit,
+  const paused = JSON.stringify(filter.paused ?? []);
+  const full = JSON.stringify(filter.full ?? []);
+  const nextPriority = db.query<{ p: number | null }, [number]>(
+    "SELECT MIN(priority) AS p FROM jobs WHERE state = 'ready' AND priority > ?",
+  );
+  const lease = db.query<LeasedRow, [number, number, number, number, string, string, number]>(
+    `UPDATE jobs SET state = 'leased', attempt = attempt + 1, lease_until = ?, updated_at = ?
+     WHERE id IN (
+       SELECT id FROM jobs
+       WHERE state = 'ready' AND priority = ? AND run_after <= ?
+         AND (path IS NULL OR (
+           path NOT IN (SELECT value FROM json_each(?))
+           AND (priority = 0 OR path NOT IN (SELECT value FROM json_each(?)))
+         ))
+       ORDER BY run_after
+       LIMIT ?
+     )
+     RETURNING id, message_id, target, attempt, expires_at, unresolved_attempt, priority, path`,
+  );
+  const leased: LeasedRow[] = [];
+  let priority = Number.MIN_SAFE_INTEGER;
+  while (leased.length < limit) {
+    const next = nextPriority.get(priority)?.p;
+    if (next === null || next === undefined) break;
+    priority = next;
+    leased.push(
+      ...lease.all(now + leaseMs, now, priority, now, paused, full, limit - leased.length),
     );
+  }
   if (leased.length === 0) return [];
 
   const messages = new Map(
@@ -359,16 +365,30 @@ export function resendUnresolved(db: Database, now: number): number {
 }
 
 export function nextWakeAt(db: Database): number | undefined {
-  const r = db
-    .query<{ t: number | null }, []>(
-      `SELECT min(t) AS t FROM (
-         SELECT min(run_after)   AS t FROM jobs WHERE state = 'ready'
-         UNION ALL SELECT min(lease_until) FROM jobs WHERE state = 'leased'
+  const nextPriority = db.query<{ p: number | null }, [number]>(
+    "SELECT MIN(priority) AS p FROM jobs WHERE state = 'ready' AND priority > ?",
+  );
+  const firstDue = db.query<{ t: number }, [number]>(
+    "SELECT run_after AS t FROM jobs WHERE state = 'ready' AND priority = ? ORDER BY run_after LIMIT 1",
+  );
+  let t =
+    db
+      .query<{ t: number | null }, []>(
+        `SELECT min(t) AS t FROM (
+         SELECT min(lease_until) AS t FROM jobs WHERE state = 'leased'
          UNION ALL SELECT min(check_after) FROM jobs WHERE state = 'unknown'
        )`,
-    )
-    .get();
-  return r?.t ?? undefined;
+      )
+      .get()?.t ?? null;
+  let priority = Number.MIN_SAFE_INTEGER;
+  for (;;) {
+    const next = nextPriority.get(priority)?.p;
+    if (next === null || next === undefined) break;
+    priority = next;
+    const due = firstDue.get(priority)?.t;
+    if (due !== undefined && (t === null || due < t)) t = due;
+  }
+  return t ?? undefined;
 }
 
 export function countByState(db: Database): Record<JobState, number> {

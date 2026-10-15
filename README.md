@@ -2,7 +2,18 @@
 
 Self-hosted email delivery engine for apps. Delivers straight to your recipients' mail servers. Bun-native, one binary, one SQLite file.
 
-> Status: early development (milestone M9). Not usable in production yet.
+> Status: v0.1 in preparation. Test it on a throwaway domain before sending real mail.
+
+## Install
+
+On a Linux server with systemd:
+
+```sh
+curl -fsSLO https://github.com/bunzzle/bunzzle/releases/latest/download/install.sh
+sudo sh install.sh
+```
+
+Each of the five roles runs as its own user in its own systemd sandbox. Docker (one container or five) is covered in [docs/install.md](docs/install.md). Releases are signed; see [docs/verify.md](docs/verify.md). Security design: [docs/security.md](docs/security.md). Reporting a vulnerability: [SECURITY.md](SECURITY.md).
 
 ## Develop
 
@@ -14,6 +25,8 @@ bun run dev        # start the server with reload on save
 bun run check      # typecheck + lint + tests
 bun run build      # single binary at dist/bunzzle
 ```
+
+Tests include fuzzing of every parser that reads outside input (`test/fuzz`, more iterations with `BUNZZLE_FUZZ_ITERATIONS`) and an end-to-end check for any installed server (`test/system/e2e.ts`).
 
 ## Run
 
@@ -31,7 +44,7 @@ curl localhost:3000/health
 | core | queue, retries, the database | reach the network or read keys; it can encrypt bodies but not decrypt them |
 | delivery | DNS and SMTP to recipients' servers | read the database or any key |
 | signer | DKIM signing, body decryption | reach the network or the database |
-| inbound | incoming mail (later) | read the database or keys |
+| inbound | bounces and complaints | read the database or keys |
 
 Every email body is encrypted with its own key, and those keys are destroyed when retention ends, so old backups stay unreadable. A role that crashes is restarted; email in flight is reconciled, never silently sent twice.
 

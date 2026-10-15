@@ -46,8 +46,13 @@ export async function runDelivery(config: Config, log: Logger) {
   };
   if (!ehloName) log.warn("BUNZZLE_EHLO_NAME is not set: email will wait until it is");
 
-  const cloudflare = config.cloudflareToken
-    ? new Cloudflare(config.cloudflareToken, config.cloudflareUrl, (r) =>
+  const cloudflareToken =
+    config.cloudflareToken ??
+    (config.cloudflareTokenFile
+      ? (await Bun.file(config.cloudflareTokenFile).text()).trim()
+      : null);
+  const cloudflare = cloudflareToken
+    ? new Cloudflare(cloudflareToken, config.cloudflareUrl, (r) =>
         guardedRequest(r, {
           resolver,
           allowPrivate: config.allowPrivateDestinations,

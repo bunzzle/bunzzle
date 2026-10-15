@@ -41,6 +41,7 @@ const schema = z.object({
   BUNZZLE_ANOMALY_FLOOR: z.coerce.number().int().min(1).default(500),
   BUNZZLE_DKIM_ROTATE_DAYS: z.coerce.number().int().min(7).max(3650).default(90),
   BUNZZLE_CLOUDFLARE_API_TOKEN: optional,
+  BUNZZLE_CLOUDFLARE_API_TOKEN_FILE: optional,
   BUNZZLE_CLOUDFLARE_API_URL: z.string().url().default("https://api.cloudflare.com/client/v4"),
 });
 
@@ -109,6 +110,7 @@ export interface Config {
   anomalyFloor: number;
   dkimRotateDays: number;
   cloudflareToken: string | null;
+  cloudflareTokenFile: string | null;
   cloudflareUrl: string;
 }
 
@@ -121,6 +123,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     throw new ConfigError(`invalid configuration:\n${problems.join("\n")}`);
   }
   const c = parsed.data;
+  if (c.BUNZZLE_CLOUDFLARE_API_TOKEN && c.BUNZZLE_CLOUDFLARE_API_TOKEN_FILE) {
+    throw new ConfigError(
+      "invalid configuration:\n  set BUNZZLE_CLOUDFLARE_API_TOKEN or BUNZZLE_CLOUDFLARE_API_TOKEN_FILE, not both",
+    );
+  }
   return {
     host: c.BUNZZLE_HOST,
     port: c.BUNZZLE_PORT,
@@ -152,6 +159,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     anomalyFloor: c.BUNZZLE_ANOMALY_FLOOR,
     dkimRotateDays: c.BUNZZLE_DKIM_ROTATE_DAYS,
     cloudflareToken: c.BUNZZLE_CLOUDFLARE_API_TOKEN,
+    cloudflareTokenFile: c.BUNZZLE_CLOUDFLARE_API_TOKEN_FILE,
     cloudflareUrl: c.BUNZZLE_CLOUDFLARE_API_URL.replace(/\/+$/, ""),
   };
 }

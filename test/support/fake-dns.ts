@@ -133,10 +133,11 @@ function answer(zone: Zone, q: Uint8Array, tcp: boolean): Uint8Array | null {
   ]);
 }
 
-export async function startFakeDns(zone: Zone): Promise<FakeDns> {
+export async function startFakeDns(zone: Zone, port = 0): Promise<FakeDns> {
   const queries: FakeDns["queries"] = [];
   const udp = await Bun.udpSocket({
     hostname: "127.0.0.1",
+    port,
     binaryType: "uint8array",
     socket: {
       data(sock, data, port, address) {
