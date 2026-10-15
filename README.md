@@ -2,7 +2,7 @@
 
 Self-hosted email delivery engine for apps. Delivers straight to your recipients' mail servers. Bun-native, one binary, one SQLite file.
 
-> Status: v0.1 in preparation. Test it on a throwaway domain before sending real mail.
+> Status: v0.1.0, first release. Test it on a throwaway domain before sending real mail.
 
 ## Install
 
