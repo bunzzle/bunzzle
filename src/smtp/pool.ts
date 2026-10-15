@@ -9,6 +9,7 @@ export interface Pooled {
 }
 
 interface Idle {
+  key: string;
   pooled: Pooled;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -16,18 +17,32 @@ interface Idle {
 export interface PoolOptions {
   idleMs?: number;
   maxIdlePerKey?: number;
+  maxIdle?: number;
 }
 
 export class SessionPool {
   readonly #idle = new Map<string, Idle[]>();
+  readonly #order = new Set<Idle>();
   readonly #busy = new Map<string, number>();
   readonly #idleMs: number;
+  readonly #maxIdlePerKey: number;
   readonly #maxIdle: number;
   reusedCount = 0;
 
   constructor(o: PoolOptions = {}) {
     this.#idleMs = o.idleMs ?? 60_000;
-    this.#maxIdle = o.maxIdlePerKey ?? 10;
+    this.#maxIdlePerKey = o.maxIdlePerKey ?? 10;
+    this.#maxIdle = o.maxIdle ?? 1_000;
+  }
+
+  #remove(idle: Idle) {
+    clearTimeout(idle.timer);
+    this.#order.delete(idle);
+    const list = this.#idle.get(idle.key);
+    if (!list) return;
+    const i = list.indexOf(idle);
+    if (i >= 0) list.splice(i, 1);
+    if (list.length === 0) this.#idle.delete(idle.key);
   }
 
   static key(input: SessionInput): string {
@@ -54,10 +69,8 @@ export class SessionPool {
 
   take(key: string): Pooled | null {
     this.#begin(key);
-    const list = this.#idle.get(key);
-    while (list && list.length > 0) {
-      const idle = list.pop() as Idle;
-      clearTimeout(idle.timer);
+    for (let idle = this.#idle.get(key)?.at(-1); idle; idle = this.#idle.get(key)?.at(-1)) {
+      this.#remove(idle);
       if (!idle.pooled.conn.closed && !idle.pooled.conn.hasBufferedData()) {
         this.reusedCount++;
         return idle.pooled;
@@ -70,39 +83,44 @@ export class SessionPool {
   give(key: string, pooled: Pooled, maxOpen = Number.POSITIVE_INFINITY) {
     this.done(key);
     const list = this.#idle.get(key) ?? [];
-    if (list.length + (this.#busy.get(key) ?? 0) >= maxOpen) {
+    if (list.length + (this.#busy.get(key) ?? 0) >= maxOpen || this.#maxIdle === 0) {
       void quit(pooled.conn);
       return;
     }
-    const timer = setTimeout(() => {
-      const i = list.findIndex((x) => x.pooled === pooled);
-      if (i >= 0) list.splice(i, 1);
-      void quit(pooled.conn);
-    }, this.#idleMs);
-    list.push({ pooled, timer });
-    while (list.length > this.#maxIdle) {
-      const oldest = list.shift() as Idle;
-      clearTimeout(oldest.timer);
-      void quit(oldest.pooled.conn);
-    }
+    const idle: Idle = {
+      key,
+      pooled,
+      timer: setTimeout(() => {
+        this.#remove(idle);
+        void quit(pooled.conn);
+      }, this.#idleMs),
+    };
+    list.push(idle);
     this.#idle.set(key, list);
+    this.#order.add(idle);
+    while (list.length > this.#maxIdlePerKey) this.#evict(list[0] as Idle);
+    while (this.#order.size > this.#maxIdle) {
+      this.#evict(this.#order.values().next().value as Idle);
+    }
+  }
+
+  #evict(idle: Idle) {
+    this.#remove(idle);
+    void quit(idle.pooled.conn);
   }
 
   get size(): number {
-    let n = 0;
-    for (const list of this.#idle.values()) n += list.length;
-    return n;
+    return this.#order.size;
+  }
+
+  get keys(): number {
+    return this.#idle.size;
   }
 
   async closeAll() {
-    const all = [...this.#idle.values()].flat();
-    this.#idle.clear();
-    await Promise.all(
-      all.map((idle) => {
-        clearTimeout(idle.timer);
-        return quit(idle.pooled.conn);
-      }),
-    );
+    const all = [...this.#order];
+    for (const idle of all) this.#remove(idle);
+    await Promise.all(all.map((idle) => quit(idle.pooled.conn)));
   }
 }
 

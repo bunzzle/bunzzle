@@ -148,6 +148,7 @@ export const deliverRequestWire = z.object({
   requireTls: z.boolean(),
   body: sealedBodyWire,
   connections: z.number().int().min(1).max(1000).optional(),
+  settled: z.array(z.string().min(1).max(200)).max(5000).optional(),
   lane: z.enum(["transactional", "bulk"]).optional(),
   bounceDomain: z.string().max(253).nullable().optional(),
   source: z.string().max(64).optional(),

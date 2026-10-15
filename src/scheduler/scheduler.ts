@@ -187,6 +187,7 @@ export class Scheduler {
             ...(random ? { random } : {}),
           }),
         );
+        if (result !== "stale") outcome.committed?.(result);
         this.stats[result]++;
       } catch (err) {
         log.error("could not record outcome", { job: job.id, error: (err as Error).message });

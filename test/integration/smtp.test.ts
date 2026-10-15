@@ -415,6 +415,30 @@ describe("connection reuse", () => {
     await pool.closeAll();
   });
 
+  test("idle connections are capped across all destinations, oldest closed first", async () => {
+    mx = startFakeMx({});
+    const pool = new SessionPool({ maxIdle: 2 });
+    for (const host of ["mx1.example.test", "mx2.example.test", "mx3.example.test"]) {
+      await runSession(input(mx.port, pool, { host }));
+    }
+    expect([pool.size, pool.keys]).toEqual([2, 2]);
+    await Bun.sleep(50);
+    expect(mx.sessions[0]?.commands.at(-1)).toBe("QUIT");
+    const again = await runSession(input(mx.port, pool, { host: "mx3.example.test" }));
+    expect(again.reused).toBe(true);
+    await pool.closeAll();
+  });
+
+  test("an idle connection times out and its destination is forgotten", async () => {
+    mx = startFakeMx({});
+    const pool = new SessionPool({ idleMs: 30 });
+    await runSession(input(mx.port, pool));
+    expect([pool.size, pool.keys]).toEqual([1, 1]);
+    await Bun.sleep(120);
+    expect([pool.size, pool.keys]).toEqual([0, 0]);
+    expect(mx.sessions[0]?.commands.at(-1)).toBe("QUIT");
+  });
+
   test("a connection whose transaction failed is not reused", async () => {
     mx = startFakeMx({ rcpt: () => "550 5.1.1 User unknown\r\n" });
     const pool = new SessionPool();

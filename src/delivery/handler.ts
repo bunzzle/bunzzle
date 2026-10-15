@@ -269,11 +269,13 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       return requeue("lease lost while waiting", 0);
     }
 
+    const attemptKey = `${job.id}#${job.attempt}`;
+    const recallKey = job.unresolvedAttempt !== null ? `${job.id}#${job.unresolvedAttempt}` : null;
     let report: DeliveryReport;
     try {
       report = await o.transport.deliver({
-        key: `${job.id}#${job.attempt}`,
-        recall: job.unresolvedAttempt !== null ? `${job.id}#${job.unresolvedAttempt}` : null,
+        key: attemptKey,
+        recall: recallKey,
         messageId: job.messageId,
         domain: job.target,
         destination,
@@ -390,6 +392,8 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
     }
 
     const apply = record(job, updates, effects);
+    const committed = () =>
+      o.transport.forget?.(recallKey ? [attemptKey, recallKey] : [attemptKey]);
     const summary = (status: RecipientState) =>
       updates
         .filter((u) => u.status === status)
@@ -397,7 +401,11 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         .join("; ");
 
     if (updates.some((u) => u.status === "unknown")) {
-      return { ...unknown(`no reply after the end of data: ${summary("unknown")}`), apply };
+      return {
+        ...unknown(`no reply after the end of data: ${summary("unknown")}`),
+        apply,
+        committed,
+      };
     }
     if (updates.some((u) => u.status === "deferred")) {
       let delay: number | undefined;
@@ -406,9 +414,9 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         const hints = verdicts.flatMap((v) => (v.hintMs !== null ? [v.hintMs] : []));
         if (hints.length > 0) delay = clampHint(Math.max(...hints));
       }
-      return { ...defer(summary("deferred"), delay), apply };
+      return { ...defer(summary("deferred"), delay), apply, committed };
     }
-    if (delivered) return { ...ok.done, apply };
-    return { ...fail("bounced", summary("bounced")), apply };
+    if (delivered) return { ...ok.done, apply, committed };
+    return { ...fail("bounced", summary("bounced")), apply, committed };
   };
 }

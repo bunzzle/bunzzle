@@ -24,11 +24,13 @@ export interface DeliverRequest {
   lane?: "transactional" | "bulk" | undefined;
   bounceDomain?: string | null | undefined;
   source?: string | undefined;
+  settled?: string[] | undefined;
 }
 
 export interface DeliveryTransport {
   lookup(domain: string): Promise<Destination>;
   deliver(req: DeliverRequest): Promise<DeliveryReport>;
+  forget?(keys: string[]): void;
 }
 
 export interface OpenedBody {
@@ -71,24 +73,36 @@ export interface RememberOptions {
 export function rememberingTransport(
   inner: DeliveryTransport,
   o: RememberOptions = {},
-): DeliveryTransport {
+): DeliveryTransport & { forget(keys: string[]): void; readonly remembered: number } {
   const maxEntries = o.maxEntries ?? 50_000;
   const ttlMs = o.ttlMs ?? 2 * 3_600_000;
   const now = o.now ?? Date.now;
   const memory = new Map<string, { at: number; report: Promise<DeliveryReport> }>();
+  const expire = () => {
+    const cutoff = now() - ttlMs;
+    for (const [key, entry] of memory) {
+      if (entry.at > cutoff && memory.size <= maxEntries) break;
+      memory.delete(key);
+    }
+  };
   const remember = (key: string, report: Promise<DeliveryReport>) => {
     memory.delete(key);
     memory.set(key, { at: now(), report });
     report.catch(() => memory.delete(key));
-    while (memory.size > maxEntries) {
-      const oldest = memory.keys().next().value;
-      if (oldest === undefined) break;
-      memory.delete(oldest);
-    }
+    expire();
+  };
+  const forget = (keys: string[]) => {
+    for (const key of keys) memory.delete(key);
+    expire();
   };
   return {
     lookup: (domain) => inner.lookup(domain),
+    forget,
+    get remembered() {
+      return memory.size;
+    },
     async deliver(req) {
+      if (req.settled?.length) forget(req.settled);
       if (req.recall) {
         const prev = memory.get(req.recall);
         if (prev && now() - prev.at <= ttlMs) {

@@ -32,6 +32,7 @@ import {
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
+const MAX_SETTLED = 50_000;
 
 export function scaledPolicy(p: RetryPolicy, scale: number): RetryPolicy {
   const s = (ms: number) => Math.max(1, Math.round(ms * scale));
@@ -54,14 +55,36 @@ export async function runCore(config: Config, log: Logger) {
   const signer = new RpcClient(sock.signer);
   const delivery = new RpcClient(sock.delivery);
 
+  let settled: string[] = [];
+  const takeSettled = () => settled.splice(0, 5000);
   const transport: DeliveryTransport = {
     lookup: (domain) =>
       delivery.call("lookup", { domain }, { result: destinationWire, timeoutMs: 2 * MIN }),
-    deliver: (req) =>
-      delivery.call("deliver", requestToWire(req), {
-        result: deliveryReportWire,
-        timeoutMs: 40 * MIN,
-      }),
+    deliver: (req) => {
+      const keys = takeSettled();
+      return delivery
+        .call("deliver", requestToWire({ ...req, ...(keys.length ? { settled: keys } : {}) }), {
+          result: deliveryReportWire,
+          timeoutMs: 40 * MIN,
+        })
+        .catch((err) => {
+          settled = keys.concat(settled);
+          throw err;
+        });
+    },
+    forget: (keys) => {
+      settled.push(...keys);
+      if (settled.length > MAX_SETTLED) settled.splice(0, settled.length - MAX_SETTLED);
+    },
+  };
+  const flushSettled = async () => {
+    const keys = takeSettled();
+    if (keys.length === 0) return;
+    try {
+      await delivery.call("forget", { keys }, { timeoutMs: 10_000 });
+    } catch {
+      settled = keys.concat(settled);
+    }
   };
   const restore = new Map(
     db
@@ -211,8 +234,11 @@ export async function runCore(config: Config, log: Logger) {
       .catch((err: Error) => log.error("webhook dispatch failed", { error: err.message })),
   );
 
+  const stopSettled = every(5_000, flushSettled);
+
   await scheduler.start();
   onStop(log, async () => {
+    stopSettled();
     stopShred();
     stopPrune();
     stopVerify();

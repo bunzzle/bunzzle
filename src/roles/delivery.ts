@@ -187,11 +187,20 @@ export async function runDelivery(config: Config, log: Logger) {
       }
       return transport.deliver(req);
     }),
+    forget: method(
+      z.object({ keys: z.array(z.string().min(1).max(200)).max(5000) }),
+      ({ keys }) => {
+        transport.forget(keys);
+        return { remembered: transport.remembered };
+      },
+    ),
   });
   await checkIps();
   const stopChecks = every(3_600_000, checkIps);
+  const stopExpire = every(60_000, () => transport.forget([]));
   onStop(log, async () => {
     stopChecks();
+    stopExpire();
     server.stop();
     await pool.closeAll();
   });

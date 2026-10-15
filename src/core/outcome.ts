@@ -4,6 +4,8 @@ export type Settled = "done" | "dead" | "retry" | "unknown" | "requeued" | "stal
 
 export type Apply = (db: Database, settled: Exclude<Settled, "stale">, now: number) => void;
 
+export type Committed = (settled: Exclude<Settled, "stale">) => void;
+
 export type Outcome = (
   | { kind: "continue" }
   | { kind: "done" }
@@ -11,7 +13,7 @@ export type Outcome = (
   | { kind: "defer"; reason: string; delayMs?: number }
   | { kind: "unknown"; reason: string }
   | { kind: "requeue"; reason: string; delayMs: number }
-) & { apply?: Apply };
+) & { apply?: Apply; committed?: Committed };
 
 export const ok = { continue: { kind: "continue" }, done: { kind: "done" } } as const;
 

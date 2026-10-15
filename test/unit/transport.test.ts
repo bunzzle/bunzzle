@@ -97,4 +97,28 @@ describe("rememberingTransport", () => {
     now = 5_000;
     expect((await t.deliver(req("c#2", "c#1"))).recalled).toBeUndefined();
   });
+
+  test("results the core has recorded are forgotten; unrecorded ones are kept for recall", async () => {
+    const f = fake([]);
+    const t = rememberingTransport(f.inner);
+    await t.deliver(req("a#1"));
+    await t.deliver(req("b#1"));
+    await t.deliver(req("c#1"));
+    t.forget(["a#1"]);
+    await t.deliver({ ...req("d#1"), settled: ["b#1"] });
+    expect(t.remembered).toBe(2);
+    expect((await t.deliver(req("c#2", "c#1"))).recalled).toBe(true);
+    expect((await t.deliver(req("a#2", "a#1"))).recalled).toBeUndefined();
+  });
+
+  test("old results expire even when nobody asks for them", async () => {
+    let now = 0;
+    const f = fake([]);
+    const t = rememberingTransport(f.inner, { ttlMs: 1_000, now: () => now });
+    for (let i = 0; i < 100; i++) await t.deliver(req(`m${i}#1`));
+    expect(t.remembered).toBe(100);
+    now = 5_000;
+    t.forget([]);
+    expect(t.remembered).toBe(0);
+  });
 });
