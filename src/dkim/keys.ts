@@ -1,16 +1,23 @@
 import { z } from "zod";
+import type { MasterKey } from "../crypto/master.ts";
 import type { DkimAlgorithm, DkimKey } from "./sign.ts";
 
 const keyFileSchema = z.object({
   domain: z.string().min(1),
+  masterKeyId: z.string().min(1).optional(),
   keys: z
     .array(
-      z.object({
-        selector: z.string().regex(/^[a-z0-9-]+(\.[a-z0-9-]+)*$/i),
-        algorithm: z.enum(["rsa-sha256", "ed25519-sha256"]),
-        privateKey: z.string().min(1),
-        publicKey: z.string().min(1),
-      }),
+      z
+        .object({
+          selector: z.string().regex(/^[a-z0-9-]+(\.[a-z0-9-]+)*$/i),
+          algorithm: z.enum(["rsa-sha256", "ed25519-sha256"]),
+          privateKey: z.string().min(1).optional(),
+          sealedPrivateKey: z.string().min(1).optional(),
+          publicKey: z.string().min(1),
+        })
+        .refine((k) => (k.privateKey === undefined) !== (k.sealedPrivateKey === undefined), {
+          message: "each key needs exactly one of privateKey or sealedPrivateKey",
+        }),
     )
     .min(1),
 });
@@ -82,27 +89,79 @@ export function parseKeyFile(json: unknown): KeyFile {
   return parsed.data;
 }
 
-export async function importKeys(file: KeyFile): Promise<DkimKey[]> {
+const keyContext = (domain: string, selector: string) => `bunzzle dkim v1:${domain}:${selector}`;
+
+export async function sealKeyFile(file: KeyFile, master: MasterKey): Promise<KeyFile> {
+  const keys = [];
+  for (const { privateKey, sealedPrivateKey: _, ...k } of file.keys) {
+    if (privateKey === undefined) throw new KeyFileError("key file is already encrypted");
+    const sealed = await master.seal(
+      Uint8Array.fromBase64(privateKey),
+      keyContext(file.domain, k.selector),
+    );
+    keys.push({ ...k, sealedPrivateKey: sealed.toBase64() });
+  }
+  return { domain: file.domain, masterKeyId: master.id, keys };
+}
+
+export function isEncrypted(file: KeyFile): boolean {
+  return file.keys.some((k) => k.sealedPrivateKey !== undefined);
+}
+
+async function privateBytes(
+  file: KeyFile,
+  k: KeyFile["keys"][number],
+  master: MasterKey | null,
+): Promise<Uint8Array> {
+  if (k.privateKey !== undefined) return Uint8Array.fromBase64(k.privateKey);
+  if (!master) {
+    throw new KeyFileError(
+      "the DKIM key file is encrypted: set BUNZZLE_MASTER_KEY or BUNZZLE_MASTER_KEY_FILE",
+    );
+  }
+  if (file.masterKeyId && file.masterKeyId !== master.id) {
+    throw new KeyFileError("the DKIM key file was encrypted with another master key");
+  }
+  try {
+    return await master.open(
+      Uint8Array.fromBase64(k.sealedPrivateKey as string),
+      keyContext(file.domain, k.selector),
+    );
+  } catch {
+    throw new KeyFileError(`cannot decrypt DKIM key ${k.selector}: wrong master key?`);
+  }
+}
+
+export async function importKeys(
+  file: KeyFile,
+  master: MasterKey | null = null,
+): Promise<DkimKey[]> {
   const keys: DkimKey[] = [];
   for (const k of file.keys) {
     let privateKey: CryptoKey;
+    const bytes = await privateBytes(file, k, master);
     try {
       privateKey = await crypto.subtle.importKey(
         "pkcs8",
-        Uint8Array.fromBase64(k.privateKey),
+        bytes as Uint8Array<ArrayBuffer>,
         importParams(k.algorithm),
         false,
         ["sign"],
       );
     } catch (err) {
       throw new KeyFileError(`cannot import key ${k.selector}: ${(err as Error).message}`);
+    } finally {
+      bytes.fill(0);
     }
     keys.push({ domain: file.domain, selector: k.selector, algorithm: k.algorithm, privateKey });
   }
   return keys;
 }
 
-export async function loadKeyFile(path: string): Promise<DkimKey[]> {
+export async function loadKeyFile(
+  path: string,
+  master: MasterKey | null = null,
+): Promise<DkimKey[]> {
   const file = Bun.file(path);
   if (!(await file.exists())) throw new KeyFileError(`DKIM key file not found: ${path}`);
   let json: unknown;
@@ -111,5 +170,5 @@ export async function loadKeyFile(path: string): Promise<DkimKey[]> {
   } catch {
     throw new KeyFileError(`DKIM key file is not valid JSON: ${path}`);
   }
-  return importKeys(parseKeyFile(json));
+  return importKeys(parseKeyFile(json), master);
 }

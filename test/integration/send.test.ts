@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { generateMasterKey } from "../../src/crypto/master.ts";
 import { type KeyFile, parseKeyFile } from "../../src/dkim/keys.ts";
 import { type PublicKey, verifyDkim } from "../support/dkim-verify.ts";
 import { type FakeDns, startFakeDns } from "../support/fake-dns.ts";
 import { type FakeMx, startFakeMx } from "../support/fake-mx.ts";
 
 const MAIN = `${import.meta.dir}/../../src/cli/main.ts`;
+const MASTER = generateMasterKey();
 let dir: string;
 let dns: FakeDns;
 let mx: FakeMx;
@@ -18,6 +20,7 @@ async function cli(args: string[], env: Record<string, string> = {}) {
       BUNZZLE_SMTP_PORT: String(mx.port),
       BUNZZLE_ALLOW_PRIVATE_DESTINATIONS: "true",
       BUNZZLE_EHLO_NAME: "out.bunzzle.test",
+      BUNZZLE_MASTER_KEY: MASTER,
       ...env,
     },
     stdout: "pipe",
@@ -78,6 +81,50 @@ describe("bunzzle dkim", () => {
     expect(r.stdout).toContain("k=ed25519");
     const { mode } = await Bun.file(`${dir}/dkim.json`).stat();
     expect(mode & 0o777).toBe(0o600);
+  });
+
+  test("keygen stores the private keys encrypted with the master key", async () => {
+    const text = await Bun.file(`${dir}/dkim.json`).text();
+    expect(keys.masterKeyId).toMatch(/^[0-9a-f]{16}$/);
+    expect(keys.keys.every((k) => k.sealedPrivateKey && !k.privateKey)).toBe(true);
+    expect(text).not.toContain('privateKey"');
+  });
+
+  test("keygen without a master key refuses unless --unencrypted", async () => {
+    const args = ["dkim", "keygen", "--domain", "plain.test", "--out", `${dir}/plain.json`];
+    const refused = await cli(args, { BUNZZLE_MASTER_KEY: "" });
+    expect(refused.code).toBe(2);
+    expect(refused.stderr).toContain("bunzzle master-key");
+    const plain = await cli([...args, "--unencrypted"], { BUNZZLE_MASTER_KEY: "" });
+    expect(plain.code).toBe(0);
+    expect(plain.stdout).toContain("UNENCRYPTED");
+  });
+
+  test("send with encrypted keys but the wrong master key fails clearly", async () => {
+    const r = await cli(
+      [
+        "send",
+        "--from",
+        "hello@bunzzle.test",
+        "--to",
+        "you@example.test",
+        "--subject",
+        "x",
+        "--text",
+        "x",
+        "--dkim-keys",
+        `${dir}/dkim.json`,
+        "--dry-run",
+      ],
+      { BUNZZLE_MASTER_KEY: generateMasterKey() },
+    );
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("another master key");
+  });
+
+  test("master-key prints a fresh 32-byte key", async () => {
+    const r = await cli(["master-key"]);
+    expect(Uint8Array.fromBase64(r.stdout.trim()).length).toBe(32);
   });
 
   test("keygen refuses to overwrite keys", async () => {

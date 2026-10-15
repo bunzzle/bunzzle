@@ -1,11 +1,17 @@
 #!/usr/bin/env bun
 import { ConfigError, loadConfig } from "../config.ts";
 import { createLogger } from "../core/log.ts";
-import { openDatabase } from "../core/store/db.ts";
+import { generateMasterKey, MasterKeyError } from "../crypto/master.ts";
 import { KeyFileError } from "../dkim/keys.ts";
-import { startServer } from "../http/server.ts";
 import { AddressError } from "../mime/address.ts";
 import { MimeError } from "../mime/builder.ts";
+import { runApi } from "../roles/api.ts";
+import { runCore } from "../roles/core.ts";
+import { runDelivery } from "../roles/delivery.ts";
+import { runInbound } from "../roles/inbound.ts";
+import { runSigner } from "../roles/signer.ts";
+import { runSupervisor } from "../roles/supervisor.ts";
+import { ROLES, type Role } from "../roles/wire.ts";
 import { VERSION } from "../version.ts";
 import { UsageError } from "./args.ts";
 import { dkimCommand } from "./dkim.ts";
@@ -14,9 +20,10 @@ import { sendCommand } from "./send.ts";
 const USAGE = `bunzzle ${VERSION}
 
 Usage:
-  bunzzle serve       Start the API server
+  bunzzle serve       Start Bunzzle (five sandboxed roles: api, core, delivery, signer, inbound)
   bunzzle send        Send one email straight to the recipients' mail servers
   bunzzle dkim        Create DKIM keys and print their DNS records
+  bunzzle master-key  Print a new random master key
   bunzzle --version   Print the version
   bunzzle --help      Show this help
 
@@ -37,7 +44,7 @@ bunzzle send:
   --json                            print the delivery report as JSON
 
 bunzzle dkim:
-  keygen --domain DOMAIN --out PATH [--selector NAME] [--force]
+  keygen --domain DOMAIN --out PATH [--selector NAME] [--force] [--unencrypted]
   records --keys PATH
 
 Configuration (environment variables):
@@ -50,28 +57,36 @@ Configuration (environment variables):
   BUNZZLE_DKIM_KEY_FILE  default for --dkim-keys
   BUNZZLE_DNS_SERVERS comma-separated resolvers (default: /etc/resolv.conf)
   BUNZZLE_IPV6        also deliver over IPv6 (needs reverse DNS for the IPv6 address)
+  BUNZZLE_MASTER_KEY  or BUNZZLE_MASTER_KEY_FILE: encrypts DKIM keys and every email body
+  BUNZZLE_KEYS_DIR    signer's directory (default ./keys; DKIM key files go in keys/dkim/)
+  BUNZZLE_RUN_DIR     sockets between the roles (default ./run)
+  BUNZZLE_RETENTION_DAYS  email bodies become unreadable after this (default 30, min 7)
+  BUNZZLE_INBOUND_PORT    port for incoming mail (off by default)
 `;
 
 async function serve() {
   const config = loadConfig();
-  const log = createLogger(config.logLevel, { service: "bunzzle" });
+  const log = createLogger(config.logLevel, { service: "bunzzle", role: "supervisor" });
+  log.info("starting", { version: VERSION });
+  await runSupervisor(config, log);
+}
 
-  await Bun.$`mkdir -p ${config.dataDir}`.quiet();
-  const db = openDatabase({ path: config.dbPath });
-  const server = startServer({ db, log, host: config.host, port: config.port });
-  log.info("listening", { url: server.url.href, version: VERSION, db: config.dbPath });
-
-  let stopping = false;
-  const shutdown = async (signal: string) => {
-    if (stopping) return;
-    stopping = true;
-    log.info("shutting down", { signal });
-    await server.stop();
-    db.close();
-    process.exit(0);
-  };
-  process.on("SIGINT", () => void shutdown("SIGINT"));
-  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+async function role(name: string | undefined) {
+  if (!ROLES.includes(name as Role)) throw new UsageError(`unknown role: ${name}`);
+  const config = loadConfig();
+  const log = createLogger(config.logLevel, { service: "bunzzle", role: name });
+  switch (name as Role) {
+    case "signer":
+      return runSigner(config, log, (await Bun.stdin.text()).trim());
+    case "core":
+      return runCore(config, log);
+    case "delivery":
+      return runDelivery(config, log);
+    case "api":
+      return runApi(config, log);
+    case "inbound":
+      return runInbound(config, log);
+  }
 }
 
 async function main(argv: string[]) {
@@ -79,11 +94,16 @@ async function main(argv: string[]) {
   switch (command) {
     case "serve":
       return serve();
+    case "role":
+      return role(argv[1]);
     case "send":
       process.exitCode = await sendCommand(argv.slice(1), loadConfig());
       return;
     case "dkim":
-      return dkimCommand(argv.slice(1));
+      return dkimCommand(argv.slice(1), loadConfig());
+    case "master-key":
+      console.log(generateMasterKey());
+      return;
     case "--version":
     case "-v":
       console.log(VERSION);
@@ -105,7 +125,8 @@ main(Bun.argv.slice(2)).catch((err) => {
     err instanceof UsageError ||
     err instanceof AddressError ||
     err instanceof MimeError ||
-    err instanceof KeyFileError
+    err instanceof KeyFileError ||
+    err instanceof MasterKeyError
   ) {
     console.error(err.message);
     process.exit(2);

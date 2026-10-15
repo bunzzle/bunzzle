@@ -1,0 +1,60 @@
+import { z } from "zod";
+import type { Config } from "../config.ts";
+import type { Logger } from "../core/log.ts";
+import { masterKeyFrom } from "../crypto/master.ts";
+import { method, RpcError, serveRpc } from "../ipc/rpc.ts";
+import { dkimKeyFilesIn, Signer, SignerError } from "../signer/signer.ts";
+import { every, onStop, privateDir, ready } from "./runtime.ts";
+import { fromWire, MESSAGE_ID, sealedBodyWire, sockets } from "./wire.ts";
+
+const HOUR = 3_600_000;
+
+export async function runSigner(config: Config, log: Logger, masterText: string) {
+  const master = await masterKeyFrom(masterText);
+  await privateDir(config.keysDir);
+  const files = [
+    ...(config.dkimKeyFile ? [config.dkimKeyFile] : []),
+    ...(await dkimKeyFilesIn(`${config.keysDir}/dkim`)),
+  ];
+  const signer = await Signer.create({
+    master,
+    keystorePath: `${config.keysDir}/epochs.json`,
+    dkimKeyFiles: files,
+  });
+
+  const shred = async () => {
+    const gone = await signer.shred(config.retentionDays);
+    if (gone.length > 0) log.info("destroyed expired body keys", { epochs: gone });
+  };
+  await shred();
+
+  const server = await serveRpc(sockets(config.runDir).signer, {
+    epochKey: method(z.object({}), async () => {
+      const k = await signer.epochKey();
+      return { epoch: k.epoch, publicKey: k.publicKey.toBase64() };
+    }),
+    domains: method(z.object({}), () => signer.domains()),
+    open: method(
+      z.object({ messageId: z.string().regex(MESSAGE_ID), body: sealedBodyWire }),
+      async ({ messageId, body }) => {
+        try {
+          return { data: await signer.open(messageId, fromWire(body)) };
+        } catch (err) {
+          if (err instanceof SignerError) {
+            if (err.code === "unreadable")
+              log.error("a stored body cannot be decrypted", { messageId });
+            throw new RpcError(err.code, err.message);
+          }
+          throw new RpcError("failed", "cannot open this body");
+        }
+      },
+    ),
+  });
+  const stopShred = every(Math.max(1_000, HOUR * config.retryScale), shred);
+  onStop(log, () => {
+    stopShred();
+    server.stop();
+  });
+  log.info("signer ready", { domains: signer.domains(), masterKey: master.id });
+  ready();
+}

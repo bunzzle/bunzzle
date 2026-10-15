@@ -1,16 +1,18 @@
 import type { Database } from "bun:sqlite";
+import { appendEvent } from "../core/events.ts";
 import { enqueue, jobId } from "../core/jobs.ts";
+import type { SealedBody } from "../crypto/envelope.ts";
 import { domainOf, normalizeAddress } from "../mime/address.ts";
 
 export interface EmailPayload {
   from: string;
-  data: string;
   smtpUtf8: boolean;
   requireTls: boolean;
 }
 
 export interface NewEmail extends EmailPayload {
-  id?: string;
+  id: string;
+  body: SealedBody;
   recipients: string[];
   priority?: number;
   expiresAt?: number;
@@ -47,14 +49,13 @@ export function enqueueEmail(db: Database, email: NewEmail, now: number): string
   if (byDomain.size === 0) throw new Error("an email needs at least one recipient");
   const payload: EmailPayload = {
     from: email.from,
-    data: email.data,
     smtpUtf8: email.smtpUtf8,
     requireTls: email.requireTls,
   };
   const id = enqueue(
     db,
     {
-      ...(email.id ? { id: email.id } : {}),
+      id: email.id,
       type: "email",
       payload,
       targets: [...byDomain.keys()],
@@ -70,7 +71,47 @@ export function enqueueEmail(db: Database, email: NewEmail, now: number): string
   for (const [domain, addresses] of byDomain) {
     for (const address of addresses) insert.run(jobId(id, domain), address, now);
   }
+  db.query<unknown, [string, number, Uint8Array, Uint8Array]>(
+    "INSERT INTO bodies (message_id, epoch, wrapped, body) VALUES (?, ?, ?, ?)",
+  ).run(id, email.body.epoch, email.body.wrapped, email.body.body);
   return id;
+}
+
+export function emailExists(db: Database, id: string): boolean {
+  return (
+    db.query<{ n: number }, [string]>("SELECT 1 AS n FROM messages WHERE id = ?").get(id) !== null
+  );
+}
+
+export function bodyOf(db: Database, messageId: string): SealedBody | null {
+  const r = db
+    .query<{ epoch: number; wrapped: Uint8Array; body: Uint8Array }, [string]>(
+      "SELECT epoch, wrapped, body FROM bodies WHERE message_id = ?",
+    )
+    .get(messageId);
+  return r
+    ? { epoch: r.epoch, wrapped: new Uint8Array(r.wrapped), body: new Uint8Array(r.body) }
+    : null;
+}
+
+export function shredBodies(db: Database, now: number, retentionMs: number): string[] {
+  const ids = db
+    .query<{ message_id: string }, [number]>(
+      `DELETE FROM bodies WHERE message_id IN (
+         SELECT m.id FROM messages m
+         WHERE m.created_at < ?
+           AND NOT EXISTS (
+             SELECT 1 FROM jobs j
+             WHERE j.message_id = m.id AND j.state IN ('ready', 'leased', 'unknown')
+           )
+       )
+       RETURNING message_id`,
+    )
+    .all(now - retentionMs)
+    .map((r) => r.message_id);
+  for (const id of ids)
+    appendEvent(db, { messageId: id, kind: "shredded", source: "retention", at: now });
+  return ids;
 }
 
 export function recipientsOf(db: Database, messageId: string): RecipientRow[] {

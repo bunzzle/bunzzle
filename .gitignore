@@ -10,3 +10,7 @@ data/
 .DS_Store
 *.bun-build
 dkim*.json
+
+keys/
+run/
+*.key

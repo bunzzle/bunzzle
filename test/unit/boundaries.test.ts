@@ -24,6 +24,64 @@ function resolve(from: string, spec: string): string {
   return parts.join("/");
 }
 
+const VALUE_IMPORT_RE =
+  /(?:^|\n)\s*(?:import|export)\s+(?!type\s)[^"'`;]*?from\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/g;
+
+async function valueImports(file: string): Promise<string[]> {
+  const text = await Bun.file(file).text();
+  return [...text.matchAll(VALUE_IMPORT_RE)].map((m) => (m[1] ?? m[2]) as string);
+}
+
+async function reachable(entry: string): Promise<Set<string>> {
+  const seen = new Set<string>();
+  const queue = [entry];
+  while (queue.length > 0) {
+    const file = queue.pop() as string;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    for (const spec of await valueImports(file)) {
+      if (spec.startsWith(".") && spec.endsWith(".ts")) queue.push(resolve(file, spec));
+    }
+  }
+  return new Set([...seen].map((f) => f.slice(SRC.length + 1)));
+}
+
+const ROLE_LIMITS: Record<string, string[]> = {
+  delivery: ["core/store/", "signer/", "dkim/keys.ts", "crypto/", "roles/core.ts"],
+  api: ["core/store/", "signer/", "dkim/", "crypto/", "smtp/", "dns/", "delivery/"],
+  core: [
+    "signer/",
+    "dkim/keys.ts",
+    "dkim/sign.ts",
+    "crypto/master.ts",
+    "crypto/load.ts",
+    "smtp/connection.ts",
+    "smtp/session.ts",
+    "dns/resolver.ts",
+  ],
+  signer: ["core/store/", "smtp/", "dns/", "delivery/"],
+  inbound: ["core/store/", "signer/", "dkim/", "crypto/", "smtp/", "delivery/"],
+};
+
+describe("role boundaries (what each process can even load)", () => {
+  for (const [role, forbidden] of Object.entries(ROLE_LIMITS)) {
+    test(`${role} cannot load ${forbidden.join(", ")}`, async () => {
+      const files = await reachable(`${SRC}/roles/${role}.ts`);
+      const bad = [...files].filter((f) => forbidden.some((x) => f.startsWith(x)));
+      expect(bad).toEqual([]);
+    });
+  }
+
+  test("only the signer and the CLI can load the master key", async () => {
+    for (const role of ["delivery", "api", "core", "inbound"]) {
+      const files = await reachable(`${SRC}/roles/${role}.ts`);
+      expect([...files].filter((f) => f === "crypto/load.ts" || f === "crypto/master.ts")).toEqual(
+        [],
+      );
+    }
+  });
+});
+
 describe("architecture boundaries", () => {
   test("src/core imports only from src/core and bun: modules", async () => {
     const core = `${SRC}/core`;

@@ -12,6 +12,7 @@ export function openDatabase({ path, migrations = defaultMigrations }: OpenOptio
   db.run("PRAGMA journal_mode = WAL");
   db.run("PRAGMA synchronous = FULL");
   db.run("PRAGMA foreign_keys = ON");
+  db.run("PRAGMA secure_delete = ON");
   db.run("PRAGMA busy_timeout = 5000");
   migrate(db, migrations);
   return db;

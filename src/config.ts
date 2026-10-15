@@ -22,6 +22,14 @@ const schema = z.object({
   BUNZZLE_IPV6: bool,
   BUNZZLE_SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(25),
   BUNZZLE_ALLOW_PRIVATE_DESTINATIONS: bool,
+  BUNZZLE_MASTER_KEY: optional,
+  BUNZZLE_MASTER_KEY_FILE: optional,
+  BUNZZLE_KEYS_DIR: z.string().min(1).default("./keys"),
+  BUNZZLE_RUN_DIR: z.string().min(1).default("./run"),
+  BUNZZLE_RETENTION_DAYS: z.coerce.number().int().min(7).max(3650).default(30),
+  BUNZZLE_INBOUND_HOST: z.string().min(1).default("0.0.0.0"),
+  BUNZZLE_INBOUND_PORT: z.coerce.number().int().min(0).max(65535).optional(),
+  BUNZZLE_RETRY_SCALE: z.coerce.number().positive().max(1).default(1),
 });
 
 export interface Config {
@@ -37,6 +45,14 @@ export interface Config {
   ipv6: boolean;
   smtpPort: number;
   allowPrivateDestinations: boolean;
+  masterKey: string | null;
+  masterKeyFile: string | null;
+  keysDir: string;
+  runDir: string;
+  retentionDays: number;
+  inboundHost: string;
+  inboundPort: number | null;
+  retryScale: number;
 }
 
 export class ConfigError extends Error {}
@@ -64,5 +80,13 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     ipv6: c.BUNZZLE_IPV6,
     smtpPort: c.BUNZZLE_SMTP_PORT,
     allowPrivateDestinations: c.BUNZZLE_ALLOW_PRIVATE_DESTINATIONS,
+    masterKey: c.BUNZZLE_MASTER_KEY,
+    masterKeyFile: c.BUNZZLE_MASTER_KEY_FILE,
+    keysDir: c.BUNZZLE_KEYS_DIR.replace(/\/+$/, ""),
+    runDir: c.BUNZZLE_RUN_DIR.replace(/\/+$/, ""),
+    retentionDays: c.BUNZZLE_RETENTION_DAYS,
+    inboundHost: c.BUNZZLE_INBOUND_HOST,
+    inboundPort: c.BUNZZLE_INBOUND_PORT ?? null,
+    retryScale: c.BUNZZLE_RETRY_SCALE,
   };
 }

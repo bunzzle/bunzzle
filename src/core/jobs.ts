@@ -65,6 +65,7 @@ export interface ClaimedJob {
   createdAt: number;
   expiresAt: number | null;
   attempt: number;
+  unresolvedAttempt: number | null;
 }
 
 interface LeasedRow {
@@ -73,6 +74,7 @@ interface LeasedRow {
   target: string;
   attempt: number;
   expires_at: number | null;
+  unresolved_attempt: number | null;
 }
 
 export function claim(db: Database, now: number, limit: number, leaseMs: number): ClaimedJob[] {
@@ -86,7 +88,7 @@ export function claim(db: Database, now: number, limit: number, leaseMs: number)
          ORDER BY priority, run_after
          LIMIT ?
        )
-       RETURNING id, message_id, target, attempt, expires_at`,
+       RETURNING id, message_id, target, attempt, expires_at, unresolved_attempt`,
     )
     .all(now + leaseMs, now, now, limit);
   if (leased.length === 0) return [];
@@ -117,6 +119,7 @@ export function claim(db: Database, now: number, limit: number, leaseMs: number)
         createdAt: m.created_at,
         expiresAt: r.expires_at,
         attempt: r.attempt,
+        unresolvedAttempt: r.unresolved_attempt,
       },
     ];
   });
@@ -160,7 +163,7 @@ export function settle(
       const r = db
         .query<unknown, [number, string, number]>(
           `UPDATE jobs SET state = 'done', lease_until = NULL, check_after = NULL,
-             last_error = NULL, updated_at = ? ${guard}`,
+             last_error = NULL, unresolved_attempt = NULL, updated_at = ? ${guard}`,
         )
         .run(now, job.id, job.attempt);
       if (r.changes === 0) return "stale";
@@ -206,7 +209,7 @@ export function settle(
       }
       db.query<unknown, [number, string, number, number, string, number]>(
         `UPDATE jobs SET state = 'ready', run_after = ?, last_error = ?, notices = ?,
-           lease_until = NULL, check_after = NULL, updated_at = ? ${guard}`,
+           lease_until = NULL, check_after = NULL, unresolved_attempt = NULL, updated_at = ? ${guard}`,
       ).run(now + delay, outcome.reason, notices, now, job.id, job.attempt);
       event("deferred", { reason: outcome.reason, delay_ms: delay });
       for (const after of due) event("delayed", { after_ms: after, reason: outcome.reason });
@@ -237,7 +240,7 @@ function toDead(
   const r = db
     .query<unknown, [string, number, string, number]>(
       `UPDATE jobs SET state = 'dead', last_error = ?, lease_until = NULL, check_after = NULL,
-         updated_at = ? ${guard}`,
+         unresolved_attempt = NULL, updated_at = ? ${guard}`,
     )
     .run(why, now, job.id, job.attempt);
   if (r.changes === 0) return "stale";
@@ -291,7 +294,8 @@ function markLeasesUnknown(
 export function resendUnresolved(db: Database, now: number): number {
   const rows = db
     .query<ChangedRow, [number, number]>(
-      `UPDATE jobs SET state = 'ready', run_after = ?1, check_after = NULL, updated_at = ?1
+      `UPDATE jobs SET state = 'ready', run_after = ?1, check_after = NULL, updated_at = ?1,
+         unresolved_attempt = attempt
        WHERE state = 'unknown' AND check_after <= ?2
        RETURNING message_id, target, attempt`,
     )

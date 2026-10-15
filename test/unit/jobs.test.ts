@@ -215,6 +215,20 @@ describe("leases and reconciliation", () => {
     expect(kinds("m")).toEqual(["queued", "unknown", "duplicate_risk"]);
   });
 
+  test("a resent job carries the unresolved attempt so it can be reconciled", () => {
+    enqueue(db, { id: "m", type: "t", payload: 1 }, T0);
+    const [first] = claim(db, T0, 1, 1_000);
+    expect(first?.unresolvedAttempt).toBeNull();
+    recoverAfterCrash(db, T0, 0);
+    resendUnresolved(db, T0);
+    const [again] = claim(db, T0, 1, 1_000);
+    expect([again?.attempt, again?.unresolvedAttempt]).toEqual([2, 1]);
+    if (!again) throw new Error("nothing claimed");
+    settle(db, again, defer("busy", 0), T0, opts);
+    const [third] = claim(db, T0, 1, 1_000);
+    expect(third?.unresolvedAttempt).toBeNull();
+  });
+
   test("recovery after a crash marks every lease unknown", () => {
     enqueue(db, { id: "a", type: "t", payload: 1 }, T0);
     enqueue(db, { id: "b", type: "t", payload: 1 }, T0);

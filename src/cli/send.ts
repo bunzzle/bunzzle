@@ -1,4 +1,5 @@
 import type { Config } from "../config.ts";
+import { loadMasterKey } from "../crypto/load.ts";
 import { loadKeyFile } from "../dkim/keys.ts";
 import { signMessage } from "../dkim/sign.ts";
 import { cachingResolver } from "../dns/cache.ts";
@@ -140,7 +141,7 @@ export async function sendCommand(argv: string[], config: Config): Promise<numbe
   const keyFile = args.strings.get("dkim-keys") ?? config.dkimKeyFile;
   let raw = built.raw;
   if (keyFile) {
-    const keys = await loadKeyFile(keyFile);
+    const keys = await loadKeyFile(keyFile, await loadMasterKey(config));
     const keyDomain = keys[0]?.domain;
     if (keyDomain !== fromDomain) {
       throw new UsageError(

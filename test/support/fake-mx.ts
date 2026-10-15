@@ -15,6 +15,7 @@ export interface MxScenario {
   rcpt?: (address: string) => string;
   data?: string;
   final?: string | ((session: number) => string);
+  finalDelayMs?: number;
 }
 
 export interface MxSession {
@@ -127,7 +128,13 @@ export function startFakeMx(scenario: MxScenario = {}): FakeMx {
           state.active.terminate();
           return;
         }
-        state.active.write(final ?? "250 2.0.0 Ok: queued as 12345\r\n");
+        const reply = final ?? "250 2.0.0 Ok: queued as 12345\r\n";
+        if (scenario.finalDelayMs) {
+          const socket = state.active;
+          setTimeout(() => socket.write(reply), scenario.finalDelayMs);
+        } else {
+          state.active.write(reply);
+        }
         continue;
       }
       const i = state.buffer.indexOf("\r\n");

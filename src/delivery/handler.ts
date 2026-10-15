@@ -8,19 +8,16 @@ import { clampHint } from "../core/retry.ts";
 import type { Destination } from "../dns/mx.ts";
 import { type Classification, classify } from "../replies/classify.ts";
 import { providerOf, siteOf } from "../routing/providers.ts";
-import {
-  type DeliveryOptions,
-  type DeliveryReport,
-  deliverTo,
-  findDestination,
-} from "../smtp/deliver.ts";
+import type { DeliveryReport } from "../smtp/deliver.ts";
 import type { RecipientResult } from "../smtp/session.ts";
 import { getPath, type Path, pathDelivered, pauseDuration, pausePath, slowPath } from "./paths.ts";
-import { type EmailPayload, pendingRecipients, type RecipientState } from "./queue.ts";
+import { bodyOf, type EmailPayload, pendingRecipients, type RecipientState } from "./queue.ts";
+import type { DeliveryTransport } from "./transport.ts";
 
-export interface DeliveryHandlerOptions extends DeliveryOptions {
+export interface DeliveryHandlerOptions {
   db: Database;
   log: Logger;
+  transport: DeliveryTransport;
   clock?: Clock;
   source?: string;
   pauseMs?: number;
@@ -64,7 +61,7 @@ function sessionsOf(report: DeliveryReport) {
 
 export function deliveryHandler(o: DeliveryHandlerOptions) {
   const clock = o.clock ?? systemClock;
-  const source = o.source ?? o.localAddress ?? "default";
+  const source = o.source ?? "default";
   const pauseMs = o.pauseMs ?? 3_600_000;
   const maxPauseMs = o.maxPauseMs ?? 12 * 3_600_000;
   const slowMs = o.slowMs ?? 10 * 60_000;
@@ -72,7 +69,12 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
   const busy = new Map<string, number>();
 
   const record =
-    (job: ClaimedJob, updates: Update[], effects: (db: Database, now: number) => void): Apply =>
+    (
+      job: ClaimedJob,
+      updates: Update[],
+      effects: (db: Database, now: number) => void,
+      deadClass?: string,
+    ): Apply =>
     (db, settled, now) => {
       const event = (kind: string, data: Record<string, unknown>) =>
         appendEvent(db, { messageId: job.messageId, kind, source: SOURCE, at: now, data });
@@ -130,7 +132,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       effects(db, now);
       if (settled === "dead") {
         const expired = job.expiresAt !== null && now >= job.expiresAt;
-        const why = expired ? "expired" : "retries-exhausted";
+        const why = deadClass ?? (expired ? "expired" : "retries-exhausted");
         db.query<unknown, [string, string, number, string]>(
           `UPDATE recipients SET status = 'failed', class = ?, reply = coalesce(reply, ?),
              updated_at = ?
@@ -154,7 +156,23 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       };
     }
 
-    const destination = await findDestination(job.target, o);
+    const body = bodyOf(db, job.messageId);
+    if (!body) {
+      return {
+        ...fail("body-gone", "the email body no longer exists"),
+        apply: record(job, [], none, "body-gone"),
+      };
+    }
+
+    let destination: Destination;
+    try {
+      destination = await o.transport.lookup(job.target);
+    } catch (err) {
+      return {
+        ...defer(`delivery unavailable: ${(err as Error).message}`, busyRetryMs),
+        apply: record(job, [], none),
+      };
+    }
     const site = siteFor(destination, job.target);
     const path: Path = getPath(db, source, site, now);
     const waiting = (reason: string, delayMs: number): Outcome => ({
@@ -183,18 +201,23 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
     busy.set(site, (busy.get(site) ?? 0) + 1);
     let report: DeliveryReport;
     try {
-      report = await deliverTo(
+      report = await o.transport.deliver({
+        key: `${job.id}#${job.attempt}`,
+        recall: job.unresolvedAttempt !== null ? `${job.id}#${job.unresolvedAttempt}` : null,
+        messageId: job.messageId,
+        domain: job.target,
         destination,
-        {
-          domain: job.target,
-          from: email.from,
-          recipients: pending,
-          data: email.data,
-          smtpUtf8: email.smtpUtf8,
-          requireTls: email.requireTls,
-        },
-        o,
-      );
+        from: email.from,
+        recipients: pending,
+        smtpUtf8: email.smtpUtf8,
+        requireTls: email.requireTls,
+        body,
+      });
+    } catch (err) {
+      if ((err as { code?: unknown })?.code === "unavailable") {
+        return waiting(`delivery unavailable: ${(err as Error).message}`, busyRetryMs);
+      }
+      throw err;
     } finally {
       const n = (busy.get(site) ?? 1) - 1;
       if (n > 0) busy.set(site, n);
@@ -232,8 +255,12 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
     const effects = (d: Database, at: number) => {
       const event = (kind: string, data: Record<string, unknown>) =>
         appendEvent(d, { messageId: job.messageId, kind, source: SOURCE, at, data });
+      if (report.recalled) {
+        event("reconciled", { attempt: job.unresolvedAttempt, resent: false });
+      }
       event("attempt", {
         target: job.target,
+        recalled: report.recalled ?? false,
         provider,
         policy: report.policy,
         mx: report.destination.kind === "targets" ? report.destination.mxHosts : [],

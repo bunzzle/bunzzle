@@ -16,7 +16,20 @@ describe("loadConfig", () => {
       ipv6: false,
       smtpPort: 25,
       allowPrivateDestinations: false,
+      masterKey: null,
+      masterKeyFile: null,
+      keysDir: "./keys",
+      runDir: "./run",
+      retentionDays: 30,
+      inboundHost: "0.0.0.0",
+      inboundPort: null,
+      retryScale: 1,
     });
+  });
+
+  test("retention cannot be shorter than a week, so pending email is never shredded", () => {
+    expect(() => loadConfig({ BUNZZLE_RETENTION_DAYS: "3" })).toThrow(ConfigError);
+    expect(loadConfig({ BUNZZLE_RETENTION_DAYS: "7" }).retentionDays).toBe(7);
   });
 
   test("reads environment variables", () => {

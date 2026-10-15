@@ -3,6 +3,7 @@ import { type Destination, lookupDestination } from "../dns/mx.ts";
 import type { Resolver } from "../dns/resolver.ts";
 import { type Provider, providerOf } from "../routing/providers.ts";
 import {
+  type Phase,
   type RecipientResult,
   type RecipientStatus,
   runSession,
@@ -40,6 +41,7 @@ export interface DeliveryReport {
   policy: TlsPolicy | null;
   sessions: SessionResult[];
   recipients: RecipientResult[];
+  recalled?: boolean | undefined;
 }
 
 export function tlsPolicy(requireTls: boolean, provider: Provider | null): TlsPolicy {
@@ -48,16 +50,17 @@ export function tlsPolicy(requireTls: boolean, provider: Provider | null): TlsPo
   return { rule: "opportunistic", required: false };
 }
 
-function allRecipients(
-  input: DeliveryInput,
+export function allRecipients(
+  input: Pick<DeliveryInput, "recipients">,
   status: RecipientStatus,
   enhanced: string,
   reply: string,
+  phase: Phase = "dns",
 ): RecipientResult[] {
   return input.recipients.map((address) => ({
     address,
     status,
-    phase: "dns",
+    phase,
     code: null,
     enhanced,
     reply,
