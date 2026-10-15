@@ -1,7 +1,7 @@
 {
   "name": "bunzzle",
   "version": "0.0.1",
-  "description": "Self-hosted email sending on your own Amazon SES. Bun-native.",
+  "description": "Self-hosted email delivery engine for apps. Bun-native.",
   "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",

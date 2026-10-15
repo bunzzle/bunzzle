@@ -1,8 +1,8 @@
 # Bunzzle
 
-Self-hosted email sending on your own Amazon SES. Bun-native, one binary, one SQLite file.
+Self-hosted email delivery engine for apps. Delivers straight to your recipients' mail servers. Bun-native, one binary, one SQLite file.
 
-> Status: early development (milestone M1). Not usable yet.
+> Status: early development (milestone M3). Not usable in production yet.
 
 ## Develop
 
@@ -23,6 +23,16 @@ curl localhost:3000/health
 ```
 
 Configuration is read from environment variables. See `.env.example`.
+
+## Send one email
+
+```sh
+./dist/bunzzle dkim keygen --domain your.domain --out dkim.json   # prints the DNS records to add
+./dist/bunzzle send --from "You <hello@your.domain>" --to someone@example.com \
+  --subject "Hello" --text "Sent by Bunzzle" --dkim-keys dkim.json --ehlo mail.your.domain
+```
+
+The sending server needs outbound port 25 and a reverse DNS (PTR) record matching `--ehlo`.
 
 ## License
 

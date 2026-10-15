@@ -9,6 +9,13 @@ describe("loadConfig", () => {
       dataDir: "./data",
       dbPath: "./data/bunzzle.db",
       logLevel: "info",
+      ehloName: null,
+      sourceIp: null,
+      dnsServers: [],
+      dkimKeyFile: null,
+      ipv6: false,
+      smtpPort: 25,
+      allowPrivateDestinations: false,
     });
   });
 
@@ -23,6 +30,21 @@ describe("loadConfig", () => {
     expect(c.port).toBe(8080);
     expect(c.dbPath).toBe("/var/lib/bunzzle/bunzzle.db");
     expect(c.logLevel).toBe("debug");
+  });
+
+  test("reads sending settings", () => {
+    const c = loadConfig({
+      BUNZZLE_EHLO_NAME: "mail.bunzzle.com",
+      BUNZZLE_SOURCE_IP: "203.0.113.7",
+      BUNZZLE_DNS_SERVERS: "1.1.1.1, 9.9.9.9:53",
+      BUNZZLE_IPV6: "true",
+      BUNZZLE_ALLOW_PRIVATE_DESTINATIONS: "1",
+    });
+    expect(c.ehloName).toBe("mail.bunzzle.com");
+    expect(c.sourceIp).toBe("203.0.113.7");
+    expect(c.dnsServers).toEqual(["1.1.1.1", "9.9.9.9:53"]);
+    expect(c.ipv6).toBe(true);
+    expect(c.allowPrivateDestinations).toBe(true);
   });
 
   test("reports every invalid value at once", () => {

@@ -9,3 +9,4 @@ data/
 !.env.example
 .DS_Store
 *.bun-build
+dkim*.json
