@@ -8,7 +8,7 @@ import {
   TOKEN,
 } from "../../src/accounts/api-keys.ts";
 import { openDatabase } from "../../src/core/store/db.ts";
-import { evaluate, expectedRecords } from "../../src/domains/domains.ts";
+import { evaluate, expectedRecords, getDomain, saveDomain } from "../../src/domains/domains.ts";
 import {
   findIdempotent,
   IDEMPOTENCY_TTL_MS,
@@ -226,5 +226,44 @@ describe("Resend-compatible send requests", () => {
         scheduled_at: "tomorrow",
       }),
     ).toThrow("ISO 8601");
+  });
+});
+
+describe("cached lookups", () => {
+  test("a cached API key is dropped the moment it is revoked", () => {
+    const db = openDatabase({ path: ":memory:" });
+    const { key, token } = createKey(
+      db,
+      { name: "app", scope: "send", domains: null, rateLimit: 10 },
+      T0,
+    );
+    const hash = hashToken(token);
+    expect(keyForHash(db, hash)?.id).toBe(key.id);
+    expect(keyForHash(db, hash)).toBe(keyForHash(db, hash));
+    revokeKey(db, key.id, T0 + 1);
+    expect(keyForHash(db, hash)).toBeNull();
+  });
+
+  test("a domain read inside a transaction that rolls back is never cached", () => {
+    const db = openDatabase({ path: ":memory:" });
+    const d = {
+      name: "acme.test",
+      status: "pending" as const,
+      records: [],
+      createdAt: T0,
+      checkedAt: null,
+    };
+    saveDomain(db, d, T0);
+    expect(getDomain(db, "acme.test")?.status).toBe("pending");
+    try {
+      db.transaction(() => {
+        saveDomain(db, { ...d, status: "verified" }, T0 + 1);
+        expect(getDomain(db, "acme.test")?.status).toBe("verified");
+        throw new Error("rollback");
+      })();
+    } catch {}
+    expect(getDomain(db, "acme.test")?.status).toBe("pending");
+    saveDomain(db, { ...d, status: "verified" }, T0 + 2);
+    expect(getDomain(db, "acme.test")?.status).toBe("verified");
   });
 });

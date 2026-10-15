@@ -98,9 +98,40 @@ function selectorBase(now: number): string {
   return `bz${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
+const TOUCH_MS = 60_000;
+const SIGNER_DOMAINS_MS = 60_000;
+
 export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending(): Promise<void> } {
   const { db, writer, log, signer, delivery } = deps;
   const now = deps.now ?? Date.now;
+
+  const touched = new Map<string, number>();
+  const touch = (id: string) => {
+    const t = now();
+    if (t - (touched.get(id) ?? 0) < TOUCH_MS) return;
+    touched.set(id, t);
+    void writer.run((d) => touchKey(d, id, t), { quiet: true }).catch(() => {});
+  };
+
+  let signerDomains: { at: number; domains: Set<string> } | null = null;
+  let fetchingDomains: Promise<Set<string>> | null = null;
+  const fetchSignerDomains = (): Promise<Set<string>> => {
+    fetchingDomains ??= signer
+      .call("domains", {}, { result: z.array(z.string()) })
+      .then((list) => {
+        signerDomains = { at: now(), domains: new Set(list) };
+        return signerDomains.domains;
+      })
+      .finally(() => {
+        fetchingDomains = null;
+      });
+    return fetchingDomains;
+  };
+  const signerHasKeys = async (domain: string): Promise<boolean> => {
+    const fresh = signerDomains !== null && now() - signerDomains.at < SIGNER_DOMAINS_MS;
+    if (fresh && signerDomains?.domains.has(domain)) return true;
+    return (await fetchSignerDomains()).has(domain);
+  };
 
   const caller = (hash: string | undefined, needed: Scope): ApiKey => {
     if (hash === undefined) return OPERATOR;
@@ -112,7 +143,7 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
         `this API key cannot ${needed === "send" ? "send email" : needed === "read" ? "read" : "do this"}`,
       );
     }
-    void writer.run((d) => touchKey(d, key.id, now()), { quiet: true }).catch(() => {});
+    touch(key.id);
     return key;
   };
 
@@ -171,7 +202,7 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
     enqueue: method(enqueueParams, async (p) => {
       const key = caller(p.tokenHash, "send");
       const id = p.id ?? Bun.randomUUIDv7();
-      if (emailExists(db, id)) return { id, existed: true };
+      if (p.id !== undefined && emailExists(db, id)) return { id, existed: true };
       let headerDomain: string;
       let envelopeFrom: string;
       try {
@@ -195,8 +226,7 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
             : `The ${headerDomain} domain is not registered. Add it with \`bunzzle domains add ${headerDomain}\`.`,
         );
       }
-      const signerDomains = await signer.call("domains", {}, { result: z.array(z.string()) });
-      if (!signerDomains.includes(headerDomain)) {
+      if (!(await signerHasKeys(headerDomain))) {
         throw new RpcError("unverified-domain", `no DKIM key for ${headerDomain}; it cannot send`);
       }
       const t = now();
@@ -341,6 +371,7 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
         { domain: name, selectorBase: selectorBase(now()) },
         { result: publicKeyInfo, timeoutMs: 60_000 },
       );
+      signerDomains = null;
       const t = now();
       const d: Domain = {
         name,

@@ -76,11 +76,34 @@ export function getKey(db: Database, id: string): ApiKey | null {
   return r ? fromRow(r) : null;
 }
 
+const cached = new WeakMap<Database, Map<string, ApiKey>>();
+const MAX_CACHED = 10_000;
+
+function cacheOf(db: Database): Map<string, ApiKey> {
+  let c = cached.get(db);
+  if (!c) {
+    c = new Map();
+    cached.set(db, c);
+  }
+  return c;
+}
+
 export function keyForHash(db: Database, hash: string): ApiKey | null {
+  const c = cacheOf(db);
+  const hit = c.get(hash);
+  if (hit) return hit;
   const r = db
     .query<Row, [string]>("SELECT * FROM api_keys WHERE token_hash = ? AND revoked_at IS NULL")
     .get(hash);
-  return r ? fromRow(r) : null;
+  if (!r) return null;
+  const key = fromRow(r);
+  if (key.domains) Object.freeze(key.domains);
+  Object.freeze(key);
+  if (!db.inTransaction) {
+    if (c.size >= MAX_CACHED) c.clear();
+    c.set(hash, key);
+  }
+  return key;
 }
 
 export function touchKey(db: Database, id: string, now: number): void {
@@ -95,6 +118,8 @@ export function listKeys(db: Database): ApiKey[] {
 }
 
 export function revokeKey(db: Database, id: string, now: number): boolean {
+  const c = cacheOf(db);
+  for (const [hash, key] of c) if (key.id === id) c.delete(hash);
   return (
     db
       .query<unknown, [number, string]>(

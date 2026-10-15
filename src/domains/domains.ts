@@ -200,7 +200,19 @@ const fromRow = (r: Row): Domain => ({
   checkedAt: r.checked_at,
 });
 
+const cachedDomains = new WeakMap<Database, Map<string, Domain>>();
+
+function domainCache(db: Database): Map<string, Domain> {
+  let c = cachedDomains.get(db);
+  if (!c) {
+    c = new Map();
+    cachedDomains.set(db, c);
+  }
+  return c;
+}
+
 export function saveDomain(db: Database, d: Domain, now: number): void {
+  domainCache(db).delete(d.name);
   db.query<unknown, [string, DomainStatus, string, number, number | null, number]>(
     `INSERT INTO domains (name, status, records, created_at, checked_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)
@@ -210,12 +222,21 @@ export function saveDomain(db: Database, d: Domain, now: number): void {
 }
 
 export function getDomain(db: Database, name: string): Domain | null {
+  const c = domainCache(db);
+  const hit = c.get(name);
+  if (hit) return hit;
   const r = db
     .query<Row, [string]>(
       "SELECT name, status, records, created_at, checked_at FROM domains WHERE name = ?",
     )
     .get(name);
-  return r ? fromRow(r) : null;
+  if (!r) return null;
+  const d = fromRow(r);
+  Object.freeze(d.records);
+  for (const rec of d.records) Object.freeze(rec);
+  Object.freeze(d);
+  if (!db.inTransaction) c.set(name, d);
+  return d;
 }
 
 export function listDomains(db: Database): Domain[] {

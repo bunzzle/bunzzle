@@ -195,7 +195,7 @@ describe("POST /emails and GET /emails/:id", () => {
         ]),
     );
     expect((await verifyDkim(received, keys)).every((v) => v.ok)).toBe(true);
-    expect(received).not.toContain("bcc");
+    expect(received).not.toMatch(/^bcc:/im);
   }, 15_000);
 
   test("Idempotency-Key: same request gives the same id, a different body is a conflict", async () => {
