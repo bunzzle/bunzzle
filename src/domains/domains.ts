@@ -1,14 +1,14 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 
-export type RecordKind = "DKIM" | "SPF" | "DMARC";
+export type RecordKind = "DKIM" | "SPF" | "DMARC" | "RETURN_PATH_MX" | "RETURN_PATH_SPF";
 export type CheckStatus = "not_started" | "verified" | "missing" | "mismatch";
 export type DomainStatus = "pending" | "verified";
 
 export interface DomainRecord {
   record: RecordKind;
   name: string;
-  type: "TXT";
+  type: "TXT" | "MX";
   value: string;
   required: boolean;
   status: CheckStatus;
@@ -30,9 +30,9 @@ export interface PublicDkimKey {
 }
 
 const recordSchema = z.object({
-  record: z.enum(["DKIM", "SPF", "DMARC"]),
+  record: z.enum(["DKIM", "SPF", "DMARC", "RETURN_PATH_MX", "RETURN_PATH_SPF"]),
   name: z.string(),
-  type: z.literal("TXT"),
+  type: z.enum(["TXT", "MX"]),
   value: z.string(),
   required: z.boolean(),
   status: z.enum(["not_started", "verified", "missing", "mismatch"]),
@@ -48,8 +48,28 @@ export function expectedRecords(
   domain: string,
   keys: PublicDkimKey[],
   sourceIp: string | null,
+  inboundHost: string | null = null,
 ): DomainRecord[] {
   const base = { type: "TXT" as const, status: "not_started" as const, found: null };
+  const returnPath: DomainRecord[] = inboundHost
+    ? [
+        {
+          ...base,
+          record: "RETURN_PATH_MX",
+          type: "MX",
+          name: bounceDomain(domain),
+          value: `10 ${inboundHost}`,
+          required: false,
+        },
+        {
+          ...base,
+          record: "RETURN_PATH_SPF",
+          name: bounceDomain(domain),
+          value: `v=spf1 ${spfMechanism(sourceIp)} ~all`,
+          required: false,
+        },
+      ]
+    : [];
   return [
     ...keys.map((k) => ({
       ...base,
@@ -72,8 +92,11 @@ export function expectedRecords(
       value: "v=DMARC1; p=none;",
       required: false,
     },
+    ...returnPath,
   ];
 }
+
+export const bounceDomain = (domain: string) => `bounce.${domain}`;
 
 function tags(txt: string): Map<string, string> {
   const out = new Map<string, string>();
@@ -98,7 +121,13 @@ function check(r: DomainRecord, found: string[], sourceIp: string | null): Domai
     const match = dkim.find((t) => tags(t).get("p") === want);
     return match ? result("verified", match) : result("mismatch", dkim[0] ?? null);
   }
-  if (r.record === "SPF") {
+  if (r.record === "RETURN_PATH_MX") {
+    const want = r.value.split(" ")[1]?.toLowerCase().replace(/\.$/, "");
+    if (found.length === 0) return result("missing", null);
+    const match = found.find((h) => h.toLowerCase().replace(/\.$/, "").endsWith(` ${want}`));
+    return match ? result("verified", match) : result("mismatch", found.join(", "));
+  }
+  if (r.record === "SPF" || r.record === "RETURN_PATH_SPF") {
     const spf = found.filter((t) => /^v=spf1(\s|$)/i.test(t.trim()));
     if (spf.length === 0) return result("missing", null);
     const record = spf[0] as string;
@@ -117,9 +146,19 @@ export function evaluate(
   found: Record<string, string[]>,
   sourceIp: string | null,
 ): { records: DomainRecord[]; status: DomainStatus } {
-  const checked = records.map((r) => check(r, found[r.name] ?? [], sourceIp));
+  const checked = records.map((r) =>
+    check(r, found[`${r.type}:${r.name}`] ?? found[r.name] ?? [], sourceIp),
+  );
   const ok = checked.filter((r) => r.required).every((r) => r.status === "verified");
   return { records: checked, status: ok ? "verified" : "pending" };
+}
+
+export function returnPathReady(
+  d: { status: DomainStatus; records: DomainRecord[] } | null,
+): boolean {
+  if (d?.status !== "verified") return false;
+  const rp = d.records.filter((r) => r.record.startsWith("RETURN_PATH"));
+  return rp.length > 0 && rp.every((r) => r.status === "verified");
 }
 
 interface Row {

@@ -24,6 +24,8 @@ describe("loadConfig", () => {
       inboundHost: "0.0.0.0",
       inboundPort: null,
       retryScale: 1,
+      publicUrl: null,
+      inboundHostname: null,
     });
   });
 

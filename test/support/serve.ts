@@ -6,6 +6,7 @@ export interface Served {
   proc: Subprocess<"ignore", "pipe", "pipe">;
   dir: string;
   url: string;
+  inboundPort: number | null;
   pids: Map<string, number>;
   logs: Record<string, unknown>[];
   stop(): Promise<number>;
@@ -30,6 +31,7 @@ export async function startServe(env: Record<string, string>): Promise<Served> {
   const pids = new Map<string, number>();
   const logs: Record<string, unknown>[] = [];
   const listening = Promise.withResolvers<string>();
+  let inboundPort: number | null = null;
   void (async () => {
     let buf = "";
     const dec = new TextDecoder();
@@ -53,7 +55,10 @@ export async function startServe(env: Record<string, string>): Promise<Served> {
         ) {
           pids.set(String(entry["role"]), entry["pid"]);
         }
-        if (entry["msg"] === "listening") listening.resolve(String(entry["url"]));
+        if (entry["msg"] === "listening") {
+          inboundPort = typeof entry["inboundPort"] === "number" ? entry["inboundPort"] : null;
+          listening.resolve(String(entry["url"]));
+        }
       }
     }
     listening.reject(new Error(`serve exited: ${await new Response(proc.stderr).text()}`));
@@ -63,6 +68,9 @@ export async function startServe(env: Record<string, string>): Promise<Served> {
     proc,
     dir,
     url,
+    get inboundPort() {
+      return inboundPort;
+    },
     pids,
     logs,
     async stop() {

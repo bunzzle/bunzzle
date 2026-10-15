@@ -13,7 +13,13 @@ import { runSigner } from "../roles/signer.ts";
 import { runSupervisor } from "../roles/supervisor.ts";
 import { ROLES, type Role } from "../roles/wire.ts";
 import { VERSION } from "../version.ts";
-import { domainsCommand, keysCommand, pathsCommand } from "./admin.ts";
+import {
+  domainsCommand,
+  keysCommand,
+  pathsCommand,
+  suppressionsCommand,
+  webhooksCommand,
+} from "./admin.ts";
 import { UsageError } from "./args.ts";
 import { dkimCommand } from "./dkim.ts";
 import { sendCommand } from "./send.ts";
@@ -28,6 +34,8 @@ Usage:
   bunzzle domains     add|verify|show|list sending domains (needs \`serve\` running)
   bunzzle keys        create|list|revoke API keys (needs \`serve\` running)
   bunzzle paths       sending speed per destination and why it changed (needs \`serve\` running)
+  bunzzle webhooks    add|list|remove event webhooks (needs \`serve\` running)
+  bunzzle suppressions list|add|remove suppressed addresses (needs \`serve\` running)
   bunzzle --version   Print the version
   bunzzle --help      Show this help
 
@@ -59,6 +67,9 @@ bunzzle keys:
 API (bunzzle serve):
   POST /emails            Resend-compatible; Idempotency-Key header; extra: expires_at, require_tls, lane
   GET  /paths             sending speed per destination, limits and recent changes
+  GET|POST /webhooks, DELETE /webhooks/:id     signed like Svix / Standard Webhooks
+  GET|POST /suppressions, DELETE /suppressions/:email
+  GET|POST /u/:token      one-click unsubscribe (public, added to bulk email)
   GET  /emails/:id        status per recipient, every attempt with MX, TLS and the reply
   GET|POST /domains, GET /domains/:name, POST /domains/:name/verify
 
@@ -80,7 +91,9 @@ Configuration (environment variables):
   BUNZZLE_KEYS_DIR    signer's directory (default ./keys; DKIM key files go in keys/dkim/)
   BUNZZLE_RUN_DIR     sockets between the roles (default ./run)
   BUNZZLE_RETENTION_DAYS  email bodies become unreadable after this (default 30, min 7)
-  BUNZZLE_INBOUND_PORT    port for incoming mail (off by default)
+  BUNZZLE_INBOUND_PORT    port for bounces and feedback (off by default; 25 in production)
+  BUNZZLE_INBOUND_HOSTNAME  name of this server for bounce MX records (default: EHLO name)
+  BUNZZLE_PUBLIC_URL      https URL of the API, used in unsubscribe links
 `;
 
 async function serve() {
@@ -126,6 +139,10 @@ async function main(argv: string[]) {
       return keysCommand(argv.slice(1), loadConfig());
     case "paths":
       return pathsCommand(argv.slice(1), loadConfig());
+    case "webhooks":
+      return webhooksCommand(argv.slice(1), loadConfig());
+    case "suppressions":
+      return suppressionsCommand(argv.slice(1), loadConfig());
     case "master-key":
       console.log(generateMasterKey());
       return;

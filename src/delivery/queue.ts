@@ -18,6 +18,7 @@ export interface NewEmail extends EmailPayload {
   runAfter?: number;
   expiresAt?: number;
   metadata?: Record<string, unknown>;
+  suppressed?: Map<string, { reason: string; scope: string }>;
 }
 
 export type RecipientState = "queued" | "deferred" | "unknown" | "delivered" | "bounced" | "failed";
@@ -70,8 +71,33 @@ export function enqueueEmail(db: Database, email: NewEmail, now: number): string
   const insert = db.query<unknown, [string, string, number]>(
     "INSERT INTO recipients (job_id, address, status, updated_at) VALUES (?, ?, 'queued', ?)",
   );
+  const blocked = db.query<unknown, [string, string, string, number]>(
+    `INSERT INTO recipients (job_id, address, status, class, reply, updated_at)
+     VALUES (?, ?, 'failed', 'suppressed', ?, ?)`,
+  );
   for (const [domain, addresses] of byDomain) {
-    for (const address of addresses) insert.run(jobId(id, domain), address, now);
+    let live = 0;
+    for (const address of addresses) {
+      const s = email.suppressed?.get(address);
+      if (s) {
+        blocked.run(jobId(id, domain), address, `suppressed (${s.reason})`, now);
+        appendEvent(db, {
+          messageId: id,
+          kind: "suppressed",
+          source: "intake",
+          at: now,
+          data: { address, reason: s.reason, scope: s.scope },
+        });
+      } else {
+        insert.run(jobId(id, domain), address, now);
+        live++;
+      }
+    }
+    if (live === 0) {
+      db.query<unknown, [number, string]>(
+        "UPDATE jobs SET state = 'done', updated_at = ? WHERE id = ?",
+      ).run(now, jobId(id, domain));
+    }
   }
   db.query<unknown, [string, number, Uint8Array, Uint8Array]>(
     "INSERT INTO bodies (message_id, epoch, wrapped, body) VALUES (?, ?, ?, ?)",
@@ -113,6 +139,12 @@ export function shredBodies(db: Database, now: number, retentionMs: number): str
     .map((r) => r.message_id);
   for (const id of ids)
     appendEvent(db, { messageId: id, kind: "shredded", source: "retention", at: now });
+  db.query<unknown, [number]>(
+    "UPDATE inbound SET raw = NULL, wrapped = NULL, epoch = NULL WHERE received_at < ? AND raw IS NOT NULL",
+  ).run(now - retentionMs);
+  db.query<unknown, [number]>(
+    "DELETE FROM webhook_deliveries WHERE state IN ('done', 'failed') AND updated_at < ?",
+  ).run(now - retentionMs);
   return ids;
 }
 

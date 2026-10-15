@@ -25,6 +25,7 @@ export const SIGNED_HEADERS = [
   "list-unsubscribe",
   "list-unsubscribe-post",
   "feedback-id",
+  "x-bunzzle-ref",
 ];
 
 export const OVERSIGNED_HEADERS = new Set([
@@ -36,6 +37,8 @@ export const OVERSIGNED_HEADERS = new Set([
   "date",
   "list-unsubscribe",
   "list-unsubscribe-post",
+  "feedback-id",
+  "x-bunzzle-ref",
 ]);
 
 const enc = new TextEncoder();

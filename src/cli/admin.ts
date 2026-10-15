@@ -120,6 +120,83 @@ export async function pathsCommand(argv: string[], config: Config) {
   }
 }
 
+export async function webhooksCommand(argv: string[], config: Config) {
+  const [sub, ...rest] = argv;
+  switch (sub) {
+    case "add": {
+      const [url, ...flags] = rest;
+      if (!url) throw new UsageError("usage: bunzzle webhooks add URL [--event TYPE]...");
+      const args = parseArgs(flags, { lists: ["event"] });
+      const events = args.lists.get("event");
+      const h = await call<{
+        id: string;
+        endpoint: string;
+        events: string[];
+        signing_secret: string;
+      }>(config, "createWebhook", { url, ...(events ? { events } : {}) });
+      console.log(`Webhook ${h.id} → ${h.endpoint}`);
+      console.log(`Events: ${h.events.join(", ")}`);
+      console.log(`Signing secret (Standard Webhooks / Svix format): ${h.signing_secret}`);
+      return;
+    }
+    case "list": {
+      const hooks = await call<{ id: string; endpoint: string; events: string[] }[]>(
+        config,
+        "listWebhooks",
+        {},
+      );
+      if (hooks.length === 0)
+        console.log("No webhooks yet. Add one with `bunzzle webhooks add URL`.");
+      for (const h of hooks) console.log(`${h.id}  ${h.endpoint}  (${h.events.join(", ")})`);
+      return;
+    }
+    case "remove": {
+      const id = rest[0];
+      if (!id) throw new UsageError("usage: bunzzle webhooks remove ID");
+      await call(config, "deleteWebhook", { id });
+      console.log(`Removed ${id}.`);
+      return;
+    }
+    default:
+      throw new UsageError("usage: bunzzle webhooks add|list|remove");
+  }
+}
+
+export async function suppressionsCommand(argv: string[], config: Config) {
+  const [sub, ...rest] = argv;
+  switch (sub) {
+    case "list": {
+      const list = await call<
+        { email: string; scope: string; reason: string; expires_at: string | null }[]
+      >(config, "listSuppressions", {});
+      if (list.length === 0) console.log("No suppressed addresses.");
+      for (const s of list) {
+        console.log(
+          `${s.email}  ${s.scope.padEnd(4)}  ${s.reason}${s.expires_at ? `  until ${s.expires_at}` : ""}`,
+        );
+      }
+      return;
+    }
+    case "add":
+    case "remove": {
+      const [email, ...flags] = rest;
+      if (!email)
+        throw new UsageError(`usage: bunzzle suppressions ${sub} EMAIL [--scope all|bulk]`);
+      const scope = parseArgs(flags, { strings: ["scope"] }).strings.get("scope");
+      if (scope && scope !== "all" && scope !== "bulk")
+        throw new UsageError("--scope must be all or bulk");
+      await call(config, sub === "add" ? "addSuppression" : "removeSuppression", {
+        email,
+        ...(scope ? { scope } : {}),
+      });
+      console.log(sub === "add" ? `Suppressed ${email}.` : `Removed ${email} from suppressions.`);
+      return;
+    }
+    default:
+      throw new UsageError("usage: bunzzle suppressions list|add|remove");
+  }
+}
+
 interface KeyView {
   id: string;
   name: string;

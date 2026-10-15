@@ -76,7 +76,7 @@ async function pipeline(scenario: MxScenario, limits: Limits, tuning = {}) {
       pool,
       perConnection: () => 100,
     },
-    (id, body) => signer.open(id, body),
+    (id, body, o) => signer.open(id, body, o),
   );
   const handle = deliveryHandler({
     db,

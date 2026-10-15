@@ -6,12 +6,14 @@ import type { Logger } from "../core/log.ts";
 import { type Apply, defer, fail, type Outcome, ok, requeue, unknown } from "../core/outcome.ts";
 import { clampHint } from "../core/retry.ts";
 import type { Destination } from "../dns/mx.ts";
+import { domainOf } from "../mime/address.ts";
 import { type Classification, classify } from "../replies/classify.ts";
 import { providerOf, siteOf } from "../routing/providers.ts";
 import type { JobContext } from "../scheduler/scheduler.ts";
 import { type Admission, Shaper } from "../shaping/shaper.ts";
 import type { DeliveryReport } from "../smtp/deliver.ts";
 import type { RecipientResult } from "../smtp/session.ts";
+import { suppress, suppressionForClass } from "../suppressions/store.ts";
 import { bodyOf, type EmailPayload, pendingRecipients, type RecipientState } from "./queue.ts";
 import type { DeliveryTransport } from "./transport.ts";
 
@@ -24,6 +26,7 @@ export interface DeliveryHandlerOptions {
   shaper: Shaper;
   busyRetryMs?: number;
   maxWaitMs?: number;
+  bounceDomainFor?: (senderDomain: string) => string | null;
 }
 
 interface Update {
@@ -123,7 +126,27 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
           rule: u.verdict?.rule ?? null,
         });
         if (u.verdict?.suppress) {
-          event("suppression_candidate", { address: u.address, class: u.verdict.class });
+          const s = suppressionForClass(u.verdict.class);
+          if (s) {
+            suppress(
+              db,
+              {
+                address: u.address,
+                scope: s.scope,
+                reason: s.reason,
+                detail: u.reply,
+                messageId: job.messageId,
+                ttlMs: s.ttlMs,
+              },
+              now,
+            );
+            event("address_suppressed", {
+              address: u.address,
+              reason: s.reason,
+              scope: s.scope,
+              class: u.verdict.class,
+            });
+          }
         }
       }
       effects(db, now);
@@ -222,10 +245,13 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         requireTls: email.requireTls,
         body,
         ...(destination.kind === "targets" ? { connections: ticket.connections } : {}),
+        lane,
+        bounceDomain: o.bounceDomainFor?.(domainOf(email.from)) ?? null,
       });
     } catch (err) {
       ticket.release("neutral", "delivery role unreachable");
-      if ((err as { code?: unknown })?.code === "unavailable") {
+      const code = (err as { code?: unknown })?.code;
+      if (code === "unavailable" || code === "invalid") {
         return {
           ...requeue(`delivery unavailable: ${(err as Error).message}`, busyRetryMs),
           apply: (d) => setPath(d),

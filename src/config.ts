@@ -30,6 +30,10 @@ const schema = z.object({
   BUNZZLE_INBOUND_HOST: z.string().min(1).default("0.0.0.0"),
   BUNZZLE_INBOUND_PORT: z.coerce.number().int().min(0).max(65535).optional(),
   BUNZZLE_RETRY_SCALE: z.coerce.number().positive().max(1).default(1),
+  BUNZZLE_PUBLIC_URL: optional.refine((v) => v === null || /^https?:\/\/[^\s/]+/.test(v), {
+    message: "must be an http(s) URL like https://mail.example.com",
+  }),
+  BUNZZLE_INBOUND_HOSTNAME: optional,
 });
 
 export interface Config {
@@ -53,6 +57,8 @@ export interface Config {
   inboundHost: string;
   inboundPort: number | null;
   retryScale: number;
+  publicUrl: string | null;
+  inboundHostname: string | null;
 }
 
 export class ConfigError extends Error {}
@@ -88,5 +94,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     inboundHost: c.BUNZZLE_INBOUND_HOST,
     inboundPort: c.BUNZZLE_INBOUND_PORT ?? null,
     retryScale: c.BUNZZLE_RETRY_SCALE,
+    publicUrl: c.BUNZZLE_PUBLIC_URL?.replace(/\/+$/, "") ?? null,
+    inboundHostname: c.BUNZZLE_INBOUND_HOSTNAME ?? c.BUNZZLE_EHLO_NAME,
   };
 }

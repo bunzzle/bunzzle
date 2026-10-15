@@ -6,6 +6,8 @@ export class MasterKeyError extends CryptoError {}
 
 export interface MasterKey {
   id: string;
+  mac(data: Uint8Array, purpose: string): Promise<Uint8Array>;
+  derive(purpose: string): Promise<Uint8Array>;
   seal(plaintext: Uint8Array, context: string): Promise<Uint8Array>;
   open(sealed: Uint8Array, context: string): Promise<Uint8Array>;
 }
@@ -47,8 +49,28 @@ export async function masterKeyFrom(text: string): Promise<MasterKey> {
     ["encrypt", "decrypt"],
   );
   const id = (await hkdf(base, "bunzzle key id v1", 64)).toHex();
+  const macKeys = new Map<string, CryptoKey>();
+  const macKey = async (purpose: string) => {
+    let k = macKeys.get(purpose);
+    if (!k) {
+      k = await crypto.subtle.importKey(
+        "raw",
+        (await hkdf(base, `bunzzle mac v1:${purpose}`, 256)) as Uint8Array<ArrayBuffer>,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"],
+      );
+      macKeys.set(purpose, k);
+    }
+    return k;
+  };
   return {
     id,
+    mac: async (data, purpose) =>
+      new Uint8Array(
+        await crypto.subtle.sign("HMAC", await macKey(purpose), data as Uint8Array<ArrayBuffer>),
+      ),
+    derive: (purpose) => hkdf(base, `bunzzle derive v1:${purpose}`, 256),
     seal: (plaintext, context) => sealWith(sealing, plaintext, context),
     open: async (sealed, context) => {
       try {

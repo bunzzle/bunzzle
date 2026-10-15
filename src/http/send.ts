@@ -163,6 +163,13 @@ export function prepareEmail(req: SendRequest, now: Date): PreparedEmail {
   const scheduledAt = time("scheduled_at", req.scheduled_at);
   const expiresAt = time("expires_at", req.expires_at);
   const recipients = [...new Set([...to, ...cc, ...bcc].map((a) => a.address))];
+  if (req.lane === "bulk" && recipients.length !== 1) {
+    throw new ApiError(
+      422,
+      "validation_error",
+      "A bulk email must have exactly one recipient, so each one gets its own unsubscribe link.",
+    );
+  }
   return {
     from: from.address,
     fromDomain,

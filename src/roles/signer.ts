@@ -21,6 +21,7 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
     keystorePath: `${config.keysDir}/epochs.json`,
     dkimKeyFiles: files,
     dkimDir: `${config.keysDir}/dkim`,
+    publicUrl: config.publicUrl,
   });
 
   const shred = async () => {
@@ -42,11 +43,31 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
       }),
       ({ domain, selectorBase }) => signer.ensureKeys(domain, selectorBase),
     ),
+    readToken: method(z.object({ token: z.string().max(100) }), ({ token }) =>
+      signer.readToken(token),
+    ),
+    webhookSecret: method(z.object({ id: z.string().min(1).max(64) }), ({ id }) =>
+      signer.webhookSecret(id),
+    ),
+    signWebhook: method(
+      z.object({
+        id: z.string().min(1).max(64),
+        msgId: z.string().min(1).max(100),
+        timestamp: z.number().int(),
+        body: z.string().max(1_000_000),
+      }),
+      (p) => signer.signWebhook(p.id, p.msgId, p.timestamp, p.body),
+    ),
     open: method(
-      z.object({ messageId: z.string().regex(MESSAGE_ID), body: sealedBodyWire }),
-      async ({ messageId, body }) => {
+      z.object({
+        messageId: z.string().regex(MESSAGE_ID),
+        body: sealedBodyWire,
+        lane: z.enum(["transactional", "bulk"]).default("transactional"),
+        bounceDomain: z.string().max(253).nullable().default(null),
+      }),
+      async ({ messageId, body, lane, bounceDomain }) => {
         try {
-          return { data: await signer.open(messageId, fromWire(body)) };
+          return await signer.open(messageId, fromWire(body), { lane, bounceDomain });
         } catch (err) {
           if (err instanceof SignerError) {
             if (err.code === "unreadable")

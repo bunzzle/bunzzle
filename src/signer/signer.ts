@@ -1,6 +1,7 @@
 import { type Clock, systemClock } from "../core/clock.ts";
 import { type EpochPublicKey, epochOf, openBody, type SealedBody } from "../crypto/envelope.ts";
 import type { MasterKey } from "../crypto/master.ts";
+import { splitMessage } from "../dkim/canonicalize.ts";
 import {
   generateKeyFile,
   importKeys,
@@ -13,6 +14,7 @@ import { type DkimKey, signMessage } from "../dkim/sign.ts";
 import { AddressError } from "../mime/address.ts";
 import { senderDomainOf } from "../mime/from.ts";
 import { Keystore } from "./keystore.ts";
+import { makeToken, readToken } from "./tokens.ts";
 
 export class SignerError extends Error {
   constructor(
@@ -23,7 +25,18 @@ export class SignerError extends Error {
   }
 }
 
+export interface OpenOptions {
+  lane?: "transactional" | "bulk";
+  bounceDomain?: string | null;
+}
+
+export interface Opened {
+  data: string;
+  bounceToken: string;
+}
+
 export interface SignerOptions {
+  publicUrl?: string | null;
   master: MasterKey;
   keystorePath: string;
   dkimKeyFiles: string[];
@@ -122,7 +135,7 @@ export class Signer {
     return { epoch: pair.epoch, publicKey: pair.publicKey };
   }
 
-  async open(messageId: string, body: SealedBody): Promise<string> {
+  async open(messageId: string, body: SealedBody, o: OpenOptions = {}): Promise<Opened> {
     const pair = await this.#keystore.get(body.epoch);
     if (!pair) {
       throw new SignerError(
@@ -145,7 +158,52 @@ export class Signer {
     }
     const keys = this.#keys.get(domain);
     if (!keys) throw new SignerError("no-key", `no DKIM key for ${domain}`);
-    return signMessage(raw, keys, new Date(this.#clock.now()));
+    const master = this.#o.master;
+    const bounceToken = await makeToken(master, "b", messageId);
+    const lane = o.lane ?? "transactional";
+    const extra = [`X-Bunzzle-Ref: ${bounceToken}`, `Feedback-ID: ${lane}:${domain}:bunzzle`];
+    const hasUnsubscribe = splitMessage(raw).headers.some(
+      (h) => h.name.trim().toLowerCase() === "list-unsubscribe",
+    );
+    if (lane === "bulk" && !hasUnsubscribe) {
+      const token = await makeToken(master, "u", messageId);
+      const links: string[] = [];
+      const base = this.#o.publicUrl?.replace(/\/+$/, "");
+      if (base) links.push(`<${base}/u/${token}>`);
+      if (o.bounceDomain) links.push(`<mailto:u-${token}@${o.bounceDomain}>`);
+      if (links.length > 0) extra.push(`List-Unsubscribe: ${links.join(", ")}`);
+      if (base) extra.push("List-Unsubscribe-Post: List-Unsubscribe=One-Click");
+    }
+    const data = await signMessage(
+      `${extra.join("\r\n")}\r\n${raw}`,
+      keys,
+      new Date(this.#clock.now()),
+    );
+    return { data, bounceToken };
+  }
+
+  readToken(token: string) {
+    return readToken(this.#o.master, token);
+  }
+
+  async webhookSecret(id: string): Promise<string> {
+    return `whsec_${(await this.#o.master.derive(`webhook:${id}`)).toBase64()}`;
+  }
+
+  async signWebhook(id: string, msgId: string, timestamp: number, body: string): Promise<string> {
+    const key = await crypto.subtle.importKey(
+      "raw",
+      (await this.#o.master.derive(`webhook:${id}`)) as Uint8Array<ArrayBuffer>,
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const mac = await crypto.subtle.sign(
+      "HMAC",
+      key,
+      new TextEncoder().encode(`${msgId}.${timestamp}.${body}`),
+    );
+    return `v1,${new Uint8Array(mac).toBase64()}`;
   }
 
   async shred(retentionDays: number): Promise<number[]> {

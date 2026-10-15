@@ -20,6 +20,8 @@ export interface DeliverRequest {
   requireTls: boolean;
   body: SealedBody;
   connections?: number | undefined;
+  lane?: "transactional" | "bulk" | undefined;
+  bounceDomain?: string | null | undefined;
 }
 
 export interface DeliveryTransport {
@@ -27,7 +29,16 @@ export interface DeliveryTransport {
   deliver(req: DeliverRequest): Promise<DeliveryReport>;
 }
 
-export type OpenBody = (messageId: string, body: SealedBody) => Promise<string>;
+export interface OpenedBody {
+  data: string;
+  bounceToken: string;
+}
+
+export type OpenBody = (
+  messageId: string,
+  body: SealedBody,
+  o: { lane: "transactional" | "bulk"; bounceDomain: string | null },
+) => Promise<OpenedBody>;
 
 function unprepared(req: DeliverRequest, err: unknown): DeliveryReport {
   const code = (err as { code?: unknown })?.code;
@@ -97,17 +108,22 @@ export function localTransport(opts: DeliveryOptions, open: OpenBody): DeliveryT
   return {
     lookup: (domain) => findDestination(domain, opts),
     async deliver(req) {
-      let data: string;
+      let opened: OpenedBody;
       try {
-        data = await open(req.messageId, req.body);
+        opened = await open(req.messageId, req.body, {
+          lane: req.lane ?? "transactional",
+          bounceDomain: req.bounceDomain ?? null,
+        });
       } catch (err) {
         return unprepared(req, err);
       }
+      const from = req.bounceDomain ? `b-${opened.bounceToken}@${req.bounceDomain}` : req.from;
+      const data = opened.data;
       return deliverTo(
         req.destination,
         {
           domain: req.domain,
-          from: req.from,
+          from,
           recipients: req.recipients,
           data,
           smtpUtf8: req.smtpUtf8,

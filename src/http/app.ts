@@ -54,6 +54,22 @@ function invalid(error: z.ZodError): ApiError {
   );
 }
 
+function page(body: string, status = 200): Response {
+  return new Response(
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Unsubscribe</title><body style="font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem">${body}</body>`,
+    {
+      status,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+        "content-security-policy":
+          "default-src 'none'; form-action 'self'; style-src 'unsafe-inline'",
+        "x-frame-options": "DENY",
+      },
+    },
+  );
+}
+
 export interface AppOptions {
   core: RpcClient;
   log: Logger;
@@ -239,6 +255,96 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
             await rpc("getDomain", { tokenHash: caller.hash, name: req.params["name"] }),
           );
         }),
+      },
+      "/webhooks": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const data = await rpc("listWebhooks", { tokenHash: caller.hash }, z.array(z.unknown()));
+          return Response.json({ object: "list", data });
+        }),
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          const parsed = z
+            .object({ endpoint: z.string().max(2048), events: z.array(z.string()).optional() })
+            .safeParse(await json(req));
+          if (!parsed.success) throw invalid(parsed.error);
+          return Response.json(
+            await rpc("createWebhook", {
+              tokenHash: caller.hash,
+              url: parsed.data.endpoint,
+              ...(parsed.data.events ? { events: parsed.data.events } : {}),
+            }),
+          );
+        }),
+      },
+      "/webhooks/:id": {
+        DELETE: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(
+            await rpc("deleteWebhook", { tokenHash: caller.hash, id: req.params["id"] }),
+          );
+        }),
+      },
+      "/suppressions": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const data = await rpc(
+            "listSuppressions",
+            { tokenHash: caller.hash },
+            z.array(z.unknown()),
+          );
+          return Response.json({ object: "list", data });
+        }),
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          const parsed = z
+            .object({ email: z.string().max(320), scope: z.enum(["all", "bulk"]).optional() })
+            .safeParse(await json(req));
+          if (!parsed.success) throw invalid(parsed.error);
+          return Response.json(
+            await rpc("addSuppression", { tokenHash: caller.hash, ...parsed.data }),
+          );
+        }),
+      },
+      "/suppressions/:email": {
+        DELETE: handle(async (req) => {
+          const caller = await authenticate(req);
+          const scope = new URL(req.url).searchParams.get("scope");
+          return Response.json(
+            await rpc("removeSuppression", {
+              tokenHash: caller.hash,
+              email: decodeURIComponent(req.params["email"] ?? ""),
+              ...(scope === "all" || scope === "bulk" ? { scope } : {}),
+            }),
+          );
+        }),
+      },
+      "/u/:token": {
+        GET: (req) => {
+          const token = req.params.token;
+          if (!/^[a-z2-7]{20,80}$/.test(token))
+            return page("This unsubscribe link is not valid.", 404);
+          return page(
+            `<form method="post"><p>Stop receiving these emails?</p><button type="submit">Unsubscribe</button></form>`,
+          );
+        },
+        POST: async (req) => {
+          const token = req.params.token;
+          if (!/^[a-z2-7]{20,80}$/.test(token))
+            return page("This unsubscribe link is not valid.", 404);
+          try {
+            await core.call("unsubscribe", { token }, { timeoutMs: 10_000 });
+          } catch (err) {
+            const e = fromRpc(err);
+            return page(
+              e.status === 404
+                ? "This unsubscribe link is not valid."
+                : "Please try again in a minute.",
+              e.status,
+            );
+          }
+          return page("You are unsubscribed. You will not receive these emails any more.");
+        },
       },
       "/paths": {
         GET: handle(async (req) => {

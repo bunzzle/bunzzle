@@ -74,7 +74,7 @@ async function setup(scenario: MxScenario = {}) {
       tlsCa: TEST_CA,
       timeouts: { greeting: 2_000, quit: 200 },
     },
-    (id, body) => signer.open(id, body),
+    (id, body, o) => signer.open(id, body, o),
   );
   const shaper = new Shaper({
     log,
@@ -150,8 +150,18 @@ describe("delivery: one job per recipient domain, a result per recipient", () =>
       ["nobody@example.test", "bounced", "user-unknown", 1],
       ["x@example.test", "delivered", "accepted", 0],
     ]);
-    const candidate = eventsFor(t.db, id).find((e) => e.kind === "suppression_candidate");
-    expect(candidate?.data).toEqual({ address: "nobody@example.test", class: "user-unknown" });
+    const candidate = eventsFor(t.db, id).find((e) => e.kind === "address_suppressed");
+    expect(candidate?.data).toEqual({
+      address: "nobody@example.test",
+      reason: "hard-bounce",
+      scope: "all",
+      class: "user-unknown",
+    });
+    expect(
+      t.db
+        .query("SELECT reason, scope FROM suppressions WHERE address = 'nobody@example.test'")
+        .get(),
+    ).toEqual({ reason: "hard-bounce", scope: "all" });
   });
 
   test("every recipient rejected: the job is dead, nothing is retried", async () => {
@@ -234,7 +244,7 @@ describe("delivery: feedback to the path (H2)", () => {
     expect(view(t)).toMatchObject({ mode: "paused", until: T0 + 15 * MIN });
     expect(t.job(`${first}/example.test`)["run_after"]).toBe(T0 + 15 * MIN);
     expect(t.kinds(first)).toContain("path_paused");
-    expect(t.kinds(first)).not.toContain("suppression_candidate");
+    expect(t.kinds(first)).not.toContain("address_suppressed");
     expect(alerts.some((l) => l.includes("path paused"))).toBe(true);
 
     const before = sessions();
@@ -347,7 +357,7 @@ describe("delivery: encryption at rest and crypto-shredding", () => {
     expect(onDisk.length).toBeGreaterThan(0);
     expect(onDisk.includes(marker)).toBe(false);
     expect(onDisk.includes("x@example.test")).toBe(true);
-    expect(await t.signer.open(id, body)).toContain(marker);
+    expect((await t.signer.open(id, body)).data).toContain(marker);
     db.close();
   });
 
@@ -366,7 +376,7 @@ describe("delivery: encryption at rest and crypto-shredding", () => {
       wrapped: new Uint8Array(backup.wrapped),
       body: new Uint8Array(backup.body),
     };
-    expect(await t.signer.open(id, copied)).toContain("Hello");
+    expect((await t.signer.open(id, copied)).data).toContain("Hello");
 
     t.clock.advance(31 * 24 * HOUR);
     expect(await t.signer.shred(30)).toEqual([copied.epoch]);

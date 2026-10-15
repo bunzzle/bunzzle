@@ -29,6 +29,7 @@ import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import { AddressError, asciiDomain, domainOf, normalizeAddress } from "../mime/address.ts";
 import { senderDomainOf } from "../mime/from.ts";
 import type { PathView } from "../shaping/shaper.ts";
+import { suppressionFor } from "../suppressions/store.ts";
 import { DOMAIN, enqueueParams, MESSAGE_ID, tokenHash } from "./wire.ts";
 
 const MAX_SCHEDULE_MS = 72 * 3_600_000;
@@ -41,6 +42,7 @@ export interface CoreDeps {
   delivery: RpcClient;
   currentKey: () => Promise<EpochPublicKey>;
   sourceIp: string | null;
+  inboundHost?: string | null;
   paths?: () => PathView[];
   now?: () => number;
 }
@@ -113,10 +115,14 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
   const verify = async (name: string): Promise<Domain> => {
     const d = getDomain(db, name);
     if (!d) throw new RpcError("not-found", `domain ${name} is not registered`);
-    const names = [...new Set(d.records.map((r) => r.name))];
+    const queries = [
+      ...new Map(
+        d.records.map((r) => [`${r.type}:${r.name}`, { name: r.name, type: r.type }]),
+      ).values(),
+    ];
     const found = await delivery.call(
-      "txt",
-      { names },
+      "dns",
+      { queries },
       {
         result: z.record(z.string(), z.array(z.string())),
         timeoutMs: 30_000,
@@ -199,6 +205,21 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
           return { id: prev.messageId, existed: true };
         }
       }
+      const lane = (p.priority ?? 0) > 0 ? "bulk" : "transactional";
+      if (lane === "bulk" && p.recipients.length !== 1) {
+        throw new RpcError("invalid", "a bulk email must have exactly one recipient");
+      }
+      const suppressed = new Map<string, { reason: string; scope: string }>();
+      for (const raw of p.recipients) {
+        let address: string;
+        try {
+          address = normalizeAddress(raw);
+        } catch (err) {
+          throw new RpcError("invalid", (err as Error).message);
+        }
+        const s = suppressionFor(db, address, lane, t);
+        if (s) suppressed.set(address, { reason: s.reason, scope: s.scope });
+      }
       const body = await sealBody(await deps.currentKey(), id, p.data);
       try {
         return await writer.run((d) => {
@@ -223,6 +244,7 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
               recipients: p.recipients,
               smtpUtf8: p.smtpUtf8,
               requireTls: p.requireTls,
+              suppressed,
               metadata: {
                 ...(p.meta ?? {}),
                 apiKeyId: key.id === "operator" ? null : key.id,
@@ -277,7 +299,7 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
       const d: Domain = {
         name,
         status: "pending",
-        records: expectedRecords(name, keys, deps.sourceIp),
+        records: expectedRecords(name, keys, deps.sourceIp, deps.inboundHost ?? null),
         createdAt: t,
         checkedAt: null,
       };

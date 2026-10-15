@@ -5,6 +5,7 @@ import { localTransport, rememberingTransport } from "../delivery/transport.ts";
 import { cachingResolver } from "../dns/cache.ts";
 import { createResolver, parseServer, systemServers } from "../dns/resolver.ts";
 import { method, RpcClient, serveRpc } from "../ipc/rpc.ts";
+import { guardedPost } from "../net/post.ts";
 import { limitsFor } from "../shaping/limits.ts";
 import { allRecipients } from "../smtp/deliver.ts";
 import { SessionPool } from "../smtp/pool.ts";
@@ -37,14 +38,12 @@ export async function runDelivery(config: Config, log: Logger) {
           ? { localAddress: config.sourceIp, ownAddresses: [config.sourceIp] }
           : {}),
       },
-      async (messageId, body) => {
-        const r = await signer.call(
+      async (messageId, body, o) =>
+        signer.call(
           "open",
-          { messageId, body: toWire(body) },
-          { result: z.object({ data: z.string() }), timeoutMs: 60_000 },
-        );
-        return r.data;
-      },
+          { messageId, body: toWire(body), lane: o.lane, bounceDomain: o.bounceDomain },
+          { result: z.object({ data: z.string(), bounceToken: z.string() }), timeoutMs: 60_000 },
+        ),
     ),
   );
 
@@ -52,18 +51,38 @@ export async function runDelivery(config: Config, log: Logger) {
     lookup: method(z.object({ domain: z.string().min(1).max(255) }), ({ domain }) =>
       transport.lookup(domain),
     ),
-    txt: method(
-      z.object({ names: z.array(z.string().min(1).max(255)).max(20) }),
-      async ({ names }) => {
+    postWebhook: method(
+      z.object({
+        url: z.string().max(2048),
+        headers: z.record(z.string().regex(/^[A-Za-z0-9-]+$/), z.string().max(1000)),
+        body: z.string().max(1_000_000),
+      }),
+      ({ url, headers, body }) =>
+        guardedPost(url, headers, body, {
+          resolver,
+          allowPrivate: config.allowPrivateDestinations,
+          ...(config.sourceIp ? { ownAddresses: [config.sourceIp] } : {}),
+          families: config.ipv6 ? [4, 6] : [4],
+        }),
+    ),
+    dns: method(
+      z.object({
+        queries: z
+          .array(z.object({ name: z.string().min(1).max(255), type: z.enum(["TXT", "MX"]) }))
+          .max(20),
+      }),
+      async ({ queries }) => {
         const out: Record<string, string[]> = {};
-        for (const name of names) {
+        for (const q of queries) {
           try {
-            const answer = await uncached.query(name, "TXT");
-            out[name] = answer.records.flatMap((r) =>
-              r.type === "TXT" ? [r.strings.join("")] : [],
-            );
+            const answer = await uncached.query(q.name, q.type);
+            out[`${q.type}:${q.name}`] = answer.records.flatMap((r) => {
+              if (r.type === "TXT") return [r.strings.join("")];
+              if (r.type === "MX") return [`${r.mx.preference} ${r.mx.exchange}`];
+              return [];
+            });
           } catch {
-            out[name] = [];
+            out[`${q.type}:${q.name}`] = [];
           }
         }
         return out;

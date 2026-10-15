@@ -8,12 +8,14 @@ import { type EpochPublicKey, epochOf } from "../crypto/envelope.ts";
 import { deliveryHandler } from "../delivery/handler.ts";
 import { shredBodies } from "../delivery/queue.ts";
 import type { DeliveryTransport } from "../delivery/transport.ts";
+import { bounceDomain, getDomain, returnPathReady } from "../domains/domains.ts";
 import { pruneIdempotency } from "../emails/idempotency.ts";
 import { RpcClient, serveRpc } from "../ipc/rpc.ts";
 import { Scheduler } from "../scheduler/scheduler.ts";
 import { type ControlState, DEFAULT_TUNING } from "../shaping/control.ts";
 import { Shaper } from "../shaping/shaper.ts";
 import { coreMethods } from "./core-api.ts";
+import { feedbackMethods } from "./core-feedback.ts";
 import { every, onStop, privateDir, ready } from "./runtime.ts";
 import {
   deliveryReportWire,
@@ -93,6 +95,7 @@ export async function runCore(config: Config, log: Logger) {
     source: config.sourceIp ?? "default",
     busyRetryMs: scaled(MIN),
     maxWaitMs: Math.max(1_000, Math.floor(Math.max(2_000, scaled(45 * MIN)) / 3)),
+    bounceDomainFor: (d) => (returnPathReady(getDomain(db, d)) ? bounceDomain(d) : null),
   });
   const scheduler = new Scheduler({
     db,
@@ -133,9 +136,20 @@ export async function runCore(config: Config, log: Logger) {
     delivery,
     currentKey,
     sourceIp: config.sourceIp,
+    inboundHost: config.inboundHostname,
     paths: () => shaper.views(),
   });
-  const server = await serveRpc(sock.core, api.methods);
+  const feedback = feedbackMethods({
+    db,
+    writer,
+    log,
+    signer,
+    delivery,
+    currentKey,
+    scale,
+  });
+  await feedback.recover();
+  const server = await serveRpc(sock.core, { ...api.methods, ...feedback.methods });
 
   const shred = async () => {
     const ids = await writer.run((d) =>
@@ -148,12 +162,24 @@ export async function runCore(config: Config, log: Logger) {
     writer.run((d) => pruneIdempotency(d, Date.now())),
   );
   const stopVerify = every(Math.max(1_000, scaled(5 * MIN)), () => api.verifyPending());
+  const stopProject = every(250, () =>
+    feedback
+      .project()
+      .catch((err: Error) => log.error("webhook projection failed", { error: err.message })),
+  );
+  const stopDispatch = every(250, () =>
+    feedback
+      .dispatch()
+      .catch((err: Error) => log.error("webhook dispatch failed", { error: err.message })),
+  );
 
   await scheduler.start();
   onStop(log, async () => {
     stopShred();
     stopPrune();
     stopVerify();
+    stopProject();
+    stopDispatch();
     server.stop();
     shaper.stop();
     await scheduler.stop();

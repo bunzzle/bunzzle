@@ -144,6 +144,8 @@ export const deliverRequestWire = z.object({
   requireTls: z.boolean(),
   body: sealedBodyWire,
   connections: z.number().int().min(1).max(1000).optional(),
+  lane: z.enum(["transactional", "bulk"]).optional(),
+  bounceDomain: z.string().max(253).nullable().optional(),
 });
 
 export const requestToWire = (r: DeliverRequest) => ({ ...r, body: toWire(r.body) });
@@ -189,3 +191,37 @@ export const enqueueParams = z.object({
 export type EnqueueParams = z.input<typeof enqueueParams>;
 
 export const enqueueResult = z.object({ id: z.string(), existed: z.boolean() });
+
+const ref = z.string().max(100).nullable();
+export const reportWire = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("dsn"),
+    ref,
+    recipients: z
+      .array(
+        z.object({
+          address: z.string().max(320),
+          action: z.string().max(40),
+          status: z.string().max(20).nullable(),
+          diagnostic: z.string().max(2000).nullable(),
+          remoteMta: z.string().max(255).nullable(),
+        }),
+      )
+      .max(100),
+  }),
+  z.object({
+    kind: z.literal("arf"),
+    ref,
+    feedbackType: z.string().max(40),
+    originalRcpt: z.string().max(320).nullable(),
+  }),
+  z.object({ kind: z.literal("auto-reply"), ref }),
+  z.object({
+    kind: z.literal("bounce"),
+    ref,
+    status: z.string().max(20).nullable(),
+    diagnostic: z.string().max(2000),
+    addresses: z.array(z.string().max(320)).max(50),
+  }),
+  z.object({ kind: z.literal("unknown"), ref }),
+]);
