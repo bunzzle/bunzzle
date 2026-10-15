@@ -16,6 +16,8 @@ export interface MxScenario {
   data?: string;
   final?: string | ((session: number) => string);
   finalDelayMs?: number;
+  closeAfterMessage?: boolean;
+  maxConcurrent?: number;
 }
 
 export interface MxSession {
@@ -27,6 +29,8 @@ export interface MxSession {
 export interface FakeMx {
   port: number;
   sessions: MxSession[];
+  peak: () => number;
+  refused: () => number;
   stop(): void;
 }
 
@@ -135,6 +139,11 @@ export function startFakeMx(scenario: MxScenario = {}): FakeMx {
         } else {
           state.active.write(reply);
         }
+        if (scenario.closeAfterMessage) {
+          const socket = state.active;
+          setTimeout(() => socket.end(), 20);
+          return;
+        }
         continue;
       }
       const i = state.buffer.indexOf("\r\n");
@@ -145,9 +154,20 @@ export function startFakeMx(scenario: MxScenario = {}): FakeMx {
     }
   };
 
+  let active = 0;
+  let peak = 0;
+  let refused = 0;
   const handlers = {
     open(s: Socket<undefined>) {
       if (states.has(s)) return;
+      if (scenario.maxConcurrent !== undefined && active >= scenario.maxConcurrent) {
+        refused++;
+        s.write("421 4.7.0 Too many connections from your IP, slow down\r\n");
+        s.end();
+        return;
+      }
+      active++;
+      peak = Math.max(peak, active);
       const session: MxSession = { commands: [], tls: false, messages: [] };
       sessions.push(session);
       states.set(s, { session, active: s, buffer: "", inData: false, data: "", accepted: 0 });
@@ -163,6 +183,7 @@ export function startFakeMx(scenario: MxScenario = {}): FakeMx {
       pump(state);
     },
     close(s: Socket<undefined>) {
+      if (states.has(s)) active--;
       states.delete(s);
     },
   };
@@ -178,6 +199,8 @@ export function startFakeMx(scenario: MxScenario = {}): FakeMx {
   return {
     port: server.port,
     sessions,
+    peak: () => peak,
+    refused: () => refused,
     stop: () => server.stop(true),
   };
 }

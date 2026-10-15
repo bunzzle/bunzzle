@@ -66,6 +66,13 @@ export interface ClaimedJob {
   expiresAt: number | null;
   attempt: number;
   unresolvedAttempt: number | null;
+  priority: number;
+  path: string | null;
+}
+
+export interface ClaimFilter {
+  paused?: string[];
+  full?: string[];
 }
 
 interface LeasedRow {
@@ -75,22 +82,41 @@ interface LeasedRow {
   attempt: number;
   expires_at: number | null;
   unresolved_attempt: number | null;
+  priority: number;
+  path: string | null;
 }
 
-export function claim(db: Database, now: number, limit: number, leaseMs: number): ClaimedJob[] {
+export function claim(
+  db: Database,
+  now: number,
+  limit: number,
+  leaseMs: number,
+  filter: ClaimFilter = {},
+): ClaimedJob[] {
   if (limit <= 0) return [];
   const leased = db
-    .query<LeasedRow, [number, number, number, number]>(
+    .query<LeasedRow, [number, number, number, string, string, number]>(
       `UPDATE jobs SET state = 'leased', attempt = attempt + 1, lease_until = ?, updated_at = ?
        WHERE id IN (
          SELECT id FROM jobs
          WHERE state = 'ready' AND run_after <= ?
+           AND (path IS NULL OR (
+             path NOT IN (SELECT value FROM json_each(?))
+             AND (priority = 0 OR path NOT IN (SELECT value FROM json_each(?)))
+           ))
          ORDER BY priority, run_after
          LIMIT ?
        )
-       RETURNING id, message_id, target, attempt, expires_at, unresolved_attempt`,
+       RETURNING id, message_id, target, attempt, expires_at, unresolved_attempt, priority, path`,
     )
-    .all(now + leaseMs, now, now, limit);
+    .all(
+      now + leaseMs,
+      now,
+      now,
+      JSON.stringify(filter.paused ?? []),
+      JSON.stringify(filter.full ?? []),
+      limit,
+    );
   if (leased.length === 0) return [];
 
   const messages = new Map(
@@ -120,6 +146,8 @@ export function claim(db: Database, now: number, limit: number, leaseMs: number)
         expiresAt: r.expires_at,
         attempt: r.attempt,
         unresolvedAttempt: r.unresolved_attempt,
+        priority: r.priority,
+        path: r.path,
       },
     ];
   });
@@ -215,6 +243,16 @@ export function settle(
       for (const after of due) event("delayed", { after_ms: after, reason: outcome.reason });
       return finish("retry");
     }
+    case "requeue": {
+      const r = db
+        .query<unknown, [number, number, string, number]>(
+          `UPDATE jobs SET state = 'ready', run_after = ?, attempt = attempt - 1,
+             lease_until = NULL, updated_at = ? WHERE id = ? AND attempt = ? AND state = 'leased'`,
+        )
+        .run(now + Math.max(0, outcome.delayMs), now, job.id, job.attempt);
+      if (r.changes === 0) return "stale";
+      return finish("requeued");
+    }
     case "unknown": {
       const r = db
         .query<unknown, [number, string, number, string, number]>(
@@ -246,6 +284,22 @@ function toDead(
   if (r.changes === 0) return "stale";
   record();
   return "dead";
+}
+
+export function renewLease(
+  db: Database,
+  job: Pick<ClaimedJob, "id" | "attempt">,
+  until: number,
+  now: number,
+): boolean {
+  return (
+    db
+      .query<unknown, [number, number, string, number]>(
+        `UPDATE jobs SET lease_until = ?, updated_at = ?
+         WHERE id = ? AND attempt = ? AND state = 'leased'`,
+      )
+      .run(until, now, job.id, job.attempt).changes > 0
+  );
 }
 
 export function expireLeases(db: Database, now: number, reconcileMs: number): number {

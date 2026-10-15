@@ -124,6 +124,7 @@ export const deliveryReportWire: z.ZodType<DeliveryReport> = z.object({
         error: text.nullable(),
         tryNext: z.boolean(),
         recipients: z.array(recipient).max(1000),
+        reused: z.boolean().optional(),
       }),
     )
     .max(16),
@@ -142,6 +143,7 @@ export const deliverRequestWire = z.object({
   smtpUtf8: z.boolean(),
   requireTls: z.boolean(),
   body: sealedBodyWire,
+  connections: z.number().int().min(1).max(1000).optional(),
 });
 
 export const requestToWire = (r: DeliverRequest) => ({ ...r, body: toWire(r.body) });
@@ -163,6 +165,7 @@ export const emailMeta = z.object({
   bcc: z.array(z.string().max(320)).max(1000),
   replyTo: z.array(z.string().max(320)).max(50),
   tags: z.array(z.object({ name: z.string().max(256), value: z.string().max(256) })).max(50),
+  lane: z.enum(["transactional", "bulk"]).optional(),
 });
 
 export const enqueueParams = z.object({

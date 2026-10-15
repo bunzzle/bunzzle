@@ -13,7 +13,7 @@ import { runSigner } from "../roles/signer.ts";
 import { runSupervisor } from "../roles/supervisor.ts";
 import { ROLES, type Role } from "../roles/wire.ts";
 import { VERSION } from "../version.ts";
-import { domainsCommand, keysCommand } from "./admin.ts";
+import { domainsCommand, keysCommand, pathsCommand } from "./admin.ts";
 import { UsageError } from "./args.ts";
 import { dkimCommand } from "./dkim.ts";
 import { sendCommand } from "./send.ts";
@@ -27,6 +27,7 @@ Usage:
   bunzzle master-key  Print a new random master key
   bunzzle domains     add|verify|show|list sending domains (needs \`serve\` running)
   bunzzle keys        create|list|revoke API keys (needs \`serve\` running)
+  bunzzle paths       sending speed per destination and why it changed (needs \`serve\` running)
   bunzzle --version   Print the version
   bunzzle --help      Show this help
 
@@ -56,7 +57,8 @@ bunzzle keys:
   list | revoke ID
 
 API (bunzzle serve):
-  POST /emails            Resend-compatible; Idempotency-Key header; extra: expires_at, require_tls
+  POST /emails            Resend-compatible; Idempotency-Key header; extra: expires_at, require_tls, lane
+  GET  /paths             sending speed per destination, limits and recent changes
   GET  /emails/:id        status per recipient, every attempt with MX, TLS and the reply
   GET|POST /domains, GET /domains/:name, POST /domains/:name/verify
 
@@ -122,6 +124,8 @@ async function main(argv: string[]) {
       return domainsCommand(argv.slice(1), loadConfig());
     case "keys":
       return keysCommand(argv.slice(1), loadConfig());
+    case "paths":
+      return pathsCommand(argv.slice(1), loadConfig());
     case "master-key":
       console.log(generateMasterKey());
       return;

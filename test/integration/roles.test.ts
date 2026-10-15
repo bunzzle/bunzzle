@@ -130,7 +130,7 @@ test(
       return rows.filter((s) => s === "delivered").length;
     };
     await killer;
-    const end = Date.now() + 60_000;
+    const end = Date.now() + 120_000;
     let done = 0;
     while (Date.now() < end) {
       done = await delivered();
@@ -186,7 +186,7 @@ test(
       `roles test: ${N} emails, ${kills} roles killed, ${[...counts.values()].reduce((a, b) => a + b, 0)} deliveries, ${risk.size} recorded duplicate risks, ${reconciled} resends avoided by reconciliation`,
     );
   },
-  { timeout: 180_000 },
+  { timeout: 240_000 },
 );
 
 test("core refuses email from a domain the signer has no key for", async () => {

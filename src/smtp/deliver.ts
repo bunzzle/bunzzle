@@ -2,6 +2,7 @@ import type { Family } from "../dns/ip.ts";
 import { type Destination, lookupDestination } from "../dns/mx.ts";
 import type { Resolver } from "../dns/resolver.ts";
 import { type Provider, providerOf } from "../routing/providers.ts";
+import type { SessionPool } from "./pool.ts";
 import {
   type Phase,
   type RecipientResult,
@@ -19,6 +20,7 @@ export interface DeliveryInput {
   data: string;
   smtpUtf8: boolean;
   requireTls?: boolean;
+  connections?: number;
 }
 
 export interface DeliveryOptions {
@@ -32,6 +34,8 @@ export interface DeliveryOptions {
   maxSessions?: number;
   timeouts?: Partial<Timeouts>;
   tlsCa?: string;
+  pool?: SessionPool;
+  perConnection?: (provider: string | null) => number;
 }
 
 export interface DeliveryReport {
@@ -126,6 +130,13 @@ export async function deliverTo(
       ...(opts.localAddress ? { localAddress: opts.localAddress } : {}),
       ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
       ...(opts.tlsCa ? { tlsCa: opts.tlsCa } : {}),
+      ...(opts.pool
+        ? {
+            pool: opts.pool,
+            perConnection: opts.perConnection?.(report.provider?.id ?? null) ?? 100,
+            ...(input.connections !== undefined ? { maxOpen: input.connections } : {}),
+          }
+        : {}),
     });
     report.sessions.push(session);
     report.recipients = session.recipients;

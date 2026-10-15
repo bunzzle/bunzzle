@@ -11,6 +11,8 @@ import type { DeliveryTransport } from "../delivery/transport.ts";
 import { pruneIdempotency } from "../emails/idempotency.ts";
 import { RpcClient, serveRpc } from "../ipc/rpc.ts";
 import { Scheduler } from "../scheduler/scheduler.ts";
+import { type ControlState, DEFAULT_TUNING } from "../shaping/control.ts";
+import { Shaper } from "../shaping/shaper.ts";
 import { coreMethods } from "./core-api.ts";
 import { every, onStop, privateDir, ready } from "./runtime.ts";
 import {
@@ -55,15 +57,42 @@ export async function runCore(config: Config, log: Logger) {
         timeoutMs: 40 * MIN,
       }),
   };
+  const restore = new Map(
+    db
+      .query<{ key: string; state: string }, []>("SELECT key, state FROM paths")
+      .all()
+      .map((r) => [r.key, JSON.parse(r.state) as ControlState]),
+  );
+  const shaper = new Shaper({
+    log,
+    tuning: {
+      ...DEFAULT_TUNING,
+      holdMs: scaled(DEFAULT_TUNING.holdMs),
+      firstPauseMs: scaled(DEFAULT_TUNING.firstPauseMs),
+      maxPauseMs: scaled(DEFAULT_TUNING.maxPauseMs),
+    },
+    restore,
+    onChange: (key, state) => {
+      void writer
+        .run((d) =>
+          d
+            .query<unknown, [string, string, number]>(
+              `INSERT INTO paths (key, state, updated_at) VALUES (?, ?, ?)
+               ON CONFLICT (key) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`,
+            )
+            .run(key, JSON.stringify(state), Date.now()),
+        )
+        .catch((err: Error) => log.error("could not save path state", { error: err.message }));
+    },
+  });
   const handleEmail = deliveryHandler({
     db,
     log,
     transport,
+    shaper,
     source: config.sourceIp ?? "default",
-    pauseMs: scaled(HOUR),
-    maxPauseMs: scaled(12 * HOUR),
-    slowMs: scaled(10 * MIN),
     busyRetryMs: scaled(MIN),
+    maxWaitMs: Math.max(1_000, Math.floor(Math.max(2_000, scaled(45 * MIN)) / 3)),
   });
   const scheduler = new Scheduler({
     db,
@@ -76,6 +105,8 @@ export async function runCore(config: Config, log: Logger) {
     retry: scaledPolicy(defaultRetryPolicy, scale),
     reconcileMs: scaled(15 * MIN),
     leaseMs: Math.max(2_000, scaled(45 * MIN)),
+    concurrency: 512,
+    filter: () => shaper.blocked(),
   });
 
   let epochKey: EpochPublicKey | null = null;
@@ -102,6 +133,7 @@ export async function runCore(config: Config, log: Logger) {
     delivery,
     currentKey,
     sourceIp: config.sourceIp,
+    paths: () => shaper.views(),
   });
   const server = await serveRpc(sock.core, api.methods);
 
@@ -123,6 +155,7 @@ export async function runCore(config: Config, log: Logger) {
     stopPrune();
     stopVerify();
     server.stop();
+    shaper.stop();
     await scheduler.stop();
     writer.close();
     db.close();

@@ -28,6 +28,7 @@ import { emailView } from "../emails/view.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import { AddressError, asciiDomain, domainOf, normalizeAddress } from "../mime/address.ts";
 import { senderDomainOf } from "../mime/from.ts";
+import type { PathView } from "../shaping/shaper.ts";
 import { DOMAIN, enqueueParams, MESSAGE_ID, tokenHash } from "./wire.ts";
 
 const MAX_SCHEDULE_MS = 72 * 3_600_000;
@@ -40,6 +41,7 @@ export interface CoreDeps {
   delivery: RpcClient;
   currentKey: () => Promise<EpochPublicKey>;
   sourceIp: string | null;
+  paths?: () => PathView[];
   now?: () => number;
 }
 
@@ -338,6 +340,32 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
     }),
 
     health: method(z.object({}), () => ({ ok: true, jobs: countByState(db) })),
+
+    paths: method(z.object({ tokenHash }), (p) => {
+      caller(p.tokenHash, "read");
+      return (deps.paths?.() ?? []).map((v) => ({
+        object: "path",
+        path: v.key,
+        source: v.source,
+        destination: v.target,
+        provider: v.provider,
+        state: v.mode,
+        until: v.until === null ? null : new Date(v.until).toISOString(),
+        rate_per_sec: v.rate,
+        connections: v.connections,
+        ceiling: { rate_per_sec: v.ceiling.ratePerSec, connections: v.ceiling.connections },
+        in_flight: v.inflight,
+        waiting: v.waiting,
+        delivered: v.sent,
+        changes: v.changes.map((c) => ({
+          at: new Date(c.at).toISOString(),
+          change: c.what,
+          reason: c.reason,
+          rate_per_sec: c.rate,
+          connections: c.connections,
+        })),
+      }));
+    }),
   };
   return { methods, verifyPending };
 }

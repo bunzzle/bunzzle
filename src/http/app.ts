@@ -198,7 +198,8 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
               data: email.data,
               smtpUtf8: email.smtpUtf8,
               requireTls: email.requireTls,
-              meta: email.meta,
+              priority: email.lane === "bulk" ? 5 : 0,
+              meta: { ...email.meta, lane: email.lane },
               ...(email.scheduledAt !== undefined ? { scheduledAt: email.scheduledAt } : {}),
               ...(email.expiresAt !== undefined ? { expiresAt: email.expiresAt } : {}),
               ...(idempotencyKey !== null ? { idempotencyKey, bodyHash: hashToken(text) } : {}),
@@ -237,6 +238,13 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           return Response.json(
             await rpc("getDomain", { tokenHash: caller.hash, name: req.params["name"] }),
           );
+        }),
+      },
+      "/paths": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const data = await rpc("paths", { tokenHash: caller.hash }, z.array(z.unknown()));
+          return Response.json({ object: "list", data });
         }),
       },
       "/domains/:name/verify": {

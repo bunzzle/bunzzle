@@ -21,6 +21,7 @@ export interface EmailMeta {
   tags: { name: string; value: string }[];
   apiKeyId: string | null;
   scheduledAt: number | null;
+  lane: "transactional" | "bulk";
 }
 
 const iso = (t: number | null | undefined) =>
@@ -95,6 +96,7 @@ export function emailView(db: Database, id: string, now: number) {
           return {
             host: s["host"],
             ip: s["address"],
+            reused_connection: s["reused"] === true,
             tls: {
               status: tls["status"] ?? "none",
               version: tls["version"] ?? null,
@@ -133,6 +135,7 @@ export function emailView(db: Database, id: string, now: number) {
     html: null,
     text: null,
     tags: meta.tags ?? [],
+    lane: meta.lane ?? "transactional",
     created_at: iso(msg.created_at),
     scheduled_at: iso(meta.scheduledAt ?? null),
     last_event: emailStatus(recipients.map((r) => r.status)),

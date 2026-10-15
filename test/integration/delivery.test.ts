@@ -9,11 +9,11 @@ import { openDatabase } from "../../src/core/store/db.ts";
 import { sealBody } from "../../src/crypto/envelope.ts";
 import { generateMasterKey, masterKeyFrom } from "../../src/crypto/master.ts";
 import { deliveryHandler } from "../../src/delivery/handler.ts";
-import { getPath } from "../../src/delivery/paths.ts";
 import { enqueueEmail, recipientsOf, shredBodies } from "../../src/delivery/queue.ts";
 import { localTransport } from "../../src/delivery/transport.ts";
 import { generateKeyFile, sealKeyFile } from "../../src/dkim/keys.ts";
 import { createResolver } from "../../src/dns/resolver.ts";
+import { Shaper } from "../../src/shaping/shaper.ts";
 import { Signer, SignerError } from "../../src/signer/signer.ts";
 import { verifyDkim } from "../support/dkim-verify.ts";
 import { type FakeDns, startFakeDns } from "../support/fake-dns.ts";
@@ -23,7 +23,7 @@ const T0 = 1_700_000_000_000;
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DATA = "From: a@bunzzle.test\r\nTo: x@example.test\r\nSubject: Hi\r\n\r\nHello\r\n";
-const SITE = "mx.example.test";
+const PATH = "default|mx.example.test";
 
 let dns: FakeDns;
 let mx: FakeMx | null = null;
@@ -76,7 +76,12 @@ async function setup(scenario: MxScenario = {}) {
     },
     (id, body) => signer.open(id, body),
   );
-  const handle = deliveryHandler({ db, log, clock, transport });
+  const shaper = new Shaper({
+    log,
+    clock,
+    limits: () => ({ connections: 10, ratePerSec: 1000, perConnection: 100 }),
+  });
+  const handle = deliveryHandler({ db, log, clock, transport, shaper });
   const send = async (recipients: string[], extra: { expiresAt?: number } = {}) => {
     const id = Bun.randomUUIDv7();
     const body = await sealBody(await signer.epochKey(), id, DATA);
@@ -114,7 +119,7 @@ async function setup(scenario: MxScenario = {}) {
   const job = (id: string) =>
     db.query<Record<string, unknown>, [string]>("SELECT * FROM jobs WHERE id = ?").get(id) ?? {};
   const kinds = (id: string) => eventsFor(db, id).map((e) => e.kind);
-  return { db, clock, signer, handle, send, step, settleAll, statuses, job, kinds };
+  return { db, clock, signer, shaper, handle, send, step, settleAll, statuses, job, kinds };
 }
 
 const sessions = () => mx?.sessions.length ?? 0;
@@ -208,8 +213,10 @@ describe("delivery: retries", () => {
   });
 });
 
-describe("delivery: feedback to the path", () => {
-  test("IP blocked: path paused for an hour, recipient untouched, other emails wait without connecting", async () => {
+describe("delivery: feedback to the path (H2)", () => {
+  const view = (t: { shaper: Shaper }) => t.shaper.views().find((v) => v.key === PATH);
+
+  test("IP blocked: path paused 15 min, recipient untouched, others requeued without connecting, one probe, then slow restart", async () => {
     let blocked = true;
     const t = await setup({
       rcpt: (address) =>
@@ -224,11 +231,8 @@ describe("delivery: feedback to the path", () => {
       scope: "reputation",
       suppress: 0,
     });
-    expect(getPath(t.db, "default", SITE, T0)).toMatchObject({
-      state: "paused",
-      until: T0 + HOUR,
-      pauses: 1,
-    });
+    expect(view(t)).toMatchObject({ mode: "paused", until: T0 + 15 * MIN });
+    expect(t.job(`${first}/example.test`)["run_after"]).toBe(T0 + 15 * MIN);
     expect(t.kinds(first)).toContain("path_paused");
     expect(t.kinds(first)).not.toContain("suppression_candidate");
     expect(alerts.some((l) => l.includes("path paused"))).toBe(true);
@@ -236,28 +240,32 @@ describe("delivery: feedback to the path", () => {
     const before = sessions();
     const second = await t.send(["y@example.test"]);
     const other = await t.send(["z@other.test"]);
-    expect(await t.step(T0 + MIN)).toEqual(["retry", "done"]);
+    expect((await t.step(T0 + MIN)).sort()).toEqual(["done", "requeued"]);
     expect(sessions()).toBe(before + 1);
-    expect(t.statuses(second)).toEqual({ "y@example.test": "deferred" });
+    expect(recipientsOf(t.db, second)[0]?.reply).toContain("paused");
     expect(t.statuses(other)).toEqual({ "z@other.test": "delivered" });
-    expect(t.job(`${second}/example.test`)["run_after"]).toBe(T0 + HOUR);
+    expect(t.job(`${second}/example.test`)).toMatchObject({ run_after: T0 + 15 * MIN, attempt: 0 });
 
     blocked = false;
-    expect(await t.step(T0 + HOUR)).toEqual(["done", "done"]);
+    expect((await t.step(T0 + 15 * MIN)).sort()).toEqual(["done", "requeued"]);
+    expect(view(t)).toMatchObject({ mode: "normal", connections: 1, rate: 50 });
+    expect(await t.step(T0 + 16 * MIN)).toEqual(["done"]);
     expect(t.statuses(first)).toEqual({ "x@example.test": "delivered" });
-    expect(getPath(t.db, "default", SITE, T0 + HOUR)).toMatchObject({ state: "open", pauses: 0 });
+    expect(t.statuses(second)).toEqual({ "y@example.test": "delivered" });
+    expect(view(t)?.changes.map((c) => c.what)).toEqual(["paused", "probing", "probe-ok"]);
   });
 
-  test("a second block doubles the pause", async () => {
+  test("a failed probe doubles the pause", async () => {
     const t = await setup({ greeting: "554 5.7.1 Go away\r\n" });
     await t.send(["x@example.test"]);
     await t.step(T0);
-    expect(getPath(t.db, "default", SITE, T0).until).toBe(T0 + HOUR);
-    await t.step(T0 + HOUR);
-    expect(getPath(t.db, "default", SITE, T0 + HOUR).until).toBe(T0 + 3 * HOUR);
+    expect(view(t)?.until).toBe(T0 + 15 * MIN);
+    await t.step(T0 + 15 * MIN);
+    expect(view(t)).toMatchObject({ mode: "paused", until: T0 + 45 * MIN });
+    expect(view(t)?.changes.map((c) => c.what)).toEqual(["paused", "probing", "probe-failed"]);
   });
 
-  test("421 too many connections: path slowed, one session at a time to that site", async () => {
+  test("421 too many connections: rate and connections halved and held", async () => {
     let first = true;
     const t = await setup({
       greeting: () => {
@@ -268,23 +276,11 @@ describe("delivery: feedback to the path", () => {
     });
     const a = await t.send(["x@example.test"]);
     expect(await t.step(T0)).toEqual(["retry"]);
-    expect(getPath(t.db, "default", SITE, T0)).toMatchObject({
-      state: "slowed",
-      until: T0 + 10 * MIN,
-    });
+    expect(view(t)).toMatchObject({ mode: "held", rate: 500, connections: 5 });
+    expect(view(t)?.changes[0]).toMatchObject({ what: "halved" });
     expect(t.kinds(a)).toContain("path_slowed");
-
-    const b = await t.send(["y@example.test"]);
-    const c = await t.send(["z@example.test"]);
-    const before = sessions();
-    const results = await t.step(T0 + MIN);
-    expect(results.filter((r) => r === "done")).toHaveLength(1);
-    expect(results.filter((r) => r === "retry")).toHaveLength(2);
-    expect(sessions()).toBe(before + 1);
-    const waiting = [a, b, c].flatMap((id) =>
-      recipientsOf(t.db, id).filter((r) => r.reply?.includes("slowed")),
-    );
-    expect(waiting).toHaveLength(2);
+    expect(alerts.some((l) => l.includes("path halved"))).toBe(true);
+    expect(await t.step(T0 + MIN)).toEqual(["done"]);
   });
 
   test("DMARC rejection fails the message, alerts, and never suppresses", async () => {

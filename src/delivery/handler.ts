@@ -3,14 +3,15 @@ import { type Clock, systemClock } from "../core/clock.ts";
 import { appendEvent } from "../core/events.ts";
 import type { ClaimedJob } from "../core/jobs.ts";
 import type { Logger } from "../core/log.ts";
-import { type Apply, defer, fail, type Outcome, ok, unknown } from "../core/outcome.ts";
+import { type Apply, defer, fail, type Outcome, ok, requeue, unknown } from "../core/outcome.ts";
 import { clampHint } from "../core/retry.ts";
 import type { Destination } from "../dns/mx.ts";
 import { type Classification, classify } from "../replies/classify.ts";
 import { providerOf, siteOf } from "../routing/providers.ts";
+import type { JobContext } from "../scheduler/scheduler.ts";
+import { type Admission, Shaper } from "../shaping/shaper.ts";
 import type { DeliveryReport } from "../smtp/deliver.ts";
 import type { RecipientResult } from "../smtp/session.ts";
-import { getPath, type Path, pathDelivered, pauseDuration, pausePath, slowPath } from "./paths.ts";
 import { bodyOf, type EmailPayload, pendingRecipients, type RecipientState } from "./queue.ts";
 import type { DeliveryTransport } from "./transport.ts";
 
@@ -20,10 +21,9 @@ export interface DeliveryHandlerOptions {
   transport: DeliveryTransport;
   clock?: Clock;
   source?: string;
-  pauseMs?: number;
-  maxPauseMs?: number;
-  slowMs?: number;
+  shaper: Shaper;
   busyRetryMs?: number;
+  maxWaitMs?: number;
 }
 
 interface Update {
@@ -37,7 +37,7 @@ interface Update {
 
 const SOURCE = "delivery";
 
-function siteFor(destination: Destination, domain: string): string {
+function targetFor(destination: Destination, domain: string): string {
   if (destination.kind !== "targets") return domain;
   return providerOf(destination.mxHosts[0] ?? "")?.id ?? siteOf(destination.mxHosts);
 }
@@ -51,6 +51,7 @@ function stateOf(r: RecipientResult, v: Classification): RecipientState {
 
 function sessionsOf(report: DeliveryReport) {
   return report.sessions.map((s) => ({
+    reused: s.reused ?? false,
     host: s.host,
     address: s.address,
     phase: s.phase,
@@ -62,11 +63,7 @@ function sessionsOf(report: DeliveryReport) {
 export function deliveryHandler(o: DeliveryHandlerOptions) {
   const clock = o.clock ?? systemClock;
   const source = o.source ?? "default";
-  const pauseMs = o.pauseMs ?? 3_600_000;
-  const maxPauseMs = o.maxPauseMs ?? 12 * 3_600_000;
-  const slowMs = o.slowMs ?? 10 * 60_000;
   const busyRetryMs = o.busyRetryMs ?? 60_000;
-  const busy = new Map<string, number>();
 
   const record =
     (
@@ -141,7 +138,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       }
     };
 
-  return async (job: ClaimedJob): Promise<Outcome> => {
+  return async (job: ClaimedJob, _signal?: AbortSignal, ctx?: JobContext): Promise<Outcome> => {
     const { db, log } = o;
     const now = clock.now();
     const email = job.payload as EmailPayload;
@@ -173,32 +170,44 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         apply: record(job, [], none),
       };
     }
-    const site = siteFor(destination, job.target);
-    const path: Path = getPath(db, source, site, now);
-    const waiting = (reason: string, delayMs: number): Outcome => ({
-      ...defer(reason, delayMs),
-      apply: record(
-        job,
-        pending.map((address) => ({
-          address,
-          status: "deferred",
-          attempted: false,
-          result: null,
-          verdict: null,
-          reply: reason,
-        })),
-        none,
-      ),
-    });
+    const target = targetFor(destination, job.target);
+    const provider =
+      destination.kind === "targets"
+        ? (providerOf(destination.mxHosts[0] ?? "")?.id ?? null)
+        : null;
+    const pathKey = Shaper.key(source, target);
+    const lane = job.priority > 0 ? "bulk" : "transactional";
+    const setPath = (d: Database) =>
+      d
+        .query<unknown, [string, string]>("UPDATE jobs SET path = ? WHERE id = ?")
+        .run(pathKey, job.id);
 
-    if (path.state === "paused" && path.until !== null) {
-      return waiting(`path ${source} → ${site} paused: ${path.reason}`, path.until - now);
+    let admission: Admission =
+      destination.kind === "targets"
+        ? await o.shaper.admit(source, target, provider, lane, o.maxWaitMs)
+        : { kind: "go", connections: 1, release: () => {} };
+    if (admission.kind === "requeue") {
+      const reason = admission.reason;
+      const visible = reason.includes("paused") || reason.includes("probing");
+      return {
+        ...requeue(reason, admission.delayMs),
+        apply: (d, settled, at) => {
+          setPath(d);
+          if (!visible || settled !== "requeued") return;
+          d.query<unknown, [string, number, string]>(
+            `UPDATE recipients SET status = 'deferred', reply = ?, updated_at = ?
+             WHERE job_id = ? AND status IN ('queued', 'deferred')`,
+          ).run(`waiting: ${reason}`, at, job.id);
+        },
+      };
     }
-    if (path.state === "slowed" && (busy.get(site) ?? 0) > 0) {
-      return waiting(`path ${source} → ${site} slowed: ${path.reason}`, busyRetryMs);
+    const ticket = admission;
+    admission = { kind: "go", connections: 1, release: () => {} };
+    if (ctx && !(await ctx.renew())) {
+      ticket.release("neutral", "");
+      return requeue("lease lost while waiting", 0);
     }
 
-    busy.set(site, (busy.get(site) ?? 0) + 1);
     let report: DeliveryReport;
     try {
       report = await o.transport.deliver({
@@ -212,19 +221,19 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         smtpUtf8: email.smtpUtf8,
         requireTls: email.requireTls,
         body,
+        ...(destination.kind === "targets" ? { connections: ticket.connections } : {}),
       });
     } catch (err) {
+      ticket.release("neutral", "delivery role unreachable");
       if ((err as { code?: unknown })?.code === "unavailable") {
-        return waiting(`delivery unavailable: ${(err as Error).message}`, busyRetryMs);
+        return {
+          ...requeue(`delivery unavailable: ${(err as Error).message}`, busyRetryMs),
+          apply: (d) => setPath(d),
+        };
       }
       throw err;
-    } finally {
-      const n = (busy.get(site) ?? 1) - 1;
-      if (n > 0) busy.set(site, n);
-      else busy.delete(site);
     }
 
-    const provider = report.provider?.id ?? null;
     const atDot = report.recipients.filter((r) => r.phase === "dot").length;
     const updates: Update[] = report.recipients.map((r) => {
       const verdict = classify({
@@ -249,44 +258,36 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
     const pauseBy = updates.find((u) => u.verdict?.action === "pause-path");
     const slowBy = updates.find((u) => u.verdict?.action === "slow-path");
     const delivered = updates.some((u) => u.status === "delivered");
-    let pausedUntil: number | null = null;
-    if (pauseBy) pausedUntil = now + pauseDuration(path.pauses, pauseMs, maxPauseMs);
+    if (pauseBy) ticket.release("reputation", pauseBy.reply);
+    else if (slowBy) ticket.release("rate", slowBy.reply);
+    else if (delivered) ticket.release("success", "");
+    else ticket.release("neutral", "");
+    const pausedUntil = pauseBy ? o.shaper.pausedUntil(pathKey) : null;
 
     const effects = (d: Database, at: number) => {
       const event = (kind: string, data: Record<string, unknown>) =>
         appendEvent(d, { messageId: job.messageId, kind, source: SOURCE, at, data });
+      setPath(d);
       if (report.recalled) {
         event("reconciled", { attempt: job.unresolvedAttempt, resent: false });
       }
       event("attempt", {
         target: job.target,
+        lane,
+        path: pathKey,
         recalled: report.recalled ?? false,
         provider,
         policy: report.policy,
         mx: report.destination.kind === "targets" ? report.destination.mxHosts : [],
         sessions: sessionsOf(report),
       });
-      if (pauseBy && pausedUntil !== null) {
-        pausePath(d, path, pausedUntil, pauseBy.reply, at);
-        event("path_paused", { source, site, until: pausedUntil, reason: pauseBy.reply });
+      if (pauseBy) {
+        event("path_paused", { path: pathKey, until: pausedUntil, reason: pauseBy.reply });
       } else if (slowBy) {
-        slowPath(d, path, at + slowMs, slowBy.reply, at);
-        event("path_slowed", { source, site, until: at + slowMs, reason: slowBy.reply });
-      } else if (delivered) {
-        pathDelivered(d, path, at);
+        event("path_slowed", { path: pathKey, reason: slowBy.reply });
       }
     };
 
-    if (pauseBy) {
-      log.error("path paused: our IP looks blocked at this site", {
-        source,
-        site,
-        until: pausedUntil,
-        reply: pauseBy.reply,
-      });
-    } else if (slowBy) {
-      log.warn("path slowed", { source, site, reply: slowBy.reply });
-    }
     for (const u of updates) {
       if (u.verdict?.alert && u.verdict.scope === "sender") {
         log.error("sender setup rejected by receiver", {

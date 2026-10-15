@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createResolver } from "../../src/dns/resolver.ts";
 import { deliver } from "../../src/smtp/deliver.ts";
+import { SessionPool } from "../../src/smtp/pool.ts";
 import { dotStuff, runSession, type SessionInput } from "../../src/smtp/session.ts";
 import { startFakeDns } from "../support/fake-dns.ts";
 import { type FakeMx, type MxScenario, startFakeMx, TEST_CA } from "../support/fake-mx.ts";
@@ -352,5 +353,74 @@ describe("deliver", () => {
     );
     expect(report.sessions).toEqual([]);
     expect(report.recipients[0]?.status).toBe("bounced");
+  });
+});
+
+describe("connection reuse", () => {
+  const input = (
+    port: number,
+    pool: SessionPool,
+    extra: Partial<SessionInput> = {},
+  ): SessionInput => ({
+    host: "mx.example.test",
+    address: "127.0.0.1",
+    port,
+    ehloName: "out.bunzzle.test",
+    policy: { rule: "opportunistic", required: false },
+    from: "a@bunzzle.com",
+    recipients: ["b@example.test"],
+    data: MESSAGE,
+    smtpUtf8: false,
+    tlsCa: TEST_CA,
+    timeouts: { greeting: 1000, quit: 200 },
+    pool,
+    perConnection: 100,
+    ...extra,
+  });
+
+  test("several emails share one TLS connection: EHLO and STARTTLS once", async () => {
+    mx = startFakeMx({});
+    const pool = new SessionPool();
+    const results = [];
+    for (let i = 0; i < 3; i++) results.push(await runSession(input(mx.port, pool)));
+    expect(results.map((r) => [r.phase, r.reused ?? false])).toEqual([
+      ["done", false],
+      ["done", true],
+      ["done", true],
+    ]);
+    expect(results[2]?.tls.status).toBe("verified");
+    expect(mx.sessions).toHaveLength(1);
+    expect(mx.sessions[0]?.messages).toHaveLength(3);
+    expect(mx.sessions[0]?.commands.filter((c) => c === "STARTTLS")).toHaveLength(1);
+    await pool.closeAll();
+    expect(commandsOf().at(-1)).toBe("QUIT");
+  });
+
+  test("the per-connection limit opens a new connection", async () => {
+    mx = startFakeMx({});
+    const pool = new SessionPool();
+    for (let i = 0; i < 5; i++) await runSession(input(mx.port, pool, { perConnection: 2 }));
+    expect(mx.sessions.map((s) => s.messages.length)).toEqual([2, 2, 1]);
+    await pool.closeAll();
+  });
+
+  test("a server that closed the idle connection: retried on a fresh one, never twice", async () => {
+    mx = startFakeMx({ closeAfterMessage: true });
+    const pool = new SessionPool();
+    const first = await runSession(input(mx.port, pool));
+    await Bun.sleep(80);
+    const second = await runSession(input(mx.port, pool));
+    expect([first.phase, second.phase, second.reused ?? false]).toEqual(["done", "done", false]);
+    expect(mx.sessions.flatMap((s) => s.messages)).toHaveLength(2);
+    await pool.closeAll();
+  });
+
+  test("a connection whose transaction failed is not reused", async () => {
+    mx = startFakeMx({ rcpt: () => "550 5.1.1 User unknown\r\n" });
+    const pool = new SessionPool();
+    await runSession(input(mx.port, pool));
+    expect(pool.size).toBe(0);
+    await runSession(input(mx.port, pool));
+    expect(mx.sessions).toHaveLength(2);
   });
 });

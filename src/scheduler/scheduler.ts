@@ -2,10 +2,12 @@ import type { Database } from "bun:sqlite";
 import { type Clock, systemClock } from "../core/clock.ts";
 import {
   type ClaimedJob,
+  type ClaimFilter,
   claim,
   expireLeases,
   nextWakeAt,
   recoverAfterCrash,
+  renewLease,
   resendUnresolved,
   type Settled,
   settle,
@@ -15,7 +17,15 @@ import type { Outcome } from "../core/outcome.ts";
 import { defaultRetryPolicy, type RetryPolicy } from "../core/retry.ts";
 import type { Writer } from "../core/store/writer.ts";
 
-export type JobHandler = (job: ClaimedJob, signal: AbortSignal) => Promise<Outcome>;
+export interface JobContext {
+  renew(): Promise<boolean>;
+}
+
+export type JobHandler = (
+  job: ClaimedJob,
+  signal: AbortSignal,
+  ctx: JobContext,
+) => Promise<Outcome>;
 
 export interface SchedulerOptions {
   db: Database;
@@ -29,12 +39,18 @@ export interface SchedulerOptions {
   retry?: RetryPolicy;
   sweepMs?: number;
   random?: () => number;
+  filter?: ClaimFilterSource;
 }
 
 export type SchedulerStats = Record<Settled | "claimed", number>;
 
+export type ClaimFilterSource = () => ClaimFilter;
+
 export class Scheduler {
-  readonly #o: Required<Omit<SchedulerOptions, "random">> & { random?: () => number };
+  readonly #o: Required<Omit<SchedulerOptions, "random" | "filter">> & {
+    random?: () => number;
+    filter?: ClaimFilterSource;
+  };
   #running = false;
   #pumping = false;
   #again = false;
@@ -42,7 +58,15 @@ export class Scheduler {
   #timer: ReturnType<typeof setTimeout> | undefined;
   #unsubscribe: (() => void) | undefined;
   #idle: PromiseWithResolvers<void> | undefined;
-  readonly stats: SchedulerStats = { claimed: 0, done: 0, dead: 0, retry: 0, unknown: 0, stale: 0 };
+  readonly stats: SchedulerStats = {
+    claimed: 0,
+    done: 0,
+    dead: 0,
+    retry: 0,
+    unknown: 0,
+    requeued: 0,
+    stale: 0,
+  };
 
   constructor(opts: SchedulerOptions) {
     this.#o = {
@@ -96,7 +120,8 @@ export class Scheduler {
         this.#again = false;
         const free = concurrency - this.#inFlight;
         if (free <= 0) break;
-        const jobs = await writer.run((db) => claim(db, clock.now(), free, leaseMs), {
+        const filter = this.#o.filter?.() ?? {};
+        const jobs = await writer.run((db) => claim(db, clock.now(), free, leaseMs, filter), {
           quiet: true,
         });
         this.stats.claimed += jobs.length;
@@ -145,7 +170,12 @@ export class Scheduler {
     void (async () => {
       let outcome: Outcome;
       try {
-        outcome = await handle(job, signal);
+        outcome = await handle(job, signal, {
+          renew: () =>
+            writer
+              .run((db) => renewLease(db, job, clock.now() + leaseMs, clock.now()), { quiet: true })
+              .catch(() => false),
+        });
       } catch (err) {
         outcome = { kind: "unknown", reason: `handler threw: ${(err as Error)?.message ?? err}` };
       }

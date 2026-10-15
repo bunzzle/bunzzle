@@ -43,6 +43,7 @@ export const sendSchema = z.object({
   scheduled_at: z.string().max(64).optional(),
   expires_at: z.string().max(64).optional(),
   require_tls: z.boolean().optional(),
+  lane: z.enum(["transactional", "bulk"]).optional(),
 });
 
 export type SendRequest = z.infer<typeof sendSchema>;
@@ -54,6 +55,7 @@ export interface PreparedEmail {
   data: string;
   smtpUtf8: boolean;
   requireTls: boolean;
+  lane: "transactional" | "bulk";
   scheduledAt?: number;
   expiresAt?: number;
   meta: {
@@ -168,6 +170,7 @@ export function prepareEmail(req: SendRequest, now: Date): PreparedEmail {
     data: built.raw,
     smtpUtf8: built.smtpUtf8,
     requireTls: req.require_tls ?? false,
+    lane: req.lane ?? "transactional",
     ...(scheduledAt !== undefined ? { scheduledAt } : {}),
     ...(expiresAt !== undefined ? { expiresAt } : {}),
     meta: {

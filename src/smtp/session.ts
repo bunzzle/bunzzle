@@ -1,4 +1,5 @@
 import { type Reply, replyText, SmtpConnection, SmtpError } from "./connection.ts";
+import { SessionPool } from "./pool.ts";
 
 export type TlsStatus = "none" | "unverified" | "verified";
 export type TlsRule = "requiretls" | "provider" | "opportunistic";
@@ -77,6 +78,10 @@ export interface SessionInput {
   smtpUtf8: boolean;
   timeouts?: Partial<Timeouts>;
   tlsCa?: string;
+  pool?: SessionPool;
+  perConnection?: number;
+  maxOpen?: number;
+  fresh?: boolean;
 }
 
 export interface SessionResult {
@@ -90,6 +95,7 @@ export interface SessionResult {
   error: string | null;
   tryNext: boolean;
   recipients: RecipientResult[];
+  reused?: boolean | undefined;
 }
 
 class Abort extends Error {
@@ -158,6 +164,11 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   const results = new Map<string, RecipientResult>();
   let conn: SmtpConnection | null = null;
   let phase: Phase = "connect";
+  const poolKey = input.pool ? SessionPool.key(input) : "";
+  const pooled = input.pool && !input.fresh ? input.pool.take(poolKey) : null;
+  let ext = new Map<string, string>();
+  let uses = 0;
+  let kept = false;
 
   const expect2xx = async (
     p: Phase,
@@ -174,78 +185,85 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
   };
 
   try {
-    conn = await SmtpConnection.connect({
-      host: input.address,
-      port: input.port,
-      timeoutMs: t.connect,
-      ...(input.localAddress ? { localAddress: input.localAddress } : {}),
-    });
-
-    phase = "greeting";
-    await expect2xx(phase, t.greeting, (c) => c === 220);
-
-    phase = "ehlo";
-    await conn.write(`EHLO ${input.ehloName}\r\n`, t.ehlo);
-    let ehlo = await conn.readReply(t.ehlo);
-    let ext = new Map<string, string>();
-    if (ehlo.code === 250) {
-      ext = parseEhlo(ehlo);
+    if (pooled) {
+      conn = pooled.conn;
+      ext = pooled.ext;
+      Object.assign(tls, pooled.tls);
+      uses = pooled.uses;
+      result.reused = true;
     } else {
-      await conn.write(`HELO ${input.ehloName}\r\n`, t.ehlo);
-      ehlo = await conn.readReply(t.ehlo);
-      if (ehlo.code !== 250) {
-        throw new Abort(
-          phase,
-          ehlo.code >= 500 ? "bounced" : "deferred",
-          true,
-          replyText(ehlo),
-          ehlo,
-        );
-      }
-    }
+      conn = await SmtpConnection.connect({
+        host: input.address,
+        port: input.port,
+        timeoutMs: t.connect,
+        ...(input.localAddress ? { localAddress: input.localAddress } : {}),
+      });
 
-    phase = "starttls";
-    if (ext.has("STARTTLS")) {
-      await conn.write("STARTTLS\r\n", t.starttls);
-      const r = await conn.readReply(t.starttls);
-      if (r.code === 220) {
-        const info = await conn.startTls(input.host, t.starttls, input.tlsCa);
-        tls.version = info.version;
-        tls.cipher = info.cipher;
-        tls.error = info.error;
-        tls.status = info.authorized ? "verified" : "unverified";
-        if (input.policy.required && !info.authorized) {
+      phase = "greeting";
+      await expect2xx(phase, t.greeting, (c) => c === 220);
+
+      phase = "ehlo";
+      await conn.write(`EHLO ${input.ehloName}\r\n`, t.ehlo);
+      let ehlo = await conn.readReply(t.ehlo);
+      if (ehlo.code === 250) {
+        ext = parseEhlo(ehlo);
+      } else {
+        await conn.write(`HELO ${input.ehloName}\r\n`, t.ehlo);
+        ehlo = await conn.readReply(t.ehlo);
+        if (ehlo.code !== 250) {
+          throw new Abort(
+            phase,
+            ehlo.code >= 500 ? "bounced" : "deferred",
+            true,
+            replyText(ehlo),
+            ehlo,
+          );
+        }
+      }
+
+      phase = "starttls";
+      if (ext.has("STARTTLS")) {
+        await conn.write("STARTTLS\r\n", t.starttls);
+        const r = await conn.readReply(t.starttls);
+        if (r.code === 220) {
+          const info = await conn.startTls(input.host, t.starttls, input.tlsCa);
+          tls.version = info.version;
+          tls.cipher = info.cipher;
+          tls.error = info.error;
+          tls.status = info.authorized ? "verified" : "unverified";
+          if (input.policy.required && !info.authorized) {
+            throw new Abort(
+              phase,
+              "deferred",
+              true,
+              `TLS required (${input.policy.rule}) but the certificate of ${input.host} is not valid: ${info.error}`,
+              null,
+              "4.7.5",
+            );
+          }
+          phase = "ehlo";
+          await conn.write(`EHLO ${input.ehloName}\r\n`, t.ehlo);
+          ext = parseEhlo(await expect2xx(phase, t.ehlo, (c) => c === 250));
+        } else if (input.policy.required) {
           throw new Abort(
             phase,
             "deferred",
             true,
-            `TLS required (${input.policy.rule}) but the certificate of ${input.host} is not valid: ${info.error}`,
-            null,
-            "4.7.5",
+            `TLS required but STARTTLS was refused: ${replyText(r)}`,
+            r,
+            "4.7.10",
           );
         }
-        phase = "ehlo";
-        await conn.write(`EHLO ${input.ehloName}\r\n`, t.ehlo);
-        ext = parseEhlo(await expect2xx(phase, t.ehlo, (c) => c === 250));
       } else if (input.policy.required) {
         throw new Abort(
           phase,
           "deferred",
           true,
-          `TLS required but STARTTLS was refused: ${replyText(r)}`,
-          r,
+          `TLS required (${input.policy.rule}) but ${input.host} does not offer STARTTLS`,
+          null,
           "4.7.10",
         );
       }
-    } else if (input.policy.required) {
-      throw new Abort(
-        phase,
-        "deferred",
-        true,
-        `TLS required (${input.policy.rule}) but ${input.host} does not offer STARTTLS`,
-        null,
-        "4.7.10",
-      );
     }
     result.extensions = [...ext.keys()];
 
@@ -359,11 +377,28 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
       result.phase = "done";
     }
 
-    try {
-      await conn.write("QUIT\r\n", t.quit);
-      await conn.readReply(t.quit);
-    } catch {}
+    if (
+      input.pool &&
+      result.phase === "done" &&
+      uses + 1 < (input.perConnection ?? 100) &&
+      !conn.closed &&
+      !conn.hasBufferedData()
+    ) {
+      input.pool.give(poolKey, { conn, ext, tls: { ...tls }, uses: uses + 1 }, input.maxOpen);
+      kept = true;
+    } else {
+      try {
+        await conn.write("QUIT\r\n", t.quit);
+        await conn.readReply(t.quit);
+      } catch {}
+    }
   } catch (err) {
+    if (pooled && err instanceof SmtpError && phase === "mail") {
+      conn?.close();
+      input.pool?.done(poolKey);
+      kept = true;
+      return runSession({ ...input, fresh: true });
+    }
     let abort: Abort;
     if (err instanceof Abort) abort = err;
     else if (err instanceof SmtpError) {
@@ -390,7 +425,10 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
       } catch {}
     }
   } finally {
-    conn?.close();
+    if (!kept) {
+      conn?.close();
+      input.pool?.done(poolKey);
+    }
   }
 
   result.recipients = input.recipients.map((a) => results.get(a) as RecipientResult);

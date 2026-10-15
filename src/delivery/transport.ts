@@ -19,6 +19,7 @@ export interface DeliverRequest {
   smtpUtf8: boolean;
   requireTls: boolean;
   body: SealedBody;
+  connections?: number | undefined;
 }
 
 export interface DeliveryTransport {
@@ -111,6 +112,7 @@ export function localTransport(opts: DeliveryOptions, open: OpenBody): DeliveryT
           data,
           smtpUtf8: req.smtpUtf8,
           requireTls: req.requireTls,
+          ...(req.connections !== undefined ? { connections: req.connections } : {}),
         },
         opts,
       );

@@ -2,7 +2,7 @@
 
 Self-hosted email delivery engine for apps. Delivers straight to your recipients' mail servers. Bun-native, one binary, one SQLite file.
 
-> Status: early development (milestone M6). Not usable in production yet.
+> Status: early development (milestone M7). Not usable in production yet.
 
 ## Develop
 
@@ -57,6 +57,10 @@ curl localhost:3000/emails/<id> -H "Authorization: Bearer bz_…"
 `POST /emails` takes the same fields as Resend (`from`, `to`, `cc`, `bcc`, `reply_to`, `subject`, `html`, `text`, `headers`, `attachments`, `tags`, `scheduled_at`) plus `expires_at` and `require_tls`. `GET /emails/:id` shows each recipient's status and every attempt: the MX host, TLS version, whether the certificate was verified, the rule that applied and the server's reply. Bodies are never returned: once accepted, only the signer can decrypt them.
 
 Keys have a scope (`send`, `read`, `full`), can be limited to some domains (`--domain`) and have a per-second rate limit.
+
+### Polite sending
+
+Bunzzle keeps a speed per destination (per provider for Gmail, Microsoft, Yahoo and others), starting from conservative limits. When a receiver says "too many connections", the speed is halved and held; when it says your IP is blocked, sending there pauses, then resumes with one probe email and climbs back slowly. Connections are reused. Emails sent with `"lane": "bulk"` never delay transactional ones: a password reset goes ahead of any queued newsletter, while bulk still gets a small guaranteed share. `GET /paths` (or `bunzzle paths`) shows each destination's current speed, its limits and every change with the reason.
 
 ## Send one email
 

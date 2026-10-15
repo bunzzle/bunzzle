@@ -5,7 +5,9 @@ import { localTransport, rememberingTransport } from "../delivery/transport.ts";
 import { cachingResolver } from "../dns/cache.ts";
 import { createResolver, parseServer, systemServers } from "../dns/resolver.ts";
 import { method, RpcClient, serveRpc } from "../ipc/rpc.ts";
+import { limitsFor } from "../shaping/limits.ts";
 import { allRecipients } from "../smtp/deliver.ts";
+import { SessionPool } from "../smtp/pool.ts";
 import { onStop, ready } from "./runtime.ts";
 import { deliverRequestWire, requestFromWire, sockets, toWire } from "./wire.ts";
 
@@ -20,10 +22,13 @@ export async function runDelivery(config: Config, log: Logger) {
   const ehloName = config.ehloName;
   if (!ehloName) log.warn("BUNZZLE_EHLO_NAME is not set: email will wait until it is");
 
+  const pool = new SessionPool();
   const transport = rememberingTransport(
     localTransport(
       {
         resolver,
+        pool,
+        perConnection: (provider) => limitsFor(provider).perConnection,
         ehloName: ehloName ?? "",
         port: config.smtpPort,
         families: config.ipv6 ? [4, 6] : [4],
@@ -85,7 +90,10 @@ export async function runDelivery(config: Config, log: Logger) {
       return transport.deliver(req);
     }),
   });
-  onStop(log, () => server.stop());
+  onStop(log, async () => {
+    server.stop();
+    await pool.closeAll();
+  });
   log.info("delivery ready", { ehlo: ehloName, source: config.sourceIp ?? "default" });
   ready();
 }

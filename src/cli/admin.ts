@@ -81,6 +81,45 @@ export async function domainsCommand(argv: string[], config: Config) {
   }
 }
 
+interface PathChange {
+  at: string;
+  change: string;
+  reason: string;
+  rate_per_sec: number;
+  connections: number;
+}
+
+interface PathView {
+  destination: string;
+  source: string;
+  state: string;
+  until: string | null;
+  rate_per_sec: number;
+  connections: number;
+  ceiling: { rate_per_sec: number; connections: number };
+  in_flight: number;
+  waiting: { transactional: number; bulk: number };
+  delivered: number;
+  changes: PathChange[];
+}
+
+export async function pathsCommand(argv: string[], config: Config) {
+  if (argv.length > 0) throw new UsageError("usage: bunzzle paths");
+  const paths = await call<PathView[]>(config, "paths", {});
+  if (paths.length === 0) console.log("No paths yet: nothing has been sent since Bunzzle started.");
+  for (const p of paths) {
+    const until = p.until ? ` until ${p.until}` : "";
+    console.log(
+      `${p.source} → ${p.destination}: ${p.state}${until}, ${p.rate_per_sec}/s of ${p.ceiling.rate_per_sec}, ${p.connections} of ${p.ceiling.connections} connections, ${p.in_flight} sending, waiting ${p.waiting.transactional} transactional + ${p.waiting.bulk} bulk, ${p.delivered} delivered`,
+    );
+    for (const c of p.changes.slice(-5)) {
+      console.log(
+        `    ${c.at}  ${c.change.padEnd(12)} → ${c.rate_per_sec}/s, ${c.connections} conn  ${c.reason}`,
+      );
+    }
+  }
+}
+
 interface KeyView {
   id: string;
   name: string;
