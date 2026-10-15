@@ -14,7 +14,8 @@ export async function runDelivery(config: Config, log: Logger) {
   const servers = config.dnsServers.length
     ? config.dnsServers.map(parseServer)
     : await systemServers();
-  const resolver = cachingResolver(createResolver({ servers }));
+  const uncached = createResolver({ servers });
+  const resolver = cachingResolver(uncached);
   const signer = new RpcClient(sock.signer);
   const ehloName = config.ehloName;
   if (!ehloName) log.warn("BUNZZLE_EHLO_NAME is not set: email will wait until it is");
@@ -45,6 +46,23 @@ export async function runDelivery(config: Config, log: Logger) {
   const server = await serveRpc(sock.delivery, {
     lookup: method(z.object({ domain: z.string().min(1).max(255) }), ({ domain }) =>
       transport.lookup(domain),
+    ),
+    txt: method(
+      z.object({ names: z.array(z.string().min(1).max(255)).max(20) }),
+      async ({ names }) => {
+        const out: Record<string, string[]> = {};
+        for (const name of names) {
+          try {
+            const answer = await uncached.query(name, "TXT");
+            out[name] = answer.records.flatMap((r) =>
+              r.type === "TXT" ? [r.strings.join("")] : [],
+            );
+          } catch {
+            out[name] = [];
+          }
+        }
+        return out;
+      },
     ),
     deliver: method(deliverRequestWire, async (wire) => {
       const req = requestFromWire(wire);

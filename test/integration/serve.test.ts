@@ -39,7 +39,7 @@ describe("bunzzle serve", () => {
   test("unknown routes return a JSON 404", async () => {
     const res = await fetch(`${served.url}/nope`);
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: { code: "not_found", message: "Not found" } });
+    expect(await res.json()).toEqual({ statusCode: 404, name: "not_found", message: "Not found" });
   });
 
   test("creates the database, the key store and private directories", async () => {

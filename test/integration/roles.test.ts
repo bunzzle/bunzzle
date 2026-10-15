@@ -4,7 +4,7 @@ import { generateMasterKey, masterKeyFrom } from "../../src/crypto/master.ts";
 import { generateKeyFile, sealKeyFile } from "../../src/dkim/keys.ts";
 import { RpcClient, RpcError } from "../../src/ipc/rpc.ts";
 import { verifyDkim } from "../support/dkim-verify.ts";
-import { type FakeDns, startFakeDns } from "../support/fake-dns.ts";
+import { type FakeDns, startFakeDns, type Zone } from "../support/fake-dns.ts";
 import { type FakeMx, startFakeMx } from "../support/fake-mx.ts";
 import { alive, type Served, startServe } from "../support/serve.ts";
 
@@ -28,6 +28,20 @@ const masterText = generateMasterKey();
 const keyFile = await generateKeyFile("bunzzle.test", "t1");
 
 let dns: FakeDns;
+const zone: Zone = {
+  "example.test": { MX: [[10, "mx.example.test"]] },
+  "mx.example.test": { A: ["127.0.0.1"] },
+};
+
+async function verifiedDomain(core: RpcClient, name: string) {
+  const d = await core.call<{ records: { record: string; name: string; value: string }[] }>(
+    "addDomain",
+    { name },
+  );
+  for (const r of d.records.filter((x) => x.record === "DKIM")) zone[r.name] = { TXT: [r.value] };
+  const v = await core.call<{ status: string }>("verifyDomain", { name });
+  expect(v.status).toBe("verified");
+}
 let mx: FakeMx;
 let served: Served;
 
@@ -35,10 +49,7 @@ beforeAll(async () => {
   await Bun.$`mkdir -p ${keysDir}/dkim`.quiet();
   const sealed = await sealKeyFile(keyFile, await masterKeyFrom(masterText));
   await Bun.write(`${keysDir}/dkim/bunzzle.test.json`, JSON.stringify(sealed));
-  dns = await startFakeDns({
-    "example.test": { MX: [[10, "mx.example.test"]] },
-    "mx.example.test": { A: ["127.0.0.1"] },
-  });
+  dns = await startFakeDns(zone);
   let greetings = 0;
   mx = startFakeMx({
     finalDelayMs: 500,
@@ -83,6 +94,7 @@ test(
   "no email is lost or silently duplicated while roles are killed at random",
   async () => {
     const core = new RpcClient(`${served.dir}/run/core.sock`);
+    await verifiedDomain(core, "bunzzle.test");
     let kills = 0;
     const killer = (async () => {
       for (const role of KILLS) {
@@ -196,6 +208,6 @@ test("core refuses email from a domain the signer has no key for", async () => {
     );
   core.close();
   await again.stop();
-  expect(err?.code).toBe("invalid");
-  expect(err?.message).toContain("no DKIM key for other.test");
+  expect(err?.code).toBe("unverified-domain");
+  expect(err?.message).toContain("other.test domain is not registered");
 });

@@ -13,6 +13,7 @@ import { runSigner } from "../roles/signer.ts";
 import { runSupervisor } from "../roles/supervisor.ts";
 import { ROLES, type Role } from "../roles/wire.ts";
 import { VERSION } from "../version.ts";
+import { domainsCommand, keysCommand } from "./admin.ts";
 import { UsageError } from "./args.ts";
 import { dkimCommand } from "./dkim.ts";
 import { sendCommand } from "./send.ts";
@@ -24,6 +25,8 @@ Usage:
   bunzzle send        Send one email straight to the recipients' mail servers
   bunzzle dkim        Create DKIM keys and print their DNS records
   bunzzle master-key  Print a new random master key
+  bunzzle domains     add|verify|show|list sending domains (needs \`serve\` running)
+  bunzzle keys        create|list|revoke API keys (needs \`serve\` running)
   bunzzle --version   Print the version
   bunzzle --help      Show this help
 
@@ -42,6 +45,20 @@ bunzzle send:
   --require-tls                     only deliver over TLS with a valid certificate
   --dry-run                         print the signed message instead of sending
   --json                            print the delivery report as JSON
+
+bunzzle domains:
+  add DOMAIN        create DKIM keys and print the DNS records to publish
+  verify DOMAIN     check the DNS records now
+  show DOMAIN | list
+
+bunzzle keys:
+  create --name NAME [--scope send|read|full] [--domain DOMAIN] [--rate-limit N]
+  list | revoke ID
+
+API (bunzzle serve):
+  POST /emails            Resend-compatible; Idempotency-Key header; extra: expires_at, require_tls
+  GET  /emails/:id        status per recipient, every attempt with MX, TLS and the reply
+  GET|POST /domains, GET /domains/:name, POST /domains/:name/verify
 
 bunzzle dkim:
   keygen --domain DOMAIN --out PATH [--selector NAME] [--force] [--unencrypted]
@@ -101,6 +118,10 @@ async function main(argv: string[]) {
       return;
     case "dkim":
       return dkimCommand(argv.slice(1), loadConfig());
+    case "domains":
+      return domainsCommand(argv.slice(1), loadConfig());
+    case "keys":
+      return keysCommand(argv.slice(1), loadConfig());
     case "master-key":
       console.log(generateMasterKey());
       return;

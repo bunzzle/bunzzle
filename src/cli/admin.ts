@@ -1,0 +1,150 @@
+import type { Config } from "../config.ts";
+import { RpcClient, RpcError } from "../ipc/rpc.ts";
+import { sockets } from "../roles/wire.ts";
+import { parseArgs, UsageError } from "./args.ts";
+
+interface DomainRecordView {
+  record: string;
+  name: string;
+  value: string;
+  required: boolean;
+  status: string;
+  found: string | null;
+}
+
+interface DomainView {
+  name: string;
+  status: string;
+  records: DomainRecordView[];
+}
+
+async function call<T>(config: Config, method: string, params: unknown): Promise<T> {
+  const core = new RpcClient(sockets(config.runDir).core);
+  try {
+    return await core.call<T>(method, params, { timeoutMs: 60_000 });
+  } catch (err) {
+    if (err instanceof RpcError && err.code === "unavailable") {
+      throw new UsageError(
+        `cannot reach Bunzzle at ${config.runDir}/core.sock: is \`bunzzle serve\` running (same BUNZZLE_RUN_DIR)?`,
+      );
+    }
+    if (err instanceof RpcError && (err.code === "invalid" || err.code === "not-found")) {
+      throw new UsageError(err.message);
+    }
+    throw err;
+  } finally {
+    core.close();
+  }
+}
+
+const mark = (status: string) =>
+  status === "verified" ? "ok" : status === "not_started" ? "--" : status.toUpperCase();
+
+function printDomain(d: DomainView) {
+  console.log(`${d.name}: ${d.status}\n`);
+  for (const r of d.records) {
+    console.log(
+      `[${mark(r.status)}] ${r.record}${r.required ? "" : " (recommended)"}  TXT  ${r.name}`,
+    );
+    console.log(`     ${r.value}`);
+    if (r.status === "mismatch" && r.found) console.log(`     found instead: ${r.found}`);
+  }
+  if (d.status !== "verified") {
+    console.log(
+      "\nAdd the TXT records above at your DNS provider, then run `bunzzle domains verify` (Bunzzle also checks every few minutes).",
+    );
+  }
+}
+
+export async function domainsCommand(argv: string[], config: Config) {
+  const [sub, name, ...rest] = argv;
+  if (rest.length > 0) throw new UsageError(`unexpected argument: ${rest[0]}`);
+  switch (sub) {
+    case "add":
+      if (!name) throw new UsageError("usage: bunzzle domains add DOMAIN");
+      return printDomain(await call<DomainView>(config, "addDomain", { name }));
+    case "verify":
+      if (!name) throw new UsageError("usage: bunzzle domains verify DOMAIN");
+      return printDomain(await call<DomainView>(config, "verifyDomain", { name }));
+    case "show":
+      if (!name) throw new UsageError("usage: bunzzle domains show DOMAIN");
+      return printDomain(await call<DomainView>(config, "getDomain", { name }));
+    case "list": {
+      const all = await call<DomainView[]>(config, "listDomains", {});
+      if (all.length === 0)
+        console.log("No domains yet. Add one with `bunzzle domains add DOMAIN`.");
+      for (const d of all) console.log(`${d.status.padEnd(9)} ${d.name}`);
+      return;
+    }
+    default:
+      throw new UsageError("usage: bunzzle domains add|verify|show|list");
+  }
+}
+
+interface KeyView {
+  id: string;
+  name: string;
+  prefix: string;
+  scope: string;
+  domains: string[] | null;
+  rateLimit: number;
+  lastUsedAt: number | null;
+  revokedAt: number | null;
+  token?: string;
+}
+
+export async function keysCommand(argv: string[], config: Config) {
+  const [sub, ...rest] = argv;
+  switch (sub) {
+    case "create": {
+      const args = parseArgs(rest, {
+        strings: ["name", "scope", "rate-limit"],
+        lists: ["domain"],
+      });
+      const name = args.strings.get("name");
+      if (!name)
+        throw new UsageError(
+          "usage: bunzzle keys create --name NAME [--scope send|read|full] [--domain D]",
+        );
+      const scope = args.strings.get("scope") ?? "send";
+      if (!["send", "read", "full"].includes(scope))
+        throw new UsageError("--scope must be send, read or full");
+      const rateLimit = args.strings.get("rate-limit");
+      const domains = args.lists.get("domain");
+      const key = await call<KeyView>(config, "createKey", {
+        name,
+        scope,
+        ...(domains ? { domains } : {}),
+        ...(rateLimit ? { rateLimit: Number(rateLimit) } : {}),
+      });
+      console.log(
+        `Created API key "${key.name}" (${key.scope}${key.domains ? `, only ${key.domains.join(", ")}` : ""}).`,
+      );
+      console.log("Copy it now, it is shown only once:\n");
+      console.log(key.token);
+      return;
+    }
+    case "list": {
+      const keys = await call<KeyView[]>(config, "listKeys", {});
+      if (keys.length === 0)
+        console.log("No API keys yet. Create one with `bunzzle keys create --name NAME`.");
+      for (const k of keys) {
+        const state = k.revokedAt ? "revoked" : "active";
+        const used = k.lastUsedAt ? new Date(k.lastUsedAt).toISOString() : "never used";
+        console.log(
+          `${k.id}  ${k.prefix}…  ${state.padEnd(7)}  ${k.scope.padEnd(4)}  ${k.name}  (${used})`,
+        );
+      }
+      return;
+    }
+    case "revoke": {
+      const id = rest[0];
+      if (!id || rest.length > 1) throw new UsageError("usage: bunzzle keys revoke ID");
+      await call(config, "revokeKey", { id });
+      console.log(`Revoked ${id}.`);
+      return;
+    }
+    default:
+      throw new UsageError("usage: bunzzle keys create|list|revoke");
+  }
+}

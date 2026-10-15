@@ -90,7 +90,12 @@ function answer(zone: Zone, q: Uint8Array, tcp: boolean): Uint8Array | null {
     if (type === RRType.TXT) {
       for (const t of current.TXT ?? []) {
         const b = [...new TextEncoder().encode(t)];
-        records.push(rr(target, type, ttl, [b.length, ...b]));
+        const data: number[] = [];
+        for (let i = 0; i < b.length || i === 0; i += 255) {
+          const part = b.slice(i, i + 255);
+          data.push(part.length, ...part);
+        }
+        records.push(rr(target, type, ttl, data));
       }
     }
   }

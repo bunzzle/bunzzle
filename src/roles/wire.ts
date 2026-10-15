@@ -152,7 +152,25 @@ export const requestFromWire = (r: z.infer<typeof deliverRequestWire>): DeliverR
 
 export const MESSAGE_ID = /^[A-Za-z0-9._-]{1,64}$/;
 
+export const TOKEN_HASH = /^[0-9a-f]{64}$/;
+export const tokenHash = z.string().regex(TOKEN_HASH).optional();
+export const DOMAIN = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$/;
+
+export const emailMeta = z.object({
+  from: z.string().max(1000),
+  to: z.array(z.string().max(320)).max(1000),
+  cc: z.array(z.string().max(320)).max(1000),
+  bcc: z.array(z.string().max(320)).max(1000),
+  replyTo: z.array(z.string().max(320)).max(50),
+  tags: z.array(z.object({ name: z.string().max(256), value: z.string().max(256) })).max(50),
+});
+
 export const enqueueParams = z.object({
+  tokenHash,
+  idempotencyKey: z.string().min(1).max(256).optional(),
+  bodyHash: z.string().regex(TOKEN_HASH).optional(),
+  scheduledAt: z.number().int().positive().optional(),
+  meta: emailMeta.optional(),
   id: z.string().regex(MESSAGE_ID).optional(),
   from: z.string().min(3).max(320),
   recipients: z.array(z.string().min(3).max(320)).min(1).max(1000),

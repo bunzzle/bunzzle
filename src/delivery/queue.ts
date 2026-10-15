@@ -15,6 +15,7 @@ export interface NewEmail extends EmailPayload {
   body: SealedBody;
   recipients: string[];
   priority?: number;
+  runAfter?: number;
   expiresAt?: number;
   metadata?: Record<string, unknown>;
 }
@@ -61,6 +62,7 @@ export function enqueueEmail(db: Database, email: NewEmail, now: number): string
       targets: [...byDomain.keys()],
       ...(email.priority !== undefined ? { priority: email.priority } : {}),
       ...(email.expiresAt !== undefined ? { expiresAt: email.expiresAt } : {}),
+      ...(email.runAfter !== undefined ? { runAfter: email.runAfter } : {}),
       ...(email.metadata ? { metadata: email.metadata } : {}),
     },
     now,

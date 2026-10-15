@@ -20,6 +20,7 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
     master,
     keystorePath: `${config.keysDir}/epochs.json`,
     dkimKeyFiles: files,
+    dkimDir: `${config.keysDir}/dkim`,
   });
 
   const shred = async () => {
@@ -34,6 +35,13 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
       return { epoch: k.epoch, publicKey: k.publicKey.toBase64() };
     }),
     domains: method(z.object({}), () => signer.domains()),
+    ensureKeys: method(
+      z.object({
+        domain: z.string().regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/),
+        selectorBase: z.string().regex(/^[a-z0-9-]{1,40}$/),
+      }),
+      ({ domain, selectorBase }) => signer.ensureKeys(domain, selectorBase),
+    ),
     open: method(
       z.object({ messageId: z.string().regex(MESSAGE_ID), body: sealedBodyWire }),
       async ({ messageId, body }) => {

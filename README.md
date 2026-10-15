@@ -2,7 +2,7 @@
 
 Self-hosted email delivery engine for apps. Delivers straight to your recipients' mail servers. Bun-native, one binary, one SQLite file.
 
-> Status: early development (milestone M5). Not usable in production yet.
+> Status: early development (milestone M6). Not usable in production yet.
 
 ## Develop
 
@@ -36,6 +36,27 @@ curl localhost:3000/health
 Every email body is encrypted with its own key, and those keys are destroyed when retention ends, so old backups stay unreadable. A role that crashes is restarted; email in flight is reconciled, never silently sent twice.
 
 Configuration is read from environment variables. See `.env.example`.
+
+## Send with the API
+
+With `serve` running:
+
+```sh
+./dist/bunzzle keys create --name my-app          # prints a bz_… key once; only its hash is stored
+./dist/bunzzle domains add your.domain           # creates DKIM keys, prints the TXT records to publish
+./dist/bunzzle domains verify your.domain        # only verified domains can send
+
+curl -X POST localhost:3000/emails \
+  -H "Authorization: Bearer bz_…" -H "Content-Type: application/json" \
+  -H "Idempotency-Key: order-42" \
+  -d '{"from":"You <hello@your.domain>","to":["someone@example.com"],"subject":"Hi","html":"<p>Hi</p>"}'
+
+curl localhost:3000/emails/<id> -H "Authorization: Bearer bz_…"
+```
+
+`POST /emails` takes the same fields as Resend (`from`, `to`, `cc`, `bcc`, `reply_to`, `subject`, `html`, `text`, `headers`, `attachments`, `tags`, `scheduled_at`) plus `expires_at` and `require_tls`. `GET /emails/:id` shows each recipient's status and every attempt: the MX host, TLS version, whether the certificate was verified, the rule that applied and the server's reply. Bodies are never returned: once accepted, only the signer can decrypt them.
+
+Keys have a scope (`send`, `read`, `full`), can be limited to some domains (`--domain`) and have a per-second rate limit.
 
 ## Send one email
 

@@ -1,0 +1,259 @@
+import { z } from "zod";
+import { hashToken, TOKEN } from "../accounts/api-keys.ts";
+import type { Logger } from "../core/log.ts";
+import type { RpcClient } from "../ipc/rpc.ts";
+import { VERSION } from "../version.ts";
+import { ApiError, errorResponse, fromRpc } from "./errors.ts";
+import { prepareEmail, sendSchema } from "./send.ts";
+
+const MAX_BODY = 50 * 1024 * 1024;
+
+interface Caller {
+  hash: string;
+  id: string;
+  domains: string[] | null;
+}
+
+const authResult = z.object({
+  id: z.string(),
+  scope: z.enum(["send", "read", "full"]),
+  domains: z.array(z.string()).nullable(),
+  rateLimit: z.number(),
+});
+
+class Buckets {
+  readonly #state = new Map<string, { tokens: number; at: number }>();
+
+  take(id: string, perSecond: number, now: number): { ok: boolean; remaining: number } {
+    const b = this.#state.get(id) ?? { tokens: perSecond, at: now };
+    b.tokens = Math.min(perSecond, b.tokens + ((now - b.at) / 1000) * perSecond);
+    b.at = now;
+    const ok = b.tokens >= 1;
+    if (ok) b.tokens -= 1;
+    this.#state.set(id, b);
+    return { ok, remaining: Math.floor(b.tokens) };
+  }
+}
+
+async function json(req: Request): Promise<unknown> {
+  const text = await req.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new ApiError(422, "validation_error", "The request body must be valid JSON.");
+  }
+}
+
+function invalid(error: z.ZodError): ApiError {
+  const issue = error.issues[0];
+  const field = issue?.path.join(".") || "body";
+  return new ApiError(
+    422,
+    "validation_error",
+    `Invalid \`${field}\` field: ${issue?.message ?? ""}`,
+  );
+}
+
+export interface AppOptions {
+  core: RpcClient;
+  log: Logger;
+  hostname: string;
+  port: number;
+}
+
+export function startApp({ core, log, hostname, port }: AppOptions) {
+  const startedAt = Date.now();
+  const buckets = new Buckets();
+
+  const authenticate = async (req: Request): Promise<Caller> => {
+    const header = req.headers.get("authorization");
+    if (!header) {
+      throw new ApiError(
+        401,
+        "missing_api_key",
+        "Missing API key in the authorization header. Include the following header in the request: Authorization: Bearer YOUR_API_KEY",
+      );
+    }
+    const token = /^Bearer\s+(\S+)$/i.exec(header)?.[1];
+    if (!token || !TOKEN.test(token))
+      throw new ApiError(403, "invalid_api_key", "API key is invalid");
+    const hash = hashToken(token);
+    let key: z.infer<typeof authResult>;
+    try {
+      key = await core.call(
+        "authenticate",
+        { tokenHash: hash },
+        { result: authResult, timeoutMs: 5_000 },
+      );
+    } catch (err) {
+      throw fromRpc(err);
+    }
+    const bucket = buckets.take(key.id, key.rateLimit, Date.now());
+    if (!bucket.ok) {
+      throw new ApiError(
+        429,
+        "rate_limit_exceeded",
+        `Too many requests. You can only make ${key.rateLimit} requests per second.`,
+        {
+          "Retry-After": "1",
+          "ratelimit-limit": String(key.rateLimit),
+          "ratelimit-remaining": "0",
+        },
+      );
+    }
+    return { hash, id: key.id, domains: key.domains };
+  };
+
+  const handle =
+    (fn: (req: Request & { params: Record<string, string> }) => Promise<Response>) =>
+    async (req: Request & { params: Record<string, string> }): Promise<Response> => {
+      try {
+        return await fn(req);
+      } catch (err) {
+        const api = fromRpc(err);
+        if (api.status >= 500)
+          log.error("request failed", {
+            path: new URL(req.url).pathname,
+            error: (err as Error)?.message,
+          });
+        return errorResponse(api);
+      }
+    };
+
+  const rpc = async <T>(method: string, params: unknown, result?: z.ZodType<T>): Promise<T> => {
+    try {
+      return await core.call(method, params, { timeoutMs: 60_000, ...(result ? { result } : {}) });
+    } catch (err) {
+      throw fromRpc(err);
+    }
+  };
+
+  return Bun.serve({
+    hostname,
+    port,
+    maxRequestBodySize: MAX_BODY,
+    routes: {
+      "/health": {
+        GET: async () => {
+          let ok = false;
+          try {
+            ok = (
+              await core.call(
+                "health",
+                {},
+                { timeoutMs: 2_000, result: z.object({ ok: z.boolean() }) },
+              )
+            ).ok;
+          } catch {
+            ok = false;
+          }
+          return Response.json(
+            {
+              ok,
+              version: VERSION,
+              uptime_s: Math.floor((Date.now() - startedAt) / 1000),
+              core: ok ? "ok" : "unavailable",
+            },
+            { status: ok ? 200 : 503 },
+          );
+        },
+      },
+      "/emails": {
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          const text = await req.text();
+          let body: unknown;
+          try {
+            body = JSON.parse(text);
+          } catch {
+            throw new ApiError(422, "validation_error", "The request body must be valid JSON.");
+          }
+          const parsed = sendSchema.safeParse(body);
+          if (!parsed.success) throw invalid(parsed.error);
+          const email = prepareEmail(parsed.data, new Date());
+          if (caller.domains && !caller.domains.includes(email.fromDomain)) {
+            throw new ApiError(
+              403,
+              "restricted_api_key",
+              `This API key cannot send from ${email.fromDomain}.`,
+            );
+          }
+          const idempotencyKey = req.headers.get("idempotency-key");
+          if (
+            idempotencyKey !== null &&
+            (idempotencyKey.length < 1 || idempotencyKey.length > 256)
+          ) {
+            throw new ApiError(
+              400,
+              "invalid_idempotency_key",
+              "The Idempotency-Key must be 1 to 256 characters.",
+            );
+          }
+          const r = await rpc(
+            "enqueue",
+            {
+              tokenHash: caller.hash,
+              from: email.from,
+              recipients: email.recipients,
+              data: email.data,
+              smtpUtf8: email.smtpUtf8,
+              requireTls: email.requireTls,
+              meta: email.meta,
+              ...(email.scheduledAt !== undefined ? { scheduledAt: email.scheduledAt } : {}),
+              ...(email.expiresAt !== undefined ? { expiresAt: email.expiresAt } : {}),
+              ...(idempotencyKey !== null ? { idempotencyKey, bodyHash: hashToken(text) } : {}),
+            },
+            z.object({ id: z.string(), existed: z.boolean() }),
+          );
+          return Response.json({ id: r.id });
+        }),
+      },
+      "/emails/:id": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(
+            await rpc("getEmail", { tokenHash: caller.hash, id: req.params["id"] }),
+          );
+        }),
+      },
+      "/domains": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const data = await rpc("listDomains", { tokenHash: caller.hash }, z.array(z.unknown()));
+          return Response.json({ object: "list", data });
+        }),
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          const parsed = z.object({ name: z.string().min(1).max(253) }).safeParse(await json(req));
+          if (!parsed.success) throw invalid(parsed.error);
+          return Response.json(
+            await rpc("addDomain", { tokenHash: caller.hash, name: parsed.data.name }),
+          );
+        }),
+      },
+      "/domains/:name": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(
+            await rpc("getDomain", { tokenHash: caller.hash, name: req.params["name"] }),
+          );
+        }),
+      },
+      "/domains/:name/verify": {
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(
+            await rpc("verifyDomain", { tokenHash: caller.hash, name: req.params["name"] }),
+          );
+        }),
+      },
+    },
+    fetch() {
+      return errorResponse(new ApiError(404, "not_found", "Not found"));
+    },
+    error(err) {
+      log.error("unhandled request error", { error: err.message });
+      return errorResponse(new ApiError(500, "application_error", "Internal server error"));
+    },
+  });
+}
