@@ -25,6 +25,7 @@ const FROM_RPC: Record<string, [number, string]> = {
   "unverified-domain": [403, "validation_error"],
   "idempotency-conflict": [409, "invalid_idempotent_request"],
   "not-found": [404, "not_found"],
+  held: [403, "sending_paused"],
 };
 
 export function fromRpc(err: unknown): ApiError {

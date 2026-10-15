@@ -115,3 +115,15 @@ export function sameAddress(a: string, b: string): boolean {
   const y = parseIPv4(b) ?? parseIPv6(b);
   return !!x && !!y && x.length === y.length && x.every((v, i) => v === y[i]);
 }
+
+export function reverseName(ip: string): string | null {
+  const v4 = parseIPv4(ip);
+  if (v4) return `${[...v4].reverse().join(".")}.in-addr.arpa`;
+  const v6 = parseIPv6(ip);
+  if (!v6) return null;
+  const nibbles = [...v6].flatMap((b) => [b >> 4, b & 15]);
+  return `${nibbles
+    .reverse()
+    .map((n) => n.toString(16))
+    .join(".")}.ip6.arpa`;
+}

@@ -26,7 +26,29 @@ describe("loadConfig", () => {
       retryScale: 1,
       publicUrl: null,
       inboundHostname: null,
+      sourceIps: [],
+      guardMinVolume: 300,
+      anomalyFloor: 500,
+      dkimRotateDays: 90,
+      cloudflareToken: null,
+      cloudflareUrl: "https://api.cloudflare.com/client/v4",
     });
+  });
+
+  test("source IPs with pools; established IPs skip warm-up", () => {
+    const c = loadConfig({
+      BUNZZLE_SOURCE_IPS: "203.0.113.7, 203.0.113.8=bulk,2001:db8::1",
+      BUNZZLE_ESTABLISHED_IPS: "203.0.113.7",
+    });
+    expect(c.sourceIps).toEqual([
+      { ip: "203.0.113.7", pool: "main", established: true },
+      { ip: "203.0.113.8", pool: "bulk", established: false },
+      { ip: "2001:db8::1", pool: "main", established: false },
+    ]);
+    expect(loadConfig({ BUNZZLE_SOURCE_IP: "203.0.113.9" }).sourceIps).toEqual([
+      { ip: "203.0.113.9", pool: "main", established: false },
+    ]);
+    expect(() => loadConfig({ BUNZZLE_SOURCE_IPS: "mail.example.com" })).toThrow(ConfigError);
   });
 
   test("retention cannot be shorter than a week, so pending email is never shredded", () => {

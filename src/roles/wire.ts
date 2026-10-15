@@ -85,7 +85,7 @@ const phase = z.enum([
   "data",
   "dot",
 ]);
-const tlsRule = z.enum(["requiretls", "provider", "opportunistic"]);
+const tlsRule = z.enum(["requiretls", "mta-sts", "provider", "opportunistic"]);
 const recipient = z.object({
   address: z.string().max(320),
   status: z.enum(["delivered", "deferred", "bounced", "unknown"]),
@@ -130,6 +130,10 @@ export const deliveryReportWire: z.ZodType<DeliveryReport> = z.object({
     .max(16),
   recipients: z.array(recipient).max(1000),
   recalled: z.boolean().optional(),
+  mtaSts: z
+    .object({ mode: z.string().max(10), id: z.string().max(32) })
+    .nullable()
+    .optional(),
 });
 
 export const deliverRequestWire = z.object({
@@ -146,6 +150,7 @@ export const deliverRequestWire = z.object({
   connections: z.number().int().min(1).max(1000).optional(),
   lane: z.enum(["transactional", "bulk"]).optional(),
   bounceDomain: z.string().max(253).nullable().optional(),
+  source: z.string().max(64).optional(),
 });
 
 export const requestToWire = (r: DeliverRequest) => ({ ...r, body: toWire(r.body) });

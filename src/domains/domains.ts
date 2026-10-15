@@ -1,7 +1,14 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 
-export type RecordKind = "DKIM" | "SPF" | "DMARC" | "RETURN_PATH_MX" | "RETURN_PATH_SPF";
+export type RecordKind =
+  | "DKIM"
+  | "DKIM_NEXT"
+  | "DKIM_RETIRING"
+  | "SPF"
+  | "DMARC"
+  | "RETURN_PATH_MX"
+  | "RETURN_PATH_SPF";
 export type CheckStatus = "not_started" | "verified" | "missing" | "mismatch";
 export type DomainStatus = "pending" | "verified";
 
@@ -27,10 +34,19 @@ export interface PublicDkimKey {
   selector: string;
   algorithm: "rsa-sha256" | "ed25519-sha256";
   publicKey: string;
+  state?: "active" | "next" | "retiring";
 }
 
 const recordSchema = z.object({
-  record: z.enum(["DKIM", "SPF", "DMARC", "RETURN_PATH_MX", "RETURN_PATH_SPF"]),
+  record: z.enum([
+    "DKIM",
+    "DKIM_NEXT",
+    "DKIM_RETIRING",
+    "SPF",
+    "DMARC",
+    "RETURN_PATH_MX",
+    "RETURN_PATH_SPF",
+  ]),
   name: z.string(),
   type: z.enum(["TXT", "MX"]),
   value: z.string(),
@@ -39,15 +55,16 @@ const recordSchema = z.object({
   found: z.string().nullable(),
 });
 
-export function spfMechanism(sourceIp: string | null): string {
-  if (!sourceIp) return "a mx";
-  return sourceIp.includes(":") ? `ip6:${sourceIp}` : `ip4:${sourceIp}`;
+export function spfMechanism(sourceIps: string | string[] | null): string {
+  const ips = (Array.isArray(sourceIps) ? sourceIps : sourceIps ? [sourceIps] : []).filter(Boolean);
+  if (ips.length === 0) return "a mx";
+  return ips.map((ip) => (ip.includes(":") ? `ip6:${ip}` : `ip4:${ip}`)).join(" ");
 }
 
 export function expectedRecords(
   domain: string,
   keys: PublicDkimKey[],
-  sourceIp: string | null,
+  sourceIp: string | string[] | null,
   inboundHost: string | null = null,
 ): DomainRecord[] {
   const base = { type: "TXT" as const, status: "not_started" as const, found: null };
@@ -73,10 +90,14 @@ export function expectedRecords(
   return [
     ...keys.map((k) => ({
       ...base,
-      record: "DKIM" as const,
+      record: (k.state === "next"
+        ? "DKIM_NEXT"
+        : k.state === "retiring"
+          ? "DKIM_RETIRING"
+          : "DKIM") as RecordKind,
       name: `${k.selector}._domainkey.${domain}`,
       value: `v=DKIM1; k=${k.algorithm === "rsa-sha256" ? "rsa" : "ed25519"}; p=${k.publicKey}`,
-      required: true,
+      required: (k.state ?? "active") === "active",
     })),
     {
       ...base,
@@ -108,13 +129,13 @@ function tags(txt: string): Map<string, string> {
   return out;
 }
 
-function check(r: DomainRecord, found: string[], sourceIp: string | null): DomainRecord {
+function check(r: DomainRecord, found: string[], sourceIp: string | string[] | null): DomainRecord {
   const result = (status: CheckStatus, value: string | null): DomainRecord => ({
     ...r,
     status,
     found: value,
   });
-  if (r.record === "DKIM") {
+  if (r.record === "DKIM" || r.record === "DKIM_NEXT" || r.record === "DKIM_RETIRING") {
     const want = tags(r.value).get("p");
     const dkim = found.filter((t) => /^v=DKIM1\b/i.test(t.trim()) || tags(t).has("p"));
     if (dkim.length === 0) return result("missing", null);
@@ -132,8 +153,10 @@ function check(r: DomainRecord, found: string[], sourceIp: string | null): Domai
     if (spf.length === 0) return result("missing", null);
     const record = spf[0] as string;
     if (spf.length > 1) return result("mismatch", spf.join(" | "));
-    if (!sourceIp) return result("verified", record);
-    return record.toLowerCase().includes(spfMechanism(sourceIp).toLowerCase())
+    const want = spfMechanism(sourceIp);
+    if (want === "a mx") return result("verified", record);
+    const have = record.toLowerCase().split(/\s+/);
+    return want.split(" ").every((m) => have.includes(m.toLowerCase()))
       ? result("verified", record)
       : result("mismatch", record);
   }
@@ -144,7 +167,7 @@ function check(r: DomainRecord, found: string[], sourceIp: string | null): Domai
 export function evaluate(
   records: DomainRecord[],
   found: Record<string, string[]>,
-  sourceIp: string | null,
+  sourceIp: string | string[] | null,
 ): { records: DomainRecord[]; status: DomainStatus } {
   const checked = records.map((r) =>
     check(r, found[`${r.type}:${r.name}`] ?? found[r.name] ?? [], sourceIp),

@@ -346,6 +346,42 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           return page("You are unsubscribed. You will not receive these emails any more.");
         },
       },
+      "/doctor": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(await rpc("doctor", { tokenHash: caller.hash }));
+        }),
+      },
+      "/domains/:name/rotate": {
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(
+            await rpc("rotateDomain", { tokenHash: caller.hash, name: req.params["name"] }),
+          );
+        }),
+      },
+      "/ips": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const data = await rpc("ips", { tokenHash: caller.hash }, z.array(z.unknown()));
+          return Response.json({ object: "list", data });
+        }),
+      },
+      "/holds": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const all = new URL(req.url).searchParams.get("all") === "true";
+          return Response.json(await rpc("holds", { tokenHash: caller.hash, all }));
+        }),
+      },
+      "/holds/:id": {
+        DELETE: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(
+            await rpc("releaseHold", { tokenHash: caller.hash, id: req.params["id"] }),
+          );
+        }),
+      },
       "/paths": {
         GET: handle(async (req) => {
           const caller = await authenticate(req);

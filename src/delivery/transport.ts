@@ -7,6 +7,7 @@ import {
   deliverTo,
   findDestination,
 } from "../smtp/deliver.ts";
+import type { StsPolicy } from "../smtp/mta-sts.ts";
 
 export interface DeliverRequest {
   key: string;
@@ -22,6 +23,7 @@ export interface DeliverRequest {
   connections?: number | undefined;
   lane?: "transactional" | "bulk" | undefined;
   bounceDomain?: string | null | undefined;
+  source?: string | undefined;
 }
 
 export interface DeliveryTransport {
@@ -104,10 +106,24 @@ export function rememberingTransport(
   };
 }
 
-export function localTransport(opts: DeliveryOptions, open: OpenBody): DeliveryTransport {
+export interface LocalOptions extends DeliveryOptions {
+  sts?: (domain: string) => Promise<StsPolicy | null>;
+  sources?: string[];
+  ehloFor?: (source: string) => string;
+}
+
+function forSource(opts: LocalOptions, source: string | undefined): DeliveryOptions | string {
+  if (!source || source === "default") return opts;
+  if (!opts.sources?.includes(source)) return `source IP ${source} is not configured here`;
+  return { ...opts, localAddress: source, ehloName: opts.ehloFor?.(source) ?? opts.ehloName };
+}
+
+export function localTransport(opts: LocalOptions, open: OpenBody): DeliveryTransport {
   return {
     lookup: (domain) => findDestination(domain, opts),
     async deliver(req) {
+      const o = forSource(opts, req.source);
+      if (typeof o === "string") return unprepared(req, new Error(o));
       let opened: OpenedBody;
       try {
         opened = await open(req.messageId, req.body, {
@@ -129,8 +145,9 @@ export function localTransport(opts: DeliveryOptions, open: OpenBody): DeliveryT
           smtpUtf8: req.smtpUtf8,
           requireTls: req.requireTls,
           ...(req.connections !== undefined ? { connections: req.connections } : {}),
+          sts: req.destination.kind === "targets" ? ((await opts.sts?.(req.domain)) ?? null) : null,
         },
-        opts,
+        o,
       );
     },
   };

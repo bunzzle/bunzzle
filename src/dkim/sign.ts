@@ -1,4 +1,10 @@
-import { type HeaderField, relaxedBody, relaxedHeader, splitMessage } from "./canonicalize.ts";
+import {
+  bodyHash,
+  type HeaderField,
+  headerData,
+  relaxedHeader,
+  splitMessage,
+} from "./canonicalize.ts";
 
 export type DkimAlgorithm = "rsa-sha256" | "ed25519-sha256";
 
@@ -56,24 +62,6 @@ export function headerList(headers: HeaderField[]): string[] {
     if (OVERSIGNED_HEADERS.has(name)) list.push(name);
   }
   return list;
-}
-
-export function headerData(headers: HeaderField[], names: string[]): string {
-  const used = new Map<string, number>();
-  let out = "";
-  for (const name of names) {
-    const instances = headers.filter((h) => h.name.toLowerCase() === name);
-    const k = used.get(name) ?? 0;
-    used.set(name, k + 1);
-    const h = instances[instances.length - 1 - k];
-    if (h) out += `${relaxedHeader(h.raw)}\r\n`;
-  }
-  return out;
-}
-
-export async function bodyHash(body: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", enc.encode(relaxedBody(body)));
-  return new Uint8Array(digest).toBase64();
 }
 
 export async function signData(key: DkimKey, data: string): Promise<string> {

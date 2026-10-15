@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { relaxedBody, relaxedHeader, splitMessage } from "../../src/dkim/canonicalize.ts";
+import {
+  headerData,
+  relaxedBody,
+  relaxedHeader,
+  splitMessage,
+} from "../../src/dkim/canonicalize.ts";
 import { dnsRecords, generateKeyFile, importKeys, parseKeyFile } from "../../src/dkim/keys.ts";
-import { headerData, headerList, signData, signMessage } from "../../src/dkim/sign.ts";
+import { headerList, signData, signMessage } from "../../src/dkim/sign.ts";
 import { buildMessage } from "../../src/mime/builder.ts";
 import { type PublicKey, verifyDkim } from "../support/dkim-verify.ts";
 

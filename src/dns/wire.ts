@@ -3,6 +3,7 @@ export const RRType = {
   NS: 2,
   CNAME: 5,
   SOA: 6,
+  PTR: 12,
   MX: 15,
   TXT: 16,
   AAAA: 28,
@@ -35,6 +36,7 @@ export type RecordData =
   | { type: "AAAA"; address: string }
   | { type: "CNAME"; target: string }
   | { type: "NS"; target: string }
+  | { type: "PTR"; target: string }
   | { type: "MX"; mx: MxData }
   | { type: "TXT"; strings: string[] }
   | { type: "SOA"; soa: SoaData }
@@ -225,6 +227,9 @@ function readRecord(r: Reader): ResourceRecord {
       break;
     case RRType.NS:
       rec = { ...base, type: "NS", target: r.name() };
+      break;
+    case RRType.PTR:
+      rec = { ...base, type: "PTR", target: r.name() };
       break;
     case RRType.MX: {
       const preference = r.u16();

@@ -2,6 +2,7 @@ import type { Family } from "../dns/ip.ts";
 import { type Destination, lookupDestination } from "../dns/mx.ts";
 import type { Resolver } from "../dns/resolver.ts";
 import { type Provider, providerOf } from "../routing/providers.ts";
+import { mxAllowed, type StsPolicy } from "./mta-sts.ts";
 import type { SessionPool } from "./pool.ts";
 import {
   type Phase,
@@ -21,6 +22,7 @@ export interface DeliveryInput {
   smtpUtf8: boolean;
   requireTls?: boolean;
   connections?: number;
+  sts?: StsPolicy | null;
 }
 
 export interface DeliveryOptions {
@@ -45,11 +47,17 @@ export interface DeliveryReport {
   policy: TlsPolicy | null;
   sessions: SessionResult[];
   recipients: RecipientResult[];
+  mtaSts?: { mode: string; id: string } | null | undefined;
   recalled?: boolean | undefined;
 }
 
-export function tlsPolicy(requireTls: boolean, provider: Provider | null): TlsPolicy {
+export function tlsPolicy(
+  requireTls: boolean,
+  provider: Provider | null,
+  sts: StsPolicy | null = null,
+): TlsPolicy {
   if (requireTls) return { rule: "requiretls", required: true };
+  if (sts?.mode === "enforce") return { rule: "mta-sts", required: true };
   if (provider?.tlsRequired) return { rule: "provider", required: true };
   return { rule: "opportunistic", required: false };
 }
@@ -111,12 +119,28 @@ export async function deliverTo(
   }
 
   report.provider = providerOf(destination.mxHosts[0] ?? "");
-  const policy = tlsPolicy(input.requireTls ?? false, report.provider);
+  const sts = input.sts ?? null;
+  const policy = tlsPolicy(input.requireTls ?? false, report.provider, sts);
   report.policy = policy;
+  report.mtaSts = sts && sts.mode !== "none" ? { mode: sts.mode, id: sts.id } : null;
+  let targets = destination.targets;
+  if (sts?.mode === "enforce") {
+    targets = targets.filter((t) => mxAllowed(t.host, sts.mx));
+    if (targets.length === 0) {
+      report.recipients = allRecipients(
+        input,
+        "deferred",
+        "4.7.5",
+        `no MX host of ${input.domain} is allowed by its MTA-STS policy (${sts.mx.join(", ")})`,
+        "connect",
+      );
+      return report;
+    }
+  }
   const maxSessions = opts.maxSessions ?? 2;
   let sessions = 0;
 
-  for (const target of destination.targets) {
+  for (const target of targets) {
     const session = await runSession({
       host: target.host,
       address: target.address,

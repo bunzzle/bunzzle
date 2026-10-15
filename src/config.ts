@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { familyOf } from "./dns/ip.ts";
 
 const bool = z
   .enum(["true", "false", "1", "0"])
@@ -34,7 +35,51 @@ const schema = z.object({
     message: "must be an http(s) URL like https://mail.example.com",
   }),
   BUNZZLE_INBOUND_HOSTNAME: optional,
+  BUNZZLE_SOURCE_IPS: optional,
+  BUNZZLE_ESTABLISHED_IPS: optional,
+  BUNZZLE_GUARD_MIN_VOLUME: z.coerce.number().int().min(1).default(300),
+  BUNZZLE_ANOMALY_FLOOR: z.coerce.number().int().min(1).default(500),
+  BUNZZLE_DKIM_ROTATE_DAYS: z.coerce.number().int().min(7).max(3650).default(90),
+  BUNZZLE_CLOUDFLARE_API_TOKEN: optional,
+  BUNZZLE_CLOUDFLARE_API_URL: z.string().url().default("https://api.cloudflare.com/client/v4"),
 });
+
+export interface SourceIp {
+  ip: string;
+  pool: string;
+  established: boolean;
+}
+
+function sourceIps(
+  list: string | null,
+  single: string | null,
+  established: string | null,
+): SourceIp[] {
+  const done = new Set(
+    (established ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+  const entries = (list ?? single ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const out: SourceIp[] = [];
+  for (const e of entries) {
+    const [ip = "", pool = "main"] = e.split("=").map((x) => x.trim());
+    if (!familyOf(ip))
+      throw new ConfigError(
+        `invalid configuration:\n  BUNZZLE_SOURCE_IPS: ${ip} is not an IP address`,
+      );
+    if (!/^[a-z0-9-]{1,32}$/.test(pool))
+      throw new ConfigError(
+        `invalid configuration:\n  BUNZZLE_SOURCE_IPS: invalid pool name ${pool}`,
+      );
+    if (!out.some((x) => x.ip === ip)) out.push({ ip, pool, established: done.has(ip) });
+  }
+  return out;
+}
 
 export interface Config {
   host: string;
@@ -59,6 +104,12 @@ export interface Config {
   retryScale: number;
   publicUrl: string | null;
   inboundHostname: string | null;
+  sourceIps: SourceIp[];
+  guardMinVolume: number;
+  anomalyFloor: number;
+  dkimRotateDays: number;
+  cloudflareToken: string | null;
+  cloudflareUrl: string;
 }
 
 export class ConfigError extends Error {}
@@ -96,5 +147,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     retryScale: c.BUNZZLE_RETRY_SCALE,
     publicUrl: c.BUNZZLE_PUBLIC_URL?.replace(/\/+$/, "") ?? null,
     inboundHostname: c.BUNZZLE_INBOUND_HOSTNAME ?? c.BUNZZLE_EHLO_NAME,
+    sourceIps: sourceIps(c.BUNZZLE_SOURCE_IPS, c.BUNZZLE_SOURCE_IP, c.BUNZZLE_ESTABLISHED_IPS),
+    guardMinVolume: c.BUNZZLE_GUARD_MIN_VOLUME,
+    anomalyFloor: c.BUNZZLE_ANOMALY_FLOOR,
+    dkimRotateDays: c.BUNZZLE_DKIM_ROTATE_DAYS,
+    cloudflareToken: c.BUNZZLE_CLOUDFLARE_API_TOKEN,
+    cloudflareUrl: c.BUNZZLE_CLOUDFLARE_API_URL.replace(/\/+$/, ""),
   };
 }

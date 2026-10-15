@@ -32,11 +32,14 @@ export async function startServe(env: Record<string, string>): Promise<Served> {
   const logs: Record<string, unknown>[] = [];
   const listening = Promise.withResolvers<string>();
   let inboundPort: number | null = null;
-  void (async () => {
+  let stderrText = "";
+  const read = async (stream: ReadableStream<Uint8Array>, isErr: boolean) => {
     let buf = "";
     const dec = new TextDecoder();
-    for await (const chunk of proc.stdout) {
-      buf += dec.decode(chunk);
+    for await (const chunk of stream) {
+      const text = dec.decode(chunk);
+      if (isErr) stderrText += text;
+      buf += text;
       let i = buf.indexOf("\n");
       while (i >= 0) {
         const line = buf.slice(0, i);
@@ -61,8 +64,11 @@ export async function startServe(env: Record<string, string>): Promise<Served> {
         }
       }
     }
-    listening.reject(new Error(`serve exited: ${await new Response(proc.stderr).text()}`));
-  })();
+  };
+  void read(proc.stderr, true);
+  void read(proc.stdout, false).then(() =>
+    listening.reject(new Error(`serve exited: ${stderrText}`)),
+  );
   const url = (await listening.promise).replace(/\/$/, "");
   return {
     proc,

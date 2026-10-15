@@ -241,3 +241,40 @@ describe("providers", () => {
     expect(siteOf(["B.example", "a.example", "b.example"])).toBe("a.example,b.example");
   });
 });
+
+describe("reverse DNS (D6)", () => {
+  test("reverse names for IPv4 and IPv6", async () => {
+    const { reverseName } = await import("../../src/dns/ip.ts");
+    expect(reverseName("203.0.113.7")).toBe("7.113.0.203.in-addr.arpa");
+    expect(reverseName("2001:db8::1")).toBe(
+      "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa",
+    );
+  });
+
+  test("forward-confirmed reverse DNS", async () => {
+    const { checkReverse } = await import("../../src/dns/reverse.ts");
+    const { startFakeDns } = await import("../support/fake-dns.ts");
+    const { createResolver } = await import("../../src/dns/resolver.ts");
+    const dns = await startFakeDns({
+      "7.113.0.203.in-addr.arpa": { PTR: "mail.acme.test" },
+      "mail.acme.test": { A: ["203.0.113.7"] },
+      "8.113.0.203.in-addr.arpa": { PTR: "other.acme.test" },
+      "other.acme.test": { A: ["203.0.113.99"] },
+    });
+    const resolver = createResolver({ servers: [{ host: "127.0.0.1", port: dns.port }] });
+    expect(await checkReverse(resolver, "203.0.113.7")).toEqual({
+      ip: "203.0.113.7",
+      ptr: "mail.acme.test",
+      forwardConfirmed: true,
+      problem: null,
+    });
+    expect(await checkReverse(resolver, "203.0.113.8")).toMatchObject({
+      forwardConfirmed: false,
+      problem: "other.acme.test does not resolve back to 203.0.113.8",
+    });
+    expect((await checkReverse(resolver, "203.0.113.9")).problem).toBe(
+      "no PTR record for 203.0.113.9",
+    );
+    dns.stop();
+  });
+});

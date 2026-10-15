@@ -69,6 +69,12 @@ export async function domainsCommand(argv: string[], config: Config) {
     case "show":
       if (!name) throw new UsageError("usage: bunzzle domains show DOMAIN");
       return printDomain(await call<DomainView>(config, "getDomain", { name }));
+    case "rotate": {
+      if (!name) throw new UsageError("usage: bunzzle domains rotate DOMAIN");
+      const r = await call<{ result: string }>(config, "rotateDomain", { name });
+      console.log(`${name}: ${r.result}`);
+      return printDomain(await call<DomainView>(config, "getDomain", { name }));
+    }
     case "list": {
       const all = await call<DomainView[]>(config, "listDomains", {});
       if (all.length === 0)
@@ -77,7 +83,7 @@ export async function domainsCommand(argv: string[], config: Config) {
       return;
     }
     default:
-      throw new UsageError("usage: bunzzle domains add|verify|show|list");
+      throw new UsageError("usage: bunzzle domains add|verify|show|rotate|list");
   }
 }
 
@@ -194,6 +200,104 @@ export async function suppressionsCommand(argv: string[], config: Config) {
     }
     default:
       throw new UsageError("usage: bunzzle suppressions list|add|remove");
+  }
+}
+
+interface DoctorView {
+  checks: { area: string; item: string; status: "ok" | "warn" | "fail"; detail: string }[];
+  summary: { ok: number; warn: number; fail: number };
+}
+
+export async function doctorCommand(argv: string[], config: Config): Promise<number> {
+  if (argv.length > 0) throw new UsageError("usage: bunzzle doctor");
+  const v = await call<DoctorView>(config, "doctor", {});
+  let area = "";
+  for (const c of v.checks) {
+    if (c.area !== area) {
+      area = c.area;
+      console.log(`\n${area}`);
+    }
+    const mark = c.status === "ok" ? "[ok]  " : c.status === "warn" ? "[warn]" : "[FAIL]";
+    console.log(`  ${mark} ${c.item}: ${c.detail}`);
+  }
+  console.log(`\n${v.summary.ok} ok, ${v.summary.warn} warnings, ${v.summary.fail} problems`);
+  return v.summary.fail > 0 ? 1 : 0;
+}
+
+interface IpView {
+  ip: string;
+  pool: string;
+  ehlo: string | null;
+  reverse_dns_ok: boolean;
+  reverse_dns_problem: string | null;
+  warmup:
+    | { state: "established" }
+    | {
+        state: string;
+        providers: {
+          provider: string;
+          state: string;
+          day: number;
+          of_about: number;
+          budget_today: number;
+          sent_today: number;
+        }[];
+      };
+}
+
+export async function ipsCommand(argv: string[], config: Config) {
+  if (argv.length > 0) throw new UsageError("usage: bunzzle ips");
+  const ips = await call<IpView[]>(config, "ips", {});
+  if (ips.length === 0) {
+    console.log(
+      "No source IPs configured: the system picks one. Set BUNZZLE_SOURCE_IPS to manage IPs.",
+    );
+  }
+  for (const ip of ips) {
+    const dns = ip.reverse_dns_ok
+      ? `reverse DNS ok (${ip.ehlo})`
+      : `reverse DNS: ${ip.reverse_dns_problem}`;
+    console.log(`${ip.ip}  pool ${ip.pool}  ${dns}`);
+    if (ip.warmup.state === "established") console.log("    established (no warm-up)");
+    else if ("providers" in ip.warmup) {
+      if (ip.warmup.providers.length === 0) console.log("    warm-up starts with the first email");
+      for (const w of ip.warmup.providers) {
+        console.log(
+          `    ${w.provider.padEnd(9)} ${w.state === "done" ? "warm-up done" : `warming, day ${w.day} of ~${w.of_about}, today's budget ${w.budget_today} (${w.sent_today} sent)`}`,
+        );
+      }
+    }
+  }
+}
+
+interface HoldsView {
+  holds: { id: string; target: string; lane: string; reason: string; created_at: string }[];
+  senders: {
+    domain: string;
+    lane: string;
+    delivered: number;
+    complaint_rate: number;
+    bounce_rate: number;
+  }[];
+}
+
+export async function holdsCommand(argv: string[], config: Config) {
+  const [sub = "list", id] = argv;
+  if (sub === "release") {
+    if (!id) throw new UsageError("usage: bunzzle holds release ID");
+    await call(config, "releaseHold", { id });
+    console.log(`Released ${id}. Bulk mail flows again; watch the rates closely.`);
+    return;
+  }
+  if (sub !== "list") throw new UsageError("usage: bunzzle holds [list] | release ID");
+  const v = await call<HoldsView>(config, "holds", {});
+  if (v.holds.length === 0) console.log("No holds: all lanes are open.");
+  for (const h of v.holds)
+    console.log(`${h.id}  ${h.target} ${h.lane}  since ${h.created_at}\n    ${h.reason}`);
+  for (const s of v.senders) {
+    console.log(
+      `${s.domain} ${s.lane}: ${s.delivered} delivered in 2 days, complaints ${s.complaint_rate}%, hard bounces ${s.bounce_rate}%`,
+    );
   }
 }
 

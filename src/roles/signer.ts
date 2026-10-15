@@ -43,6 +43,27 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
       }),
       ({ domain, selectorBase }) => signer.ensureKeys(domain, selectorBase),
     ),
+    keyStates: method(
+      z.object({ domain: z.string().max(253) }),
+      ({ domain }) => signer.publicKeys(domain) ?? [],
+    ),
+    rotateStart: method(
+      z.object({
+        domain: z.string().max(253),
+        selectorBase: z.string().regex(/^[a-z0-9-]{1,40}$/),
+      }),
+      ({ domain, selectorBase }) => signer.rotateStart(domain, selectorBase),
+    ),
+    promote: method(z.object({ domain: z.string().max(253) }), ({ domain }) =>
+      signer.promote(domain),
+    ),
+    dropRetiring: method(z.object({ domain: z.string().max(253) }), ({ domain }) =>
+      signer.dropRetiring(domain),
+    ),
+    signCanary: method(
+      z.object({ domain: z.string().max(253), which: z.enum(["active", "next"]) }),
+      ({ domain, which }) => signer.signCanary(domain, which),
+    ),
     readToken: method(z.object({ token: z.string().max(100) }), ({ token }) =>
       signer.readToken(token),
     ),

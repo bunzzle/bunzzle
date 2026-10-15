@@ -14,7 +14,10 @@ import { runSupervisor } from "../roles/supervisor.ts";
 import { ROLES, type Role } from "../roles/wire.ts";
 import { VERSION } from "../version.ts";
 import {
+  doctorCommand,
   domainsCommand,
+  holdsCommand,
+  ipsCommand,
   keysCommand,
   pathsCommand,
   suppressionsCommand,
@@ -35,6 +38,9 @@ Usage:
   bunzzle keys        create|list|revoke API keys (needs \`serve\` running)
   bunzzle paths       sending speed per destination and why it changed (needs \`serve\` running)
   bunzzle webhooks    add|list|remove event webhooks (needs \`serve\` running)
+  bunzzle ips         source IPs, reverse DNS and warm-up progress (needs \`serve\` running)
+  bunzzle doctor      check configuration, IPs, every DNS record and DKIM against live DNS
+  bunzzle holds       bulk mail paused by the reputation or anomaly guard; release ID (needs \`serve\` running)
   bunzzle suppressions list|add|remove suppressed addresses (needs \`serve\` running)
   bunzzle --version   Print the version
   bunzzle --help      Show this help
@@ -59,6 +65,7 @@ bunzzle domains:
   add DOMAIN        create DKIM keys and print the DNS records to publish
   verify DOMAIN     check the DNS records now
   show DOMAIN | list
+  rotate DOMAIN     start or continue DKIM key rotation (automatic every BUNZZLE_DKIM_ROTATE_DAYS)
 
 bunzzle keys:
   create --name NAME [--scope send|read|full] [--domain DOMAIN] [--rate-limit N]
@@ -139,6 +146,13 @@ async function main(argv: string[]) {
       return keysCommand(argv.slice(1), loadConfig());
     case "paths":
       return pathsCommand(argv.slice(1), loadConfig());
+    case "doctor":
+      process.exitCode = await doctorCommand(argv.slice(1), loadConfig());
+      return;
+    case "ips":
+      return ipsCommand(argv.slice(1), loadConfig());
+    case "holds":
+      return holdsCommand(argv.slice(1), loadConfig());
     case "webhooks":
       return webhooksCommand(argv.slice(1), loadConfig());
     case "suppressions":

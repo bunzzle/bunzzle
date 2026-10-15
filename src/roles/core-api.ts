@@ -10,6 +10,7 @@ import {
   type Scope,
   touchKey,
 } from "../accounts/api-keys.ts";
+import type { SourceIp } from "../config.ts";
 import { countByState } from "../core/jobs.ts";
 import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
@@ -17,6 +18,7 @@ import { type EpochPublicKey, sealBody } from "../crypto/envelope.ts";
 import { emailExists, enqueueEmail, recipientsOf } from "../delivery/queue.ts";
 import {
   type Domain,
+  type DomainRecord,
   evaluate,
   expectedRecords,
   getDomain,
@@ -25,7 +27,17 @@ import {
 } from "../domains/domains.ts";
 import { findIdempotent, rememberIdempotent } from "../emails/idempotency.ts";
 import { emailView } from "../emails/view.ts";
+import {
+  activeHold,
+  anomalyThreshold,
+  countKeyBulk,
+  createHold,
+  listHolds,
+  releaseHold,
+  senderRates,
+} from "../guards/guards.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
+import { dayOf, estimatedDays, listWarmup } from "../ips/warmup.ts";
 import { AddressError, asciiDomain, domainOf, normalizeAddress } from "../mime/address.ts";
 import { senderDomainOf } from "../mime/from.ts";
 import type { PathView } from "../shaping/shaper.ts";
@@ -41,8 +53,11 @@ export interface CoreDeps {
   signer: RpcClient;
   delivery: RpcClient;
   currentKey: () => Promise<EpochPublicKey>;
-  sourceIp: string | null;
+  sourceIp: string | string[] | null;
   inboundHost?: string | null;
+  anomalyFloor?: number;
+  ips?: SourceIp[];
+  publish?: (records: DomainRecord[]) => Promise<boolean>;
   paths?: () => PathView[];
   now?: () => number;
 }
@@ -209,6 +224,37 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
       if (lane === "bulk" && p.recipients.length !== 1) {
         throw new RpcError("invalid", "a bulk email must have exactly one recipient");
       }
+      if (lane === "bulk") {
+        const hold =
+          activeHold(db, `domain:${headerDomain}`, "bulk") ??
+          (key.id !== "operator" ? activeHold(db, `key:${key.id}`, "bulk") : null);
+        if (hold) {
+          throw new RpcError(
+            "held",
+            `Bulk sending is on hold (${hold.reason}). An operator must review and release it.`,
+          );
+        }
+        if (key.id !== "operator") {
+          const count = await writer.run((d) => countKeyBulk(d, key.id, 1, t));
+          const threshold = anomalyThreshold(db, key.id, t, deps.anomalyFloor ?? 500);
+          if (count > threshold) {
+            const reason = `unusual volume: ${count} bulk emails this hour from API key ${key.prefix}…, normal is under ${threshold}`;
+            const { created } = await writer.run((d) =>
+              createHold(d, `key:${key.id}`, "bulk", reason, t),
+            );
+            if (created)
+              log.error("bulk mail held for an API key: possible leaked key", {
+                key: key.prefix,
+                count,
+                threshold,
+              });
+            throw new RpcError(
+              "held",
+              `Bulk sending is on hold (${reason}). An operator must review and release it.`,
+            );
+          }
+        }
+      }
       const suppressed = new Map<string, { reason: string; scope: string }>();
       for (const raw of p.recipients) {
         let address: string;
@@ -307,6 +353,9 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
         if (!getDomain(w, name)) saveDomain(w, d, t);
       });
       log.info("domain added", { domain: name });
+      if (deps.publish && (await deps.publish(d.records))) {
+        await verify(name).catch(() => {});
+      }
       return domainView(getDomain(db, name) as Domain);
     }),
 
@@ -362,6 +411,94 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
     }),
 
     health: method(z.object({}), () => ({ ok: true, jobs: countByState(db) })),
+
+    ips: method(z.object({ tokenHash }), async (p) => {
+      caller(p.tokenHash, "read");
+      const reverse = await delivery
+        .call<
+          {
+            ip: string;
+            ehlo: string;
+            ptr: string | null;
+            forwardConfirmed: boolean;
+            problem: string | null;
+          }[]
+        >("ips", {}, { timeoutMs: 5_000 })
+        .catch(() => []);
+      const warm = listWarmup(db);
+      const today = dayOf(now());
+      return (deps.ips ?? []).map((ip) => {
+        const r = reverse.find((x) => x.ip === ip.ip);
+        const rows = warm.filter((w) => w.ip === ip.ip);
+        return {
+          object: "ip",
+          ip: ip.ip,
+          pool: ip.pool,
+          ehlo: r?.ehlo ?? null,
+          ptr: r?.ptr ?? null,
+          reverse_dns_ok: r?.forwardConfirmed ?? false,
+          reverse_dns_problem: r?.problem ?? "unknown",
+          warmup: ip.established
+            ? { state: "established" }
+            : {
+                state:
+                  rows.length === 0
+                    ? "not started"
+                    : rows.every((w) => w.state === "done")
+                      ? "done"
+                      : "warming",
+                providers: rows.map((w) => {
+                  const day = today - w.startedDay + 1;
+                  return {
+                    provider: w.provider,
+                    state: w.state,
+                    day,
+                    of_about: w.state === "done" ? day : estimatedDays(w.budget, day),
+                    budget_today: w.budget,
+                    sent_today: w.day === today ? w.sent : 0,
+                    last_days: w.history.slice(-7),
+                  };
+                }),
+              },
+          paths: (deps.paths?.() ?? [])
+            .filter((v) => v.source === ip.ip)
+            .map((v) => ({ destination: v.target, state: v.mode, rate_per_sec: v.rate })),
+        };
+      });
+    }),
+
+    holds: method(z.object({ tokenHash, all: z.boolean().default(false) }), (p) => {
+      caller(p.tokenHash, "read");
+      return {
+        holds: listHolds(db, p.all).map((h) => ({
+          object: "hold",
+          id: h.id,
+          target: h.target,
+          lane: h.lane,
+          reason: h.reason,
+          created_at: new Date(h.createdAt).toISOString(),
+          released_at: h.releasedAt === null ? null : new Date(h.releasedAt).toISOString(),
+        })),
+        senders: senderRates(db, now()).map((r) => ({
+          domain: r.domain,
+          lane: r.lane,
+          delivered: r.delivered,
+          hard_bounced: r.hardBounced,
+          complained: r.complained,
+          complaint_rate: Math.round(r.complaintRate * 100_000) / 1000,
+          bounce_rate: Math.round(r.bounceRate * 100_000) / 1000,
+        })),
+      };
+    }),
+
+    releaseHold: method(z.object({ tokenHash, id: z.string().max(64) }), async (p) => {
+      caller(p.tokenHash, "full");
+      if (!(await writer.run((d) => releaseHold(d, p.id, now())))) {
+        throw new RpcError("not-found", "no active hold with that id");
+      }
+      log.info("hold released", { id: p.id });
+      return { id: p.id, released: true };
+    }),
 
     paths: method(z.object({ tokenHash }), (p) => {
       caller(p.tokenHash, "read");

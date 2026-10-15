@@ -38,3 +38,21 @@ export function relaxedBody(body: string): string {
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   return lines.length === 0 ? "" : `${lines.join("\r\n")}\r\n`;
 }
+
+export function headerData(headers: HeaderField[], names: string[]): string {
+  const used = new Map<string, number>();
+  let out = "";
+  for (const name of names) {
+    const instances = headers.filter((h) => h.name.toLowerCase() === name);
+    const k = used.get(name) ?? 0;
+    used.set(name, k + 1);
+    const h = instances[instances.length - 1 - k];
+    if (h) out += `${relaxedHeader(h.raw)}\r\n`;
+  }
+  return out;
+}
+
+export async function bodyHash(body: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(relaxedBody(body)));
+  return new Uint8Array(digest).toBase64();
+}

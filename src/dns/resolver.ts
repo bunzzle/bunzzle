@@ -10,7 +10,7 @@ import {
   type RRTypeName,
 } from "./wire.ts";
 
-export type QueryType = "A" | "AAAA" | "MX" | "TXT";
+export type QueryType = "A" | "AAAA" | "MX" | "TXT" | "PTR";
 
 export interface DnsAnswer {
   name: string;

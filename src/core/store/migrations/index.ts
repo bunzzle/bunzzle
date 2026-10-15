@@ -5,6 +5,7 @@ import bodies from "./0004_bodies.sql" with { type: "text" };
 import api from "./0005_api.sql" with { type: "text" };
 import shaping from "./0006_shaping.sql" with { type: "text" };
 import feedback from "./0007_feedback.sql" with { type: "text" };
+import reputation from "./0008_reputation.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -20,4 +21,5 @@ export const migrations: readonly Migration[] = [
   { version: 5, name: "api", sql: api },
   { version: 6, name: "shaping", sql: shaping },
   { version: 7, name: "feedback", sql: feedback },
+  { version: 8, name: "reputation", sql: reputation },
 ];

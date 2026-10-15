@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { SourceIp } from "../config.ts";
 import { type Clock, systemClock } from "../core/clock.ts";
 import { appendEvent } from "../core/events.ts";
 import type { ClaimedJob } from "../core/jobs.ts";
@@ -6,6 +7,8 @@ import type { Logger } from "../core/log.ts";
 import { type Apply, defer, fail, type Outcome, ok, requeue, unknown } from "../core/outcome.ts";
 import { clampHint } from "../core/retry.ts";
 import type { Destination } from "../dns/mx.ts";
+import { activeHold, countSender } from "../guards/guards.ts";
+import { bucketOf, choose, countWarmup } from "../ips/warmup.ts";
 import { domainOf } from "../mime/address.ts";
 import { type Classification, classify } from "../replies/classify.ts";
 import { providerOf, siteOf } from "../routing/providers.ts";
@@ -27,6 +30,8 @@ export interface DeliveryHandlerOptions {
   busyRetryMs?: number;
   maxWaitMs?: number;
   bounceDomainFor?: (senderDomain: string) => string | null;
+  ips?: SourceIp[];
+  holdRetryMs?: number;
 }
 
 interface Update {
@@ -65,7 +70,8 @@ function sessionsOf(report: DeliveryReport) {
 
 export function deliveryHandler(o: DeliveryHandlerOptions) {
   const clock = o.clock ?? systemClock;
-  const source = o.source ?? "default";
+  const fixedSource = o.source ?? "default";
+  const holdRetryMs = o.holdRetryMs ?? 15 * 60_000;
   const busyRetryMs = o.busyRetryMs ?? 60_000;
 
   const record =
@@ -198,8 +204,46 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       destination.kind === "targets"
         ? (providerOf(destination.mxHosts[0] ?? "")?.id ?? null)
         : null;
-    const pathKey = Shaper.key(source, target);
     const lane = job.priority > 0 ? "bulk" : "transactional";
+    const senderDomain = domainOf(email.from);
+    const apiKeyId = (job.metadata["apiKeyId"] as string | null | undefined) ?? null;
+    const waitFor = (
+      reason: string,
+      delayMs: number,
+      visible: boolean,
+      path: string | null,
+    ): Outcome => ({
+      ...requeue(reason, delayMs),
+      apply: (d, settled, at) => {
+        if (path) {
+          d.query<unknown, [string, string]>("UPDATE jobs SET path = ? WHERE id = ?").run(
+            path,
+            job.id,
+          );
+        }
+        if (!visible || settled !== "requeued") return;
+        d.query<unknown, [string, number, string]>(
+          `UPDATE recipients SET status = 'deferred', reply = ?, updated_at = ?
+           WHERE job_id = ? AND status IN ('queued', 'deferred')`,
+        ).run(`waiting: ${reason}`, at, job.id);
+      },
+    });
+
+    if (lane === "bulk") {
+      const hold =
+        activeHold(db, `domain:${senderDomain}`, "bulk") ??
+        (apiKeyId ? activeHold(db, `key:${apiKeyId}`, "bulk") : null);
+      if (hold) return waitFor(`bulk mail on hold: ${hold.reason}`, holdRetryMs, true, null);
+    }
+
+    const choice = o.ips?.length
+      ? choose(db, o.ips, lane, target, provider, pending.length, now, (ip) =>
+          o.shaper.pausedUntil(Shaper.key(ip, target)),
+        )
+      : { source: fixedSource };
+    if ("wait" in choice) return waitFor(choice.wait.reason, choice.wait.delayMs, true, null);
+    const source = choice.source;
+    const pathKey = Shaper.key(source, target);
     const setPath = (d: Database) =>
       d
         .query<unknown, [string, string]>("UPDATE jobs SET path = ? WHERE id = ?")
@@ -211,18 +255,12 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         : { kind: "go", connections: 1, release: () => {} };
     if (admission.kind === "requeue") {
       const reason = admission.reason;
-      const visible = reason.includes("paused") || reason.includes("probing");
-      return {
-        ...requeue(reason, admission.delayMs),
-        apply: (d, settled, at) => {
-          setPath(d);
-          if (!visible || settled !== "requeued") return;
-          d.query<unknown, [string, number, string]>(
-            `UPDATE recipients SET status = 'deferred', reply = ?, updated_at = ?
-             WHERE job_id = ? AND status IN ('queued', 'deferred')`,
-          ).run(`waiting: ${reason}`, at, job.id);
-        },
-      };
+      return waitFor(
+        reason,
+        admission.delayMs,
+        reason.includes("paused") || reason.includes("probing"),
+        pathKey,
+      );
     }
     const ticket = admission;
     admission = { kind: "go", connections: 1, release: () => {} };
@@ -247,6 +285,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         ...(destination.kind === "targets" ? { connections: ticket.connections } : {}),
         lane,
         bounceDomain: o.bounceDomainFor?.(domainOf(email.from)) ?? null,
+        source,
       });
     } catch (err) {
       ticket.release("neutral", "delivery role unreachable");
@@ -294,6 +333,32 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       const event = (kind: string, data: Record<string, unknown>) =>
         appendEvent(d, { messageId: job.messageId, kind, source: SOURCE, at, data });
       setPath(d);
+      const reached = updates.filter(
+        (u) => u.result && (u.result.phase === "rcpt" || u.result.phase === "dot"),
+      );
+      const hard = updates.filter((u) => u.status === "bounced" && u.verdict?.suppress).length;
+      countSender(
+        d,
+        senderDomain,
+        lane,
+        { delivered: updates.filter((u) => u.status === "delivered").length, hardBounced: hard },
+        at,
+      );
+      if (source !== "default" && !o.ips?.find((x) => x.ip === source)?.established) {
+        countWarmup(
+          d,
+          source,
+          bucketOf(provider),
+          {
+            sent: reached.length,
+            delivered: reached.filter((u) => u.status === "delivered").length,
+            deferred: reached.filter((u) => u.status === "deferred").length,
+            bounced: hard,
+            blocked: pauseBy ? 1 : 0,
+          },
+          at,
+        );
+      }
       if (report.recalled) {
         event("reconciled", { attempt: job.unresolvedAttempt, resent: false });
       }

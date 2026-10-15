@@ -2,7 +2,7 @@ import { type Reply, replyText, SmtpConnection, SmtpError } from "./connection.t
 import { SessionPool } from "./pool.ts";
 
 export type TlsStatus = "none" | "unverified" | "verified";
-export type TlsRule = "requiretls" | "provider" | "opportunistic";
+export type TlsRule = "requiretls" | "mta-sts" | "provider" | "opportunistic";
 
 export interface TlsPolicy {
   rule: TlsRule;

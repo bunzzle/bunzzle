@@ -10,12 +10,16 @@ import { shredBodies } from "../delivery/queue.ts";
 import type { DeliveryTransport } from "../delivery/transport.ts";
 import { bounceDomain, getDomain, returnPathReady } from "../domains/domains.ts";
 import { pruneIdempotency } from "../emails/idempotency.ts";
+import { reputationGuard } from "../guards/guards.ts";
 import { RpcClient, serveRpc } from "../ipc/rpc.ts";
+import { rollover } from "../ips/warmup.ts";
 import { Scheduler } from "../scheduler/scheduler.ts";
 import { type ControlState, DEFAULT_TUNING } from "../shaping/control.ts";
 import { Shaper } from "../shaping/shaper.ts";
 import { coreMethods } from "./core-api.ts";
+import { doctorMethods } from "./core-doctor.ts";
 import { feedbackMethods } from "./core-feedback.ts";
+import { rotation } from "./core-rotation.ts";
 import { every, onStop, privateDir, ready } from "./runtime.ts";
 import {
   deliveryReportWire,
@@ -92,8 +96,9 @@ export async function runCore(config: Config, log: Logger) {
     log,
     transport,
     shaper,
-    source: config.sourceIp ?? "default",
     busyRetryMs: scaled(MIN),
+    ips: config.sourceIps,
+    holdRetryMs: scaled(15 * MIN),
     maxWaitMs: Math.max(1_000, Math.floor(Math.max(2_000, scaled(45 * MIN)) / 3)),
     bounceDomainFor: (d) => (returnPathReady(getDomain(db, d)) ? bounceDomain(d) : null),
   });
@@ -135,9 +140,12 @@ export async function runCore(config: Config, log: Logger) {
     signer,
     delivery,
     currentKey,
-    sourceIp: config.sourceIp,
+    sourceIp: config.sourceIps.map((x) => x.ip),
     inboundHost: config.inboundHostname,
+    anomalyFloor: config.anomalyFloor,
+    ips: config.sourceIps,
     paths: () => shaper.views(),
+    publish: (records) => rotate.publish(records),
   });
   const feedback = feedbackMethods({
     db,
@@ -149,7 +157,28 @@ export async function runCore(config: Config, log: Logger) {
     scale,
   });
   await feedback.recover();
-  const server = await serveRpc(sock.core, { ...api.methods, ...feedback.methods });
+  const rotate = rotation({
+    db,
+    writer,
+    log,
+    signer,
+    delivery,
+    sourceIp: config.sourceIps.map((x) => x.ip),
+    inboundHost: config.inboundHostname,
+    rotateDays: config.dkimRotateDays,
+  });
+  const doctor = doctorMethods({
+    db,
+    config,
+    delivery,
+    rotation: rotate,
+    paths: () => shaper.views(),
+  });
+  const server = await serveRpc(sock.core, {
+    ...api.methods,
+    ...feedback.methods,
+    ...doctor,
+  });
 
   const shred = async () => {
     const ids = await writer.run((d) =>
@@ -162,6 +191,15 @@ export async function runCore(config: Config, log: Logger) {
     writer.run((d) => pruneIdempotency(d, Date.now())),
   );
   const stopVerify = every(Math.max(1_000, scaled(5 * MIN)), () => api.verifyPending());
+  const stopGuards = every(Math.max(1_000, scaled(MIN)), () =>
+    writer
+      .run((d) => {
+        rollover(d, Date.now(), log);
+        reputationGuard(d, Date.now(), config.guardMinVolume, log);
+      })
+      .catch((err: Error) => log.error("guard check failed", { error: err.message })),
+  );
+  const stopRotation = every(Math.max(1_000, scaled(HOUR)), () => rotate.tick());
   const stopProject = every(250, () =>
     feedback
       .project()
@@ -179,6 +217,8 @@ export async function runCore(config: Config, log: Logger) {
     stopPrune();
     stopVerify();
     stopProject();
+    stopGuards();
+    stopRotation();
     stopDispatch();
     server.stop();
     shaper.stop();

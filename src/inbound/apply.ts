@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { appendEvent } from "../core/events.ts";
 import type { SealedBody } from "../crypto/envelope.ts";
+import { attributionOf, countSender } from "../guards/guards.ts";
+import { countWarmup } from "../ips/warmup.ts";
 import { classify } from "../replies/classify.ts";
 import { suppress, suppressionForClass } from "../suppressions/store.ts";
 import type { Report } from "./parse.ts";
@@ -104,6 +106,21 @@ export function applyInbound(db: Database, input: InboundInput, now: number): Ap
       : { kind: "unmatched", recipients: [] };
   }
 
+  const who = attributionOf(db, messageId);
+  const attribute = (delta: { hardBounced?: number; complained?: number }) => {
+    if (!who) return;
+    countSender(db, who.domain, who.lane, delta, now);
+    if (who.source) {
+      countWarmup(
+        db,
+        who.source,
+        who.bucket,
+        { bounced: delta.hardBounced ?? 0, complained: delta.complained ?? 0 },
+        now,
+      );
+    }
+  };
+
   if (report.kind === "arf") {
     const target =
       (report.originalRcpt ? byAddress.get(report.originalRcpt) : undefined) ?? sole ?? undefined;
@@ -120,6 +137,7 @@ export function applyInbound(db: Database, input: InboundInput, now: number): Ap
       now,
     );
     event("complained", { address: target.address, feedback_type: report.feedbackType });
+    attribute({ complained: 1 });
     return { kind: "complaint", recipients: [target.address] };
   }
 
@@ -193,6 +211,7 @@ export function applyInbound(db: Database, input: InboundInput, now: number): Ap
       reply: f.diagnostic,
     });
     const s = verdict.suppress ? suppressionForClass(verdict.class) : null;
+    if (s) attribute({ hardBounced: 1 });
     if (s) {
       suppress(
         db,

@@ -6,6 +6,7 @@ export interface ZoneEntry {
   AAAA?: string[];
   TXT?: string[];
   CNAME?: string;
+  PTR?: string;
   rcode?: number;
   ttl?: number;
   truncate?: boolean;
@@ -86,6 +87,9 @@ function answer(zone: Zone, q: Uint8Array, tcp: boolean): Uint8Array | null {
     }
     if (type === RRType.AAAA) {
       for (const ip of current.AAAA ?? []) records.push(rr(target, type, ttl, ipv6Bytes(ip)));
+    }
+    if (type === RRType.PTR && current.PTR) {
+      records.push(rr(target, type, ttl, encodeName(current.PTR)));
     }
     if (type === RRType.TXT) {
       for (const t of current.TXT ?? []) {

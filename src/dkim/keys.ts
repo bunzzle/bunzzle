@@ -14,6 +14,9 @@ const keyFileSchema = z.object({
           privateKey: z.string().min(1).optional(),
           sealedPrivateKey: z.string().min(1).optional(),
           publicKey: z.string().min(1),
+          state: z.enum(["active", "next", "retiring"]).optional(),
+          createdAt: z.number().int().optional(),
+          retiringSince: z.number().int().optional(),
         })
         .refine((k) => (k.privateKey === undefined) !== (k.sealedPrivateKey === undefined), {
           message: "each key needs exactly one of privateKey or sealedPrivateKey",
