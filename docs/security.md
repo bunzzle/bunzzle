@@ -10,10 +10,10 @@ How Bunzzle limits what an attacker gets. To report a vulnerability, see [SECURI
 | core | the database (bodies encrypted) | signer, delivery | none |
 | delivery | one email at a time while sending | signer | DNS answers, SMTP replies, HTTPS (webhooks, MTA-STS, Cloudflare) |
 | signer | DKIM keys, master key | nobody | none |
-| inbound | nothing secret | core | SMTP from the internet |
+| inbound | its TLS key, if STARTTLS is on | core | SMTP from the internet |
 
 - Roles exchange small JSON messages over Unix sockets; every message is validated on arrival.
-- The roles that read outside input hold nothing worth stealing and can't open the database.
+- The roles that read outside input hold nothing worth stealing (at most the inbound TLS key) and can't open the database.
 - Only `core` opens the database, and `core` has no network. To reach stored data, an attacker has to break two roles.
 - A broken `delivery` or `core` can still ask the signer for signatures, but can never read a key. Key rotation and the volume guards limit the rest.
 

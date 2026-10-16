@@ -13,6 +13,11 @@ const dir = `${Bun.env["TMPDIR"] ?? "/tmp"}/bunzzle-fuzz-${crypto.randomUUID()}`
 await Bun.$`mkdir -p ${dir}`.quiet();
 const cleanups: (() => void)[] = [];
 const LONG = { timeout: 30 * 60_000 };
+const TLS_DIR = `${import.meta.dir}/../fixtures/tls`;
+const TLS = {
+  cert: await Bun.file(`${TLS_DIR}/mx.pem`).text(),
+  key: await Bun.file(`${TLS_DIR}/mx.key`).text(),
+};
 afterAll(async () => {
   for (const c of cleanups) c();
   await Bun.$`rm -rf ${dir}`.quiet();
@@ -102,6 +107,7 @@ describe("fuzz: network input", () => {
         port: 0,
         name: "mx.test",
         maxSize: 4096,
+        tls: TLS,
         handlers: {
           recipient: async (a) => a.startsWith("b-") || a.startsWith("fbl@"),
           message: async (rcpts, raw) => {

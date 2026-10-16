@@ -7,9 +7,29 @@ import { RpcClient, RpcError } from "../ipc/rpc.ts";
 import { onStop, ready } from "./runtime.ts";
 import { sockets } from "./wire.ts";
 
+async function loadTls(config: Config): Promise<{ cert: string; key: string } | null> {
+  const { inboundTlsCertFile: certFile, inboundTlsKeyFile: keyFile } = config;
+  if (!certFile && !keyFile) return null;
+  if (!certFile || !keyFile) {
+    throw new Error(
+      "set both BUNZZLE_INBOUND_TLS_CERT_FILE and BUNZZLE_INBOUND_TLS_KEY_FILE, or neither",
+    );
+  }
+  const cert = await Bun.file(certFile).text();
+  const key = await Bun.file(keyFile).text();
+  if (!cert.includes("-----BEGIN CERTIFICATE-----")) {
+    throw new Error(`${certFile} is not a PEM certificate`);
+  }
+  if (!/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(key)) {
+    throw new Error(`${keyFile} is not a PEM private key`);
+  }
+  return { cert, key };
+}
+
 export async function runInbound(config: Config, log: Logger) {
   const core = new RpcClient(sockets(config.runDir).core);
   const port = config.inboundPort;
+  const tls = port === null ? null : await loadTls(config);
   const server =
     port === null
       ? null
@@ -17,6 +37,7 @@ export async function runInbound(config: Config, log: Logger) {
           hostname: config.inboundHost,
           port,
           name: config.inboundHostname ?? "bunzzle",
+          tls,
           handlers: {
             recipient: async (address) =>
               (
@@ -54,5 +75,6 @@ export async function runInbound(config: Config, log: Logger) {
     if (idle) clearInterval(idle);
     core.close();
   });
+  if (server) log.info("inbound listening", { port: server.port, starttls: tls !== null });
   ready(server ? { port: server.port } : {});
 }

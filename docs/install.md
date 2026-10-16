@@ -52,6 +52,21 @@ LoadCredential=cloudflare-token:/etc/bunzzle/cloudflare-token
 Environment=BUNZZLE_CLOUDFLARE_API_TOKEN_FILE=%d/cloudflare-token
 ```
 
+To offer STARTTLS on the inbound port, give the inbound role a certificate for `BUNZZLE_INBOUND_HOSTNAME` (for example from Let's Encrypt):
+
+```sh
+sudo systemctl edit bunzzle-inbound
+```
+```ini
+[Service]
+LoadCredential=inbound.pem:/etc/letsencrypt/live/mail.your.domain/fullchain.pem
+LoadCredential=inbound.key:/etc/letsencrypt/live/mail.your.domain/privkey.pem
+Environment=BUNZZLE_INBOUND_TLS_CERT_FILE=%d/inbound.pem
+Environment=BUNZZLE_INBOUND_TLS_KEY_FILE=%d/inbound.key
+```
+
+The certificate is read at start, so restart the role after renewal, for example with certbot's `--deploy-hook "systemctl restart bunzzle-inbound"`. Senders that don't use TLS are still accepted.
+
 ### What the sandbox does
 
 | Role | User | Network | Can write |

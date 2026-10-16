@@ -43,7 +43,14 @@ const BY_ROLE: Record<Role, string[]> = {
     "BUNZZLE_CLOUDFLARE_API_URL",
   ],
   api: ["BUNZZLE_HOST", "BUNZZLE_PORT", "BUNZZLE_PUBLIC_URL"],
-  inbound: ["BUNZZLE_INBOUND_HOST", "BUNZZLE_INBOUND_PORT"],
+  inbound: [
+    "BUNZZLE_INBOUND_HOST",
+    "BUNZZLE_INBOUND_PORT",
+    "BUNZZLE_INBOUND_HOSTNAME",
+    "BUNZZLE_EHLO_NAME",
+    "BUNZZLE_INBOUND_TLS_CERT_FILE",
+    "BUNZZLE_INBOUND_TLS_KEY_FILE",
+  ],
 };
 
 export function roleEnv(

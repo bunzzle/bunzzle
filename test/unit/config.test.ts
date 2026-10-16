@@ -26,6 +26,8 @@ describe("loadConfig", () => {
       retryScale: 1,
       publicUrl: null,
       inboundHostname: null,
+      inboundTlsCertFile: null,
+      inboundTlsKeyFile: null,
       sourceIps: [],
       guardMinVolume: 300,
       anomalyFloor: 500,

@@ -101,6 +101,7 @@ Configuration (environment variables):
   BUNZZLE_RETENTION_DAYS  email bodies become unreadable after this (default 30, min 7)
   BUNZZLE_INBOUND_PORT    port for bounces and feedback (off by default; 25 in production)
   BUNZZLE_INBOUND_HOSTNAME  name of this server for bounce MX records (default: EHLO name)
+  BUNZZLE_INBOUND_TLS_CERT_FILE, BUNZZLE_INBOUND_TLS_KEY_FILE  PEM files: offer STARTTLS on the inbound port
   BUNZZLE_PUBLIC_URL      https URL of the API, used in unsubscribe links
 `;
 
