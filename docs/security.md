@@ -27,6 +27,7 @@ With the systemd units or the five-container compose file, each role is a separa
 - **API keys** are stored as SHA-256 hashes and shown once.
 - **Webhook secrets** are derived from the master key in the signer and never stored.
 - **Logs** never contain bodies.
+- **Cloudflare API token** (optional, for publishing DNS records and rotating DKIM keys without manual steps) is held by `delivery`, the only role with outbound network. Someone who takes over `delivery` can use it to change the records of the zones it covers. Create it with only `Zone.DNS: Edit`, limited to the zones Bunzzle sends for. Without a token, Bunzzle prints the records and waits for you to publish them; rotation then pauses at that step and keeps signing with the current keys.
 
 ## Outside input
 

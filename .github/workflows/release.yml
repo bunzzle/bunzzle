@@ -35,6 +35,7 @@ jobs:
             bun build src/cli/main.ts --compile --minify --sourcemap \
               --target="bun-$target" --outfile "release/bunzzle-$target"
           done
+          rm -f release/*.map
           ./release/bunzzle-linux-x64 --version
           cp deploy/install.sh release/install.sh
           tar -czf release/bunzzle-deploy.tar.gz deploy

@@ -40,7 +40,7 @@ Logs: `journalctl -u 'bunzzle-*' -f`. Status: `systemctl status 'bunzzle-*'`.
 
 ### Optional secrets
 
-Secrets are passed as systemd credentials, readable only by the role that needs them. To let Bunzzle publish its DNS records on Cloudflare:
+Secrets are passed as systemd credentials, readable only by the role that needs them. To let Bunzzle publish its DNS records on Cloudflare, create an API token with only `Zone.DNS: Edit`, limited to the zones you send from (see [security.md](security.md) for why):
 
 ```sh
 sudo install -m 0600 /dev/stdin /etc/bunzzle/cloudflare-token <<< "your-token"
