@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo/bunzzle.svg" width="140" alt="Bunzzle"></p>
+
 # Bunzzle
 
 Self-hosted email delivery engine for apps. Delivers straight to your recipients' mail servers. Bun-native, one binary, one SQLite file.
