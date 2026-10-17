@@ -217,7 +217,7 @@ describe("fuzz: network input", () => {
                 ? { ok: true }
                 : lists.has(m)
                   ? []
-                  : { id: "0199f3a4-7c1e-7d55-9a21-3b6f0c9e4d12" };
+                  : { id: "0199f3a4-7c1e-7d55-9a21-3b6f0c9e4d12", existed: false };
           return opts?.result ? opts.result.parse(value) : value;
         },
       } as unknown as RpcClient;
