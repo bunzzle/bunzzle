@@ -73,9 +73,9 @@ bunzzle keys:
   list | revoke ID
 
 API (bunzzle serve):
-  POST /emails            Resend-compatible; Idempotency-Key header; extra: expires_at, require_tls, lane
+  POST /emails            Idempotency-Key header; fields include expires_at, require_tls, lane
   GET  /paths             sending speed per destination, limits and recent changes
-  GET|POST /webhooks, DELETE /webhooks/:id     signed like Svix / Standard Webhooks
+  GET|POST /webhooks, DELETE /webhooks/:id     signed in the Standard Webhooks format
   GET|POST /suppressions, DELETE /suppressions/:email
   GET|POST /u/:token      one-click unsubscribe (public, added to bulk email)
   GET  /emails/:id        status per recipient, every attempt with MX, TLS and the reply

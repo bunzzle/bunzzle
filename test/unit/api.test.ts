@@ -129,7 +129,7 @@ describe("idempotency records", () => {
   });
 });
 
-describe("Resend-compatible send requests", () => {
+describe("send requests", () => {
   const prepare = (body: unknown) => prepareEmail(sendSchema.parse(body), new Date(T0));
 
   test("strings or arrays, recipients deduplicated, bcc never in the headers", () => {

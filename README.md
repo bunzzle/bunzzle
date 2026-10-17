@@ -8,8 +8,8 @@ Self-hosted email delivery engine for apps. Delivers straight to your recipients
 
 ## Why
 
-- **The API you know, on your own server.** `POST /emails` takes the same fields as Resend, and webhooks are signed the same way (Standard Webhooks / Svix), so code written for Resend needs few changes.
-- **No relay in between.** Bunzzle talks SMTP to Gmail, Outlook and every other receiver itself. No SES account, no per-email bill.
+- **A plain API, on your own server.** `POST /emails` takes simple JSON fields, and webhooks are signed in the Standard Webhooks format, so verifying them takes a few lines.
+- **No relay in between.** Bunzzle talks SMTP to Gmail, Outlook and every other receiver itself. No third-party sending service, no per-email bill.
 - **Reputation handled for you.** New IPs warm up on their own, every destination gets a polite speed that adapts to its replies, bounces and complaints are suppressed, and bulk mail is held before it can hurt your password resets.
 - **Contained by design.** Five processes, each holding only what it needs. Every email body is encrypted with its own key; DKIM keys never leave the signer.
 
@@ -55,7 +55,7 @@ curl -X POST http://127.0.0.1:3000/emails \
 curl http://127.0.0.1:3000/emails/<id> -H "Authorization: Bearer bz_…"
 ```
 
-`POST /emails` takes the same fields as Resend (`from`, `to`, `cc`, `bcc`, `reply_to`, `subject`, `html`, `text`, `headers`, `attachments`, `tags`, `scheduled_at`) plus `expires_at` and `require_tls`. `GET /emails/:id` shows each recipient's status and every attempt: the MX host, TLS version, whether the certificate was verified, the rule that applied and the server's reply. Bodies are never returned: once accepted, only the signer can decrypt them.
+`POST /emails` takes `from`, `to`, `cc`, `bcc`, `reply_to`, `subject`, `html`, `text`, `headers`, `attachments`, `tags`, `scheduled_at`, `expires_at` and `require_tls`. `GET /emails/:id` shows each recipient's status and every attempt: the MX host, TLS version, whether the certificate was verified, the rule that applied and the server's reply. Bodies are never returned: once accepted, only the signer can decrypt them.
 
 API keys are shown once and stored only as a hash. They have a scope (`send`, `read`, `full`), can be limited to some domains (`--domain`) and have a per-second rate limit.
 
@@ -71,7 +71,7 @@ Bunzzle hears back from receivers and acts on it:
 - **Inbound listener** (`BUNZZLE_INBOUND_PORT`, 25 in production) accepts only bounce, unsubscribe and feedback addresses. It reads standard bounces (DSN), non-standard bounces, complaint reports (ARF, to `fbl@bounce.your.domain`) and ignores auto-replies. With a certificate (`BUNZZLE_INBOUND_TLS_CERT_FILE`, `BUNZZLE_INBOUND_TLS_KEY_FILE`) it offers STARTTLS, so bounces and complaints, which quote your recipients' addresses, arrive encrypted.
 - **Suppression list**, checked for every email: hard bounces stop all mail for a year, a domain that doesn't exist for 30 days; complaints and unsubscribes stop bulk mail only, for good. Password resets still reach someone who unsubscribed from a newsletter. `GET/POST/DELETE /suppressions` or `bunzzle suppressions`.
 - **One-click unsubscribe** (Gmail and Yahoo bulk-sender rule) is added to every `"lane": "bulk"` email, signed into DKIM, hosted at `BUNZZLE_PUBLIC_URL/u/…`.
-- **Webhooks**: `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.unsubscribed`, `email.suppressed`, `email.failed`. Signed in the Standard Webhooks / Svix format, so the verification code you use for Resend works. Retried for about a day. Webhook URLs that point to private networks are refused.
+- **Webhooks**: `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.unsubscribed`, `email.suppressed`, `email.failed`. Signed in the Standard Webhooks format. Retried for about a day. Webhook URLs that point to private networks are refused.
 
 ### Reputation on autopilot
 

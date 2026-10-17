@@ -229,9 +229,6 @@ export function feedbackMethods(deps: FeedbackDeps) {
                   "webhook-id": msgId,
                   "webhook-timestamp": String(timestamp),
                   "webhook-signature": signature,
-                  "svix-id": msgId,
-                  "svix-timestamp": String(timestamp),
-                  "svix-signature": signature,
                 },
               },
               {
