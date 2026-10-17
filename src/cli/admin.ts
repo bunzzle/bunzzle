@@ -155,7 +155,7 @@ export async function webhooksCommand(argv: string[], config: Config) {
       }>(config, "createWebhook", { url, ...(events ? { events } : {}) });
       console.log(`Webhook ${h.id} → ${h.endpoint}`);
       console.log(`Events: ${h.events.join(", ")}`);
-      console.log(`Signing secret (Standard Webhooks / Svix format): ${h.signing_secret}`);
+      console.log(`Signing secret (Standard Webhooks format): ${h.signing_secret}`);
       return;
     }
     case "list": {
