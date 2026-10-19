@@ -21,7 +21,7 @@ To verify the signature yourself before installing, see [verify.md](verify.md). 
 Then:
 
 1. **Back up `/etc/bunzzle/master.key`** somewhere safe. Without it, DKIM keys and queued email can't be read.
-2. Edit `/etc/bunzzle/bunzzle.env`: `BUNZZLE_EHLO_NAME` (the PTR name of your IP), `BUNZZLE_SOURCE_IPS`, `BUNZZLE_PUBLIC_URL`. Then `sudo systemctl restart bunzzle.target`.
+2. Edit `/etc/bunzzle/bunzzle.env`: `BUNZZLE_EHLO_NAME` (the PTR name of your IP), `BUNZZLE_SOURCE_IPS`, `BUNZZLE_PUBLIC_URL`. Then `sudo systemctl restart bunzzle.target`. All settings: [configuration.md](configuration.md).
 3. Optional, recommended: the egress filter. Only `delivery` may open outbound connections, and only to ports 25, 53 and 443:
    ```sh
    sudo nft -f /etc/bunzzle/bunzzle.nft
