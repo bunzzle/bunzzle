@@ -47,7 +47,7 @@ export interface DeliveryReport {
   policy: TlsPolicy | null;
   sessions: SessionResult[];
   recipients: RecipientResult[];
-  mtaSts?: { mode: string; id: string } | null | undefined;
+  mtaSts?: { mode: string; id: string; mx: string[]; maxAge: number } | null | undefined;
   recalled?: boolean | undefined;
 }
 
@@ -122,7 +122,10 @@ export async function deliverTo(
   const sts = input.sts ?? null;
   const policy = tlsPolicy(input.requireTls ?? false, report.provider, sts);
   report.policy = policy;
-  report.mtaSts = sts && sts.mode !== "none" ? { mode: sts.mode, id: sts.id } : null;
+  report.mtaSts =
+    sts && sts.mode !== "none"
+      ? { mode: sts.mode, id: sts.id, mx: sts.mx, maxAge: sts.maxAge }
+      : null;
   let targets = destination.targets;
   if (sts?.mode === "enforce") {
     targets = targets.filter((t) => mxAllowed(t.host, sts.mx));

@@ -28,6 +28,7 @@ describe("loadConfig", () => {
       inboundHostname: null,
       inboundTlsCertFile: null,
       inboundTlsKeyFile: null,
+      tlsrpt: { from: null, org: "bunzzle", contact: "bunzzle" },
       submission: null,
       sourceIps: [],
       guardMinVolume: 300,

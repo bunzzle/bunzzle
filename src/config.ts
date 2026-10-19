@@ -37,6 +37,9 @@ const schema = b.object({
   BUNZZLE_INBOUND_HOSTNAME: optional,
   BUNZZLE_INBOUND_TLS_CERT_FILE: optional,
   BUNZZLE_INBOUND_TLS_KEY_FILE: optional,
+  BUNZZLE_TLSRPT_FROM: optional,
+  BUNZZLE_TLSRPT_ORG: optional,
+  BUNZZLE_TLSRPT_CONTACT: optional,
   BUNZZLE_SUBMISSION_HOST: b.string().min(1).default("0.0.0.0"),
   BUNZZLE_SUBMISSION_PORT: b.coerce.number().int().min(0).max(65535).optional(),
   BUNZZLE_SUBMISSION_TLS_PORT: b.coerce.number().int().min(0).max(65535).optional(),
@@ -115,6 +118,7 @@ export interface Config {
   inboundHostname: string | null;
   inboundTlsCertFile: string | null;
   inboundTlsKeyFile: string | null;
+  tlsrpt: { from: string | null; org: string; contact: string };
   submission: {
     host: string;
     port: number | null;
@@ -183,6 +187,15 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     inboundHostname: c.BUNZZLE_INBOUND_HOSTNAME ?? c.BUNZZLE_EHLO_NAME,
     inboundTlsCertFile: c.BUNZZLE_INBOUND_TLS_CERT_FILE,
     inboundTlsKeyFile: c.BUNZZLE_INBOUND_TLS_KEY_FILE,
+    tlsrpt: {
+      from: c.BUNZZLE_TLSRPT_FROM,
+      org: c.BUNZZLE_TLSRPT_ORG ?? c.BUNZZLE_EHLO_NAME ?? "bunzzle",
+      contact:
+        c.BUNZZLE_TLSRPT_CONTACT ??
+        (c.BUNZZLE_TLSRPT_FROM
+          ? `mailto:${c.BUNZZLE_TLSRPT_FROM}`
+          : (c.BUNZZLE_EHLO_NAME ?? "bunzzle")),
+    },
     submission:
       wantsSubmission && certFile && keyFile
         ? {

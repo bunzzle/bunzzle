@@ -392,6 +392,8 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         target: job.target,
         lane,
         path: pathKey,
+        source,
+        sts: report.mtaSts ?? null,
         recalled: report.recalled ?? false,
         provider,
         policy: report.policy,

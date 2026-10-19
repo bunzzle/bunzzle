@@ -29,6 +29,9 @@ const BY_ROLE: Record<Role, string[]> = {
     "BUNZZLE_GUARD_MIN_VOLUME",
     "BUNZZLE_ANOMALY_FLOOR",
     "BUNZZLE_DKIM_ROTATE_DAYS",
+    "BUNZZLE_TLSRPT_FROM",
+    "BUNZZLE_TLSRPT_ORG",
+    "BUNZZLE_TLSRPT_CONTACT",
   ],
   delivery: [
     "BUNZZLE_EHLO_NAME",

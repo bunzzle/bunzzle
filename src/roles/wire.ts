@@ -132,7 +132,12 @@ export const deliveryReportWire: b.Schema<DeliveryReport> = b.object({
   recipients: b.array(recipient).max(1000),
   recalled: b.boolean().optional(),
   mtaSts: b
-    .object({ mode: b.string().max(10), id: b.string().max(32) })
+    .object({
+      mode: b.string().max(10),
+      id: b.string().max(32),
+      mx: b.array(b.string().max(253)).max(20),
+      maxAge: b.number().int().nonnegative(),
+    })
     .nullable()
     .optional(),
 });
