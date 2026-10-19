@@ -45,6 +45,7 @@ import {
 } from "../guards/guards.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import { dayOf, estimatedDays, listWarmup } from "../ips/warmup.ts";
+import { collect, render } from "../metrics/metrics.ts";
 import { AddressError, asciiDomain, domainOf, normalizeAddress } from "../mime/address.ts";
 import { senderDomainOf } from "../mime/from.ts";
 import type { PathView } from "../shaping/shaper.ts";
@@ -113,6 +114,7 @@ const SIGNER_DOMAINS_MS = 60_000;
 export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending(): Promise<void> } {
   const { db, writer, log, signer, delivery } = deps;
   const now = deps.now ?? Date.now;
+  const startedAt = now();
 
   const touched = new Map<string, number>();
   const touch = (id: string) => {
@@ -630,6 +632,11 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
       }
       log.info("hold released", { id: p.id });
       return { id: p.id, released: true };
+    }),
+
+    metrics: method(z.object({ tokenHash }), (p) => {
+      caller(p.tokenHash, "read");
+      return { text: render(collect(db, deps.paths?.() ?? [], now(), startedAt)) };
     }),
 
     paths: method(z.object({ tokenHash }), (p) => {

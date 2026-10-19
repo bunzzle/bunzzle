@@ -356,6 +356,26 @@ describe("POST /emails/batch", () => {
   });
 });
 
+describe("GET /metrics", () => {
+  test("OpenMetrics text for a read key, refused without a key", async () => {
+    const read = await newKey("--scope", "read");
+    const r = await api("/metrics", { token: read });
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toStartWith("application/openmetrics-text");
+    const text = await r.text();
+    expect(text.endsWith("# EOF\n")).toBe(true);
+    expect(text).toContain('bunzzle_build_info{version="');
+    expect(text).toMatch(/^bunzzle_jobs\{state="done"\} \d+$/m);
+    expect(text).toMatch(/^bunzzle_recipients\{status="delivered",domain="example\.test"\} \d+$/m);
+    for (const line of text.trim().split("\n")) {
+      expect(line).toMatch(
+        /^(# (TYPE|HELP) \w+ .+|# EOF|\w+(\{[^}]*\})? -?\d+(\.\d+)?(e[+-]?\d+)?)$/,
+      );
+    }
+    expect((await api("/metrics", { token: null })).status).toBe(401);
+  });
+});
+
 describe("scopes, domain limits, rate limits, revocation", () => {
   test("a send-only key cannot read, a read-only key cannot send", async () => {
     const sendOnly = await newKey("--scope", "send");
