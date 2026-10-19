@@ -24,6 +24,18 @@ export async function runDelivery(config: Config, log: Logger) {
   const uncached = createResolver({ servers });
   const resolver = cachingResolver(uncached);
   const signer = new RpcClient(sock.signer);
+  const relay = config.relay
+    ? {
+        host: config.relay.host,
+        port: config.relay.port,
+        implicitTls: config.relay.port === 465,
+        username: config.relay.username,
+        password: config.relay.passwordFile
+          ? (await Bun.file(config.relay.passwordFile).text()).trim()
+          : null,
+      }
+    : null;
+  if (relay) log.info("sending through a relay", { relay: `${relay.host}:${relay.port}` });
   const dane = config.dane === "off" ? false : await localValidatingResolver(servers, uncached);
   if (config.dane !== "off" && !dane) {
     log.info(
@@ -81,6 +93,7 @@ export async function runDelivery(config: Config, log: Logger) {
         families: config.ipv6 ? [4, 6] : [4],
         allowPrivate: config.allowPrivateDestinations,
         dane,
+        relay,
         ...(ips.length ? { ownAddresses: ips } : {}),
       },
       async (messageId, body, o) =>

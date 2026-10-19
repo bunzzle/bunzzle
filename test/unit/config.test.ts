@@ -30,6 +30,7 @@ describe("loadConfig", () => {
       inboundTlsKeyFile: null,
       dane: "auto",
       dnsUpdate: null,
+      relay: null,
       tlsrpt: { from: null, org: "bunzzle", contact: "bunzzle" },
       submission: null,
       sourceIps: [],

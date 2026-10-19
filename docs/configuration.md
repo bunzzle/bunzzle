@@ -52,6 +52,16 @@ Bounces, complaints and unsubscribe replies. Off unless a port is set.
 | `BUNZZLE_INBOUND_TLS_CERT_FILE` | | Certificate for STARTTLS on the inbound port. |
 | `BUNZZLE_INBOUND_TLS_KEY_FILE` | | Private key for that certificate. |
 
+## Relay
+
+Only for servers whose provider blocks outbound port 25. All mail then goes to this relay instead of the recipients' mail servers, and the per-provider limits, MTA-STS and DANE no longer apply to the first hop. TLS with a valid certificate is always required before the password is sent.
+
+| Variable | Default | |
+|---|---|---|
+| `BUNZZLE_RELAY_HOST` | | `host` or `host:port`. Port 587 (the default) uses STARTTLS, port 465 TLS from the first byte. |
+| `BUNZZLE_RELAY_USERNAME` | | User name for SMTP AUTH. |
+| `BUNZZLE_RELAY_PASSWORD_FILE` | | File with the password, readable only by the `bunzzle-delivery` user. |
+
 ## TLS reports
 
 Receiving domains that publish an `_smtp._tls` record get a daily report about yesterday's TLS sessions with their mail servers (RFC 8460). Reports to an `https` address are always sent; reports to a `mailto` address need a sender.

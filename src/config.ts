@@ -42,6 +42,9 @@ const schema = b.object({
   BUNZZLE_DNS_UPDATE_KEY_NAME: optional,
   BUNZZLE_DNS_UPDATE_KEY_FILE: optional,
   BUNZZLE_DNS_UPDATE_ALGORITHM: b.enum(["hmac-sha256", "hmac-sha512"]).default("hmac-sha256"),
+  BUNZZLE_RELAY_HOST: optional,
+  BUNZZLE_RELAY_USERNAME: optional,
+  BUNZZLE_RELAY_PASSWORD_FILE: optional,
   BUNZZLE_TLSRPT_FROM: optional,
   BUNZZLE_TLSRPT_ORG: optional,
   BUNZZLE_TLSRPT_CONTACT: optional,
@@ -130,6 +133,12 @@ export interface Config {
     keyFile: string;
     algorithm: "hmac-sha256" | "hmac-sha512";
   } | null;
+  relay: {
+    host: string;
+    port: number;
+    username: string | null;
+    passwordFile: string | null;
+  } | null;
   tlsrpt: { from: string | null; org: string; contact: string };
   submission: {
     host: string;
@@ -180,6 +189,22 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
       "invalid configuration:\n  publish DNS records through Cloudflare or through DNS updates, not both",
     );
   }
+  if ((c.BUNZZLE_RELAY_USERNAME || c.BUNZZLE_RELAY_PASSWORD_FILE) && !c.BUNZZLE_RELAY_HOST) {
+    throw new ConfigError(
+      "invalid configuration:\n  BUNZZLE_RELAY_USERNAME needs BUNZZLE_RELAY_HOST",
+    );
+  }
+  if (!!c.BUNZZLE_RELAY_USERNAME !== !!c.BUNZZLE_RELAY_PASSWORD_FILE) {
+    throw new ConfigError(
+      "invalid configuration:\n  set BUNZZLE_RELAY_USERNAME and BUNZZLE_RELAY_PASSWORD_FILE together",
+    );
+  }
+  const relayMatch = c.BUNZZLE_RELAY_HOST
+    ? /^(\[[^\]]+\]|[^:]+)(?::(\d{1,5}))?$/.exec(c.BUNZZLE_RELAY_HOST.trim())
+    : null;
+  if (c.BUNZZLE_RELAY_HOST && !relayMatch) {
+    throw new ConfigError("invalid configuration:\n  BUNZZLE_RELAY_HOST must be host or host:port");
+  }
   const wantsSubmission =
     c.BUNZZLE_SUBMISSION_PORT !== undefined || c.BUNZZLE_SUBMISSION_TLS_PORT !== undefined;
   const certFile = c.BUNZZLE_SUBMISSION_TLS_CERT_FILE;
@@ -227,6 +252,14 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
             algorithm: c.BUNZZLE_DNS_UPDATE_ALGORITHM,
           }
         : null,
+    relay: relayMatch
+      ? {
+          host: (relayMatch[1] as string).replace(/^\[|\]$/g, ""),
+          port: Number(relayMatch[2] ?? 587),
+          username: c.BUNZZLE_RELAY_USERNAME,
+          passwordFile: c.BUNZZLE_RELAY_PASSWORD_FILE,
+        }
+      : null,
     tlsrpt: {
       from: c.BUNZZLE_TLSRPT_FROM,
       org: c.BUNZZLE_TLSRPT_ORG ?? c.BUNZZLE_EHLO_NAME ?? "bunzzle",
