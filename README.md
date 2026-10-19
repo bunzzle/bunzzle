@@ -87,6 +87,7 @@ Receivers report back, and Bunzzle acts on it:
 - A suppression list, checked for every email: hard bounces stop all mail for a year, a domain that doesn't exist for 30 days; complaints and unsubscribes stop bulk mail only, for good. Password resets still reach someone who unsubscribed from a newsletter. `GET/POST/DELETE /suppressions` or `bunzzle suppressions`.
 - One-click unsubscribe (required by Gmail and Yahoo for bulk senders) is added to every `"lane": "bulk"` email, signed into DKIM, hosted at `BUNZZLE_PUBLIC_URL/u/…`.
 - Webhooks: `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.unsubscribed`, `email.suppressed`, `email.failed`, `email.canceled`. Signed in the Standard Webhooks format. Retried for about a day. Webhook URLs that point to private networks are refused.
+- Event log. With `BUNZZLE_EVENT_LOG=true` every event also goes to local files, one JSON object per line, rotated daily and gzipped, for log shippers and `grep` (see `docs/configuration.md`).
 
 ### Reputation
 

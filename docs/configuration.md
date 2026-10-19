@@ -41,6 +41,23 @@ Bunzzle reads its settings from environment variables. With the systemd install 
 
 The master key encrypts the DKIM keys and every email body. Keep it in a file only Bunzzle can read. If it is lost, stored keys and queued email cannot be read again.
 
+## Event log
+
+| Variable | Default | |
+|---|---|---|
+| `BUNZZLE_EVENT_LOG` | `false` | Write every delivery event to local files as JSON lines. |
+| `BUNZZLE_EVENT_LOG_DIR` | `./logs/events` | Where the files go. With the systemd units: `/var/log/bunzzle/events`. |
+| `BUNZZLE_EVENT_LOG_MAX_MB` | `100` | A new file starts after this many megabytes, and every day at 00:00 UTC. |
+| `BUNZZLE_EVENT_LOG_DAYS` | `30` | Files older than this many days are deleted. |
+
+The current file is `events-YYYYMMDD-HHMMSS.jsonl` (its start time in UTC), so `tail -f` works; finished files are gzipped. Each line is one event, for example:
+
+```json
+{"id":1042,"at":"2026-10-19T10:00:01.000Z","email_id":"01a1...","event":"recipient","source":"delivery","data":{"address":"user@example.com","status":"delivered"}}
+```
+
+The log starts with the events that happen after it is turned on. `id` grows with every event; after a crash a few lines can appear twice, so readers that need exact counts skip ids they have seen. If the disk is full, the log waits and catches up later; email keeps flowing.
+
 ## Inbound
 
 Bounces, complaints and unsubscribe replies. Off unless a port is set.

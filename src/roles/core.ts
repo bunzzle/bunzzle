@@ -11,6 +11,8 @@ import type { DeliveryTransport } from "../delivery/transport.ts";
 import { pruneDmarc } from "../dmarc/store.ts";
 import { bounceDomain, getDomain, returnPathReady } from "../domains/domains.ts";
 import { pruneIdempotency } from "../emails/idempotency.ts";
+import { beginAtEnd, exportEvents } from "../eventlog/export.ts";
+import { EventLog } from "../eventlog/log.ts";
 import { reputationGuard } from "../guards/guards.ts";
 import { RpcClient, serveRpc } from "../ipc/rpc.ts";
 import { rollover } from "../ips/warmup.ts";
@@ -54,6 +56,12 @@ export async function runCore(config: Config, log: Logger) {
   await privateDir(config.dataDir);
   const db = openDatabase({ path: config.dbPath });
   const writer = new Writer(db);
+  const eventLog = config.eventLog ? new EventLog(config.eventLog) : null;
+  if (eventLog && config.eventLog) {
+    await privateDir(config.eventLog.dir, "750");
+    await eventLog.start(Date.now());
+    await writer.run((d) => beginAtEnd(d, Date.now()));
+  }
   const sock = sockets(config.runDir);
   const signer = new RpcClient(sock.signer);
   const delivery = new RpcClient(sock.delivery);
@@ -258,6 +266,14 @@ export async function runCore(config: Config, log: Logger) {
       .catch((err: Error) => log.error("webhook dispatch failed", { error: err.message })),
   );
 
+  const stopEventLog = eventLog
+    ? every(1_000, () =>
+        exportEvents((fn) => writer.run(fn), eventLog, Date.now).catch((err: Error) =>
+          log.warn("event log write failed", { error: err.message }),
+        ),
+      )
+    : () => {};
+
   const stopSettled = every(5_000, flushSettled);
 
   await scheduler.start();
@@ -272,6 +288,8 @@ export async function runCore(config: Config, log: Logger) {
     stopGuards();
     stopRotation();
     stopDispatch();
+    stopEventLog();
+    await eventLog?.stop();
     server.stop();
     shaper.stop();
     await scheduler.stop();
