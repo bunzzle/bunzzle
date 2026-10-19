@@ -86,6 +86,18 @@ describe("domain records", () => {
     const dmarc = evaluate(records, { ...base, "_dmarc.acme.test": ["v=DMARC1; p=reject"] }, null);
     expect(dmarc.records[3]?.status).toBe("verified");
   });
+
+  test("with an inbound host, the DMARC record asks for aggregate reports", () => {
+    const withInbound = expectedRecords("acme.test", keys, "203.0.113.7", "mx.bunzzle.test");
+    const dmarcRecord = withInbound.find((r) => r.record === "DMARC");
+    expect(dmarcRecord?.value).toBe("v=DMARC1; p=none; rua=mailto:dmarc@bounce.acme.test;");
+    const status = (txt: string) =>
+      evaluate([dmarcRecord as never], { "_dmarc.acme.test": [txt] }, null).records[0]?.status;
+    expect(
+      status("v=DMARC1; p=quarantine; rua=mailto:x@y.test,mailto:DMARC@bounce.acme.test"),
+    ).toBe("verified");
+    expect(status("v=DMARC1; p=none")).toBe("mismatch");
+  });
 });
 
 describe("API keys", () => {

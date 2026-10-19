@@ -8,6 +8,7 @@ import { type EpochPublicKey, epochOf } from "../crypto/envelope.ts";
 import { deliveryHandler } from "../delivery/handler.ts";
 import { shredBodies } from "../delivery/queue.ts";
 import type { DeliveryTransport } from "../delivery/transport.ts";
+import { pruneDmarc } from "../dmarc/store.ts";
 import { bounceDomain, getDomain, returnPathReady } from "../domains/domains.ts";
 import { pruneIdempotency } from "../emails/idempotency.ts";
 import { reputationGuard } from "../guards/guards.ts";
@@ -211,7 +212,10 @@ export async function runCore(config: Config, log: Logger) {
   };
   const stopShred = every(Math.max(1_000, scaled(HOUR)), shred);
   const stopPrune = every(Math.max(1_000, scaled(HOUR)), () =>
-    writer.run((d) => pruneIdempotency(d, Date.now())),
+    writer.run((d) => {
+      pruneIdempotency(d, Date.now());
+      pruneDmarc(d, Date.now());
+    }),
   );
   const stopVerify = every(Math.max(1_000, scaled(5 * MIN)), () => api.verifyPending());
   const stopGuards = every(Math.max(1_000, scaled(MIN)), () =>

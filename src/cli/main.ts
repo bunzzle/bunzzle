@@ -36,7 +36,7 @@ Usage:
   bunzzle send        Send one email straight to the recipients' mail servers
   bunzzle dkim        Create DKIM keys and print their DNS records
   bunzzle master-key  Print a new random master key
-  bunzzle domains     add|verify|show|list sending domains (needs \`serve\` running)
+  bunzzle domains     add|verify|show|list|reports sending domains and their DMARC reports (needs \`serve\` running)
   bunzzle keys        create|list|revoke API keys (needs \`serve\` running)
   bunzzle paths       sending speed per destination and why it changed (needs \`serve\` running)
   bunzzle webhooks    add|list|remove event webhooks (needs \`serve\` running)
