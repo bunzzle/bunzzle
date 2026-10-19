@@ -158,10 +158,10 @@ export class StringSchema extends Schema<string> {
     return this.#with((s) => (s.length <= n ? null : `must be at most ${n} characters`));
   }
 
-  regex(re: RegExp): StringSchema {
+  regex(re: RegExp, message = "has an invalid format"): StringSchema {
     return this.#with((s) => {
       re.lastIndex = 0;
-      return re.test(s) ? null : "has an invalid format";
+      return re.test(s) ? null : message;
     });
   }
 

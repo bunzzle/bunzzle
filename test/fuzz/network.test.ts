@@ -1,10 +1,10 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { z } from "zod";
 import { createLogger } from "../../src/core/log.ts";
 import { startApp } from "../../src/http/app.ts";
 import { startInboundServer } from "../../src/inbound/server.ts";
 import { method, RpcClient, serveRpc } from "../../src/ipc/rpc.ts";
 import { SmtpConnection, SmtpError } from "../../src/smtp/connection.ts";
+import { b } from "../../src/validate/schema.ts";
 import { fuzz, int, pick, report } from "./engine.ts";
 
 const errors: string[] = [];
@@ -174,8 +174,8 @@ describe("fuzz: network input", () => {
     async () => {
       const path = `${dir}/fuzz.sock`;
       const server = await serveRpc(path, {
-        add: method(z.object({ a: z.number(), b: z.number() }), ({ a, b }) => a + b),
-        echo: method(z.object({ text: z.string().max(100) }), ({ text }) => ({ text })),
+        add: method(b.object({ a: b.number(), b: b.number() }), ({ a, b }) => a + b),
+        echo: method(b.object({ text: b.string().max(100) }), ({ text }) => ({ text })),
       });
       cleanups.push(() => server.stop());
       const findings = await fuzz({
@@ -209,7 +209,7 @@ describe("fuzz: network input", () => {
     async () => {
       const lists = new Set(["listDomains", "listWebhooks", "listSuppressions", "ips", "paths"]);
       const core = {
-        async call(m: string, _p: unknown, opts?: { result?: z.ZodType }) {
+        async call(m: string, _p: unknown, opts?: { result?: b.Schema }) {
           const value =
             m === "authenticate"
               ? { id: "key", scope: "full", domains: null, rateLimit: 1_000_000 }

@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { z } from "zod";
+import { b } from "../validate/schema.ts";
 
 export type RecordKind =
   | "DKIM"
@@ -37,8 +37,8 @@ export interface PublicDkimKey {
   state?: "active" | "next" | "retiring";
 }
 
-const recordSchema = z.object({
-  record: z.enum([
+const recordSchema = b.object({
+  record: b.enum([
     "DKIM",
     "DKIM_NEXT",
     "DKIM_RETIRING",
@@ -47,12 +47,12 @@ const recordSchema = z.object({
     "RETURN_PATH_MX",
     "RETURN_PATH_SPF",
   ]),
-  name: z.string(),
-  type: z.enum(["TXT", "MX"]),
-  value: z.string(),
-  required: z.boolean(),
-  status: z.enum(["not_started", "verified", "missing", "mismatch"]),
-  found: z.string().nullable(),
+  name: b.string(),
+  type: b.enum(["TXT", "MX"]),
+  value: b.string(),
+  required: b.boolean(),
+  status: b.enum(["not_started", "verified", "missing", "mismatch"]),
+  found: b.string().nullable(),
 });
 
 export function spfMechanism(sourceIps: string | string[] | null): string {
@@ -202,7 +202,7 @@ interface Row {
 const fromRow = (r: Row): Domain => ({
   name: r.name,
   status: r.status,
-  records: z.array(recordSchema).parse(JSON.parse(r.records)),
+  records: b.array(recordSchema).parse(JSON.parse(r.records)),
   createdAt: r.created_at,
   checkedAt: r.checked_at,
 });

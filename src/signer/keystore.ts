@@ -1,14 +1,14 @@
-import { z } from "zod";
 import { type EpochKeyPair, epochKeyPair, epochOf, newEpochSeed } from "../crypto/envelope.ts";
 import { type MasterKey, MasterKeyError } from "../crypto/master.ts";
+import { b } from "../validate/schema.ts";
 
-const schema = z.object({
-  version: z.literal(1),
-  masterKeyId: z.string().min(1),
-  epochs: z.record(z.string().regex(/^\d+$/), z.string().min(1)),
+const schema = b.object({
+  version: b.literal(1),
+  masterKeyId: b.string().min(1),
+  epochs: b.record(b.string().regex(/^\d+$/), b.string().min(1)),
 });
 
-type StoreFile = z.infer<typeof schema>;
+type StoreFile = b.infer<typeof schema>;
 
 const context = (epoch: number) => `bunzzle epoch v1:${epoch}`;
 

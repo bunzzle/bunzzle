@@ -1,54 +1,54 @@
-import { z } from "zod";
 import { type Address, AddressError, domainOf, parseAddress } from "../mime/address.ts";
 import { type Attachment, buildMessage, MimeError, newMessageId } from "../mime/builder.ts";
+import { b } from "../validate/schema.ts";
 import { ApiError } from "./errors.ts";
 
-const addresses = z.union([z.string().min(1), z.array(z.string().min(1)).min(1).max(50)]);
-const tag = z
+const addresses = b.union([b.string().min(1), b.array(b.string().min(1)).min(1).max(50)]);
+const tag = b
   .string()
   .regex(/^[A-Za-z0-9_-]{1,256}$/, "tags may only use letters, digits, _ and -");
 
-export const rescheduleSchema = z.object({ scheduled_at: z.string().max(64) });
+export const rescheduleSchema = b.object({ scheduled_at: b.string().max(64) });
 
-export const sendSchema = z.object({
-  from: z.string().min(3).max(1000),
+export const sendSchema = b.object({
+  from: b.string().min(3).max(1000),
   to: addresses,
-  subject: z.string().max(998),
+  subject: b.string().max(998),
   cc: addresses.optional(),
   bcc: addresses.optional(),
   reply_to: addresses.optional(),
-  html: z
+  html: b
     .string()
     .max(40 * 1024 * 1024)
     .optional(),
-  text: z
+  text: b
     .string()
     .max(40 * 1024 * 1024)
     .optional(),
-  headers: z.record(z.string(), z.string().max(998)).optional(),
-  attachments: z
+  headers: b.record(b.string(), b.string().max(998)).optional(),
+  attachments: b
     .array(
-      z.object({
-        filename: z.string().min(1).max(255),
-        content: z.union([z.string(), z.array(z.number().int().min(0).max(255))]).optional(),
-        path: z.string().optional(),
-        content_type: z.string().max(255).optional(),
-        content_id: z.string().max(255).optional(),
+      b.object({
+        filename: b.string().min(1).max(255),
+        content: b.union([b.string(), b.array(b.number().int().min(0).max(255))]).optional(),
+        path: b.string().optional(),
+        content_type: b.string().max(255).optional(),
+        content_id: b.string().max(255).optional(),
       }),
     )
     .max(100)
     .optional(),
-  tags: z
-    .array(z.object({ name: tag, value: tag }))
+  tags: b
+    .array(b.object({ name: tag, value: tag }))
     .max(50)
     .optional(),
-  scheduled_at: z.string().max(64).optional(),
-  expires_at: z.string().max(64).optional(),
-  require_tls: z.boolean().optional(),
-  lane: z.enum(["transactional", "bulk"]).optional(),
+  scheduled_at: b.string().max(64).optional(),
+  expires_at: b.string().max(64).optional(),
+  require_tls: b.boolean().optional(),
+  lane: b.enum(["transactional", "bulk"]).optional(),
 });
 
-export type SendRequest = z.infer<typeof sendSchema>;
+export type SendRequest = b.infer<typeof sendSchema>;
 
 export interface PreparedEmail {
   from: string;

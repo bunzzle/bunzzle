@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { z } from "zod";
 import { method, RpcClient, RpcError, type RpcServer, serveRpc } from "../../src/ipc/rpc.ts";
+import { b } from "../../src/validate/schema.ts";
 
 const dir = `${Bun.env["TMPDIR"] ?? "/tmp"}/bunzzle-rpc-${crypto.randomUUID()}`;
 await Bun.$`mkdir -p ${dir}`.quiet();
@@ -23,13 +23,13 @@ async function start(path = `${dir}/${crypto.randomUUID()}.sock`) {
   let slowRelease: (() => void) | null = null;
   servers.push(
     await serveRpc(path, {
-      add: method(z.object({ a: z.number(), b: z.number() }), ({ a, b }) => a + b),
-      echo: method(z.object({ text: z.string() }), ({ text }) => ({ text })),
-      boom: method(z.object({}), () => {
+      add: method(b.object({ a: b.number(), b: b.number() }), ({ a, b }) => a + b),
+      echo: method(b.object({ text: b.string() }), ({ text }) => ({ text })),
+      boom: method(b.object({}), () => {
         throw new RpcError("no-key", "no DKIM key for example.test");
       }),
       slow: method(
-        z.object({}),
+        b.object({}),
         () =>
           new Promise((resolve) => {
             slowRelease = () => resolve("late");
@@ -55,7 +55,7 @@ describe("rpc over unix sockets", () => {
   test("validates results on the client", async () => {
     const { client } = await start();
     const r = await failure(
-      client.call("echo", { text: "x" }, { result: z.object({ text: z.number() }) }),
+      client.call("echo", { text: "x" }, { result: b.object({ text: b.number() }) }),
     );
     expect(r.code).toBe("invalid");
   });

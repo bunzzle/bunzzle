@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { z } from "zod";
+import { b } from "../validate/schema.ts";
 
 export const EVENT_TYPES = [
   "email.delivered",
@@ -31,7 +31,7 @@ interface Row {
 const fromRow = (r: Row): Webhook => ({
   id: r.id,
   url: r.url,
-  events: z.array(z.enum(EVENT_TYPES)).parse(JSON.parse(r.events)),
+  events: b.array(b.enum(EVENT_TYPES)).parse(JSON.parse(r.events)),
   createdAt: r.created_at,
 });
 

@@ -29,4 +29,4 @@ gh attestation verify oci://ghcr.io/bunzzle/bunzzle:v0.1.0 --repo bunzzle/bunzzl
 
 ## What's inside
 
-The SBOMs list every dependency. At runtime that is Bun (compiled into the binary) and zod. The image is `debian:bookworm-slim` plus the binary, both pinned by digest.
+The SBOMs list every dependency. At runtime that is Bun alone, compiled into the binary: Bunzzle has no runtime dependencies. The image is `debian:bookworm-slim` plus the binary, both pinned by digest.

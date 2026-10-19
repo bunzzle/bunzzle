@@ -1,5 +1,5 @@
 import type { Socket, UnixSocketListener } from "bun";
-import { z } from "zod";
+import { b } from "../validate/schema.ts";
 
 const MAX_FRAME = 64 * 1024 * 1024;
 const NL = 0x0a;
@@ -18,22 +18,22 @@ export class RpcError extends Error {
 }
 
 export interface Method {
-  params: z.ZodType;
+  params: b.Schema;
   handle(params: unknown): unknown;
 }
 
-export function method<P, R>(params: z.ZodType<P>, handle: (params: P) => Promise<R> | R): Method {
+export function method<P, R>(params: b.Schema<P>, handle: (params: P) => Promise<R> | R): Method {
   return { params, handle: handle as (params: unknown) => unknown };
 }
 
 export type Methods = Record<string, Method>;
 
-const request = z.object({ id: z.number().int(), method: z.string(), params: z.unknown() });
-const response = z.union([
-  z.object({ id: z.number().int(), result: z.unknown() }),
-  z.object({
-    id: z.number().int(),
-    error: z.object({ code: z.string(), message: z.string() }),
+const request = b.object({ id: b.number().int(), method: b.string(), params: b.unknown() });
+const response = b.union([
+  b.object({ id: b.number().int(), result: b.unknown() }),
+  b.object({
+    id: b.number().int(),
+    error: b.object({ code: b.string(), message: b.string() }),
   }),
 ]);
 
@@ -173,7 +173,7 @@ interface Pending {
 
 export interface CallOptions<R> {
   timeoutMs?: number;
-  result?: z.ZodType<R>;
+  result?: b.Schema<R>;
 }
 
 export class RpcClient {
