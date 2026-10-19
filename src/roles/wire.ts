@@ -231,3 +231,28 @@ export const reportWire = z.discriminatedUnion("kind", [
   }),
   z.object({ kind: z.literal("unknown"), ref }),
 ]);
+
+export const dmarcWire = z.object({
+  org: z.string().max(200),
+  email: z.string().max(320).nullable(),
+  reportId: z.string().max(200),
+  begin: z.number().int().nonnegative(),
+  end: z.number().int().nonnegative(),
+  domain: z.string().max(253),
+  policy: z.string().max(20),
+  rows: z
+    .array(
+      z.object({
+        sourceIp: z.string().max(64),
+        count: z.number().int().nonnegative(),
+        disposition: z.string().max(20),
+        dkim: z.string().max(20),
+        spf: z.string().max(20),
+        headerFrom: z.string().max(253),
+        envelopeFrom: z.string().max(253).nullable(),
+        dkimDomains: z.array(z.string().max(253)).max(10),
+        spfDomain: z.string().max(253).nullable(),
+      }),
+    )
+    .max(10_000),
+});

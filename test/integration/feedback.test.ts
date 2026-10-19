@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { generateMasterKey } from "../../src/crypto/master.ts";
+import { reportMail, reportXml, zip } from "../support/dmarc.ts";
 import { type FakeDns, startFakeDns, type Zone } from "../support/fake-dns.ts";
 import { type FakeMx, startFakeMx } from "../support/fake-mx.ts";
 import { type Served, startServe } from "../support/serve.ts";
@@ -330,5 +331,56 @@ hi
   test("every webhook was correctly signed", () => {
     expect(hooks.length).toBeGreaterThan(5);
     expect(hooks.every((h) => h.valid)).toBe(true);
+  });
+});
+
+describe("DMARC aggregate reports", () => {
+  const today = Math.floor(Date.now() / 86_400_000) * 86_400 - 86_400;
+  const mail = (domain: string, id: string) =>
+    reportMail(
+      "application/zip",
+      `mail.example!${domain}!${today}!${today + 86_399}.zip`,
+      zip("report.xml", new TextEncoder().encode(reportXml(domain, today, id))),
+    );
+
+  test("a report to the domain's report address is stored and summarized", async () => {
+    const talk = await deliverMail(
+      served.inboundPort as number,
+      "dmarc@bounce.acme.test",
+      mail("acme.test", "r-1"),
+    );
+    expect(talk.replies[5]).toStartWith("250");
+    const again = await deliverMail(
+      served.inboundPort as number,
+      "dmarc@bounce.acme.test",
+      mail("acme.test", "r-1"),
+    );
+    expect(again.replies[5]).toStartWith("250");
+    const r = (await (await api("/domains/acme.test/dmarc?days=7")).json()) as {
+      data: { messages: number; dmarc_pass: number; sources: { source_ip: string }[] }[];
+    };
+    expect(r.data.length).toBe(1);
+    expect(r.data[0]?.messages).toBe(45);
+    expect(r.data[0]?.dmarc_pass).toBe(42);
+    expect(r.data[0]?.sources.map((x) => x.source_ip)).toEqual(["203.0.113.5", "198.51.100.7"]);
+    const shown = await cli("domains", "reports", "acme.test");
+    expect(shown.stdout).toContain("[FAIL] 198.51.100.7");
+  });
+
+  test("a report about another domain, or to an unknown domain, is refused", async () => {
+    const other = await deliverMail(
+      served.inboundPort as number,
+      "dmarc@bounce.acme.test",
+      mail("other.test", "r-2"),
+    );
+    expect(other.replies[5]).toStartWith("5");
+    const unknown = await smtpTalk(served.inboundPort as number, [
+      "EHLO reporter.example.test",
+      "MAIL FROM:<noreply@mail.example>",
+      "RCPT TO:<dmarc@bounce.nobody.test>",
+      "QUIT",
+    ]);
+    expect(unknown.replies[3]).toStartWith("5");
+    expect((await api("/domains/acme.test/dmarc?days=500")).status).toBe(422);
   });
 });

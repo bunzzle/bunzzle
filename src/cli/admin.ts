@@ -69,8 +69,50 @@ function printDomain(d: DomainView) {
   }
 }
 
+interface DmarcDayView {
+  day: string;
+  messages: number;
+  dmarc_pass: number;
+  reporters: string[];
+  sources: {
+    source_ip: string;
+    messages: number;
+    dmarc_pass: number;
+    dkim_pass: number;
+    spf_pass: number;
+  }[];
+}
+
+async function dmarcReports(config: Config, name: string, rest: string[]) {
+  const args = parseArgs(rest, { strings: ["days"] });
+  const days = Number(args.strings.get("days") ?? "7");
+  const r = await call<{ data: DmarcDayView[] }>(config, "dmarcReports", { domain: name, days });
+  if (r.data.length === 0) {
+    console.log(
+      `No DMARC reports for ${name} in the last ${days} days. Reports arrive about once a day once the DMARC record asks for them.`,
+    );
+    return;
+  }
+  for (const d of r.data) {
+    const pct = d.messages ? Math.round((100 * d.dmarc_pass) / d.messages) : 0;
+    console.log(
+      `${d.day}  ${d.messages} messages, ${pct}% pass DMARC  (${d.reporters.join(", ")})`,
+    );
+    for (const s of d.sources) {
+      const flag = s.dmarc_pass < s.messages ? "FAIL" : "ok";
+      console.log(
+        `  [${flag}] ${s.source_ip.padEnd(39)} ${s.messages} messages, DKIM pass ${s.dkim_pass}, SPF pass ${s.spf_pass}`,
+      );
+    }
+  }
+}
+
 export async function domainsCommand(argv: string[], config: Config) {
   const [sub, name, ...rest] = argv;
+  if (sub === "reports") {
+    if (!name) throw new UsageError("usage: bunzzle domains reports DOMAIN [--days N]");
+    return dmarcReports(config, name, rest);
+  }
   if (rest.length > 0) throw new UsageError(`unexpected argument: ${rest[0]}`);
   switch (sub) {
     case "add":
@@ -96,7 +138,7 @@ export async function domainsCommand(argv: string[], config: Config) {
       return;
     }
     default:
-      throw new UsageError("usage: bunzzle domains add|verify|show|rotate|list");
+      throw new UsageError("usage: bunzzle domains add|verify|show|rotate|list|reports");
   }
 }
 

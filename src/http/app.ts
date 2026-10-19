@@ -282,6 +282,23 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           );
         }),
       },
+      "/domains/:name/dmarc": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const raw = new URL(req.url).searchParams.get("days") ?? "7";
+          const days = Number(raw);
+          if (!Number.isInteger(days) || days < 1 || days > 90) {
+            throw new ApiError(
+              422,
+              "validation_error",
+              "`days` must be a whole number from 1 to 90",
+            );
+          }
+          return Response.json(
+            await rpc("dmarcReports", { tokenHash: caller.hash, domain: req.params["name"], days }),
+          );
+        }),
+      },
       "/webhooks": {
         GET: handle(async (req) => {
           const caller = await authenticate(req);

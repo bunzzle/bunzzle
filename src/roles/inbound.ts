@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
+import { DmarcError, readDmarcReport } from "../dmarc/report.ts";
 import { classifyReport, type Report } from "../inbound/parse.ts";
 import { startInboundServer } from "../inbound/server.ts";
 import { RpcClient, RpcError } from "../ipc/rpc.ts";
@@ -48,6 +49,27 @@ export async function runInbound(config: Config, log: Logger) {
                 )
               ).accept,
             message: async (recipients, raw) => {
+              if (recipients.some((r) => /^dmarc@/i.test(r))) {
+                try {
+                  const dmarc = await readDmarcReport(raw);
+                  await core.call(
+                    "inboundDmarc",
+                    { recipients, report: dmarc },
+                    { timeoutMs: 30_000 },
+                  );
+                  return "ok";
+                } catch (err) {
+                  if (err instanceof DmarcError) {
+                    log.warn("unreadable DMARC report", { error: err.message });
+                    return "reject";
+                  }
+                  if (err instanceof RpcError && err.code === "invalid") return "reject";
+                  log.warn("could not hand a DMARC report to core", {
+                    error: (err as Error).message,
+                  });
+                  return "retry";
+                }
+              }
               let report: Report;
               try {
                 report = classifyReport(raw);

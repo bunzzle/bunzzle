@@ -110,7 +110,9 @@ export function expectedRecords(
       ...base,
       record: "DMARC",
       name: `_dmarc.${domain}`,
-      value: "v=DMARC1; p=none;",
+      value: inboundHost
+        ? `v=DMARC1; p=none; rua=mailto:${dmarcAddress(domain)};`
+        : "v=DMARC1; p=none;",
       required: false,
     },
     ...returnPath,
@@ -118,6 +120,7 @@ export function expectedRecords(
 }
 
 export const bounceDomain = (domain: string) => `bounce.${domain}`;
+export const dmarcAddress = (domain: string) => `dmarc@${bounceDomain(domain)}`;
 
 function tags(txt: string): Map<string, string> {
   const out = new Map<string, string>();
@@ -161,7 +164,11 @@ function check(r: DomainRecord, found: string[], sourceIp: string | string[] | n
       : result("mismatch", record);
   }
   const dmarc = found.find((t) => /^v=DMARC1\b/i.test(t.trim()));
-  return dmarc ? result("verified", dmarc) : result("missing", null);
+  if (!dmarc) return result("missing", null);
+  const want = tags(r.value).get("rua");
+  if (!want) return result("verified", dmarc);
+  const have = (tags(dmarc).get("rua") ?? "").toLowerCase().split(",");
+  return have.includes(want.toLowerCase()) ? result("verified", dmarc) : result("mismatch", dmarc);
 }
 
 export function evaluate(

@@ -4,6 +4,8 @@ import { allows, keyForHash, type Scope } from "../accounts/api-keys.ts";
 import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
 import { type EpochPublicKey, sealBody } from "../crypto/envelope.ts";
+import { dmarcSummary, saveDmarcReport } from "../dmarc/store.ts";
+import { getDomain } from "../domains/domains.ts";
 import { type Applied, applyInbound, applyUnsubscribe, type Via } from "../inbound/apply.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import { listSuppressions, removeSuppression, suppress } from "../suppressions/store.ts";
@@ -17,7 +19,7 @@ import {
   resetSending,
   settleDelivery,
 } from "../webhooks/store.ts";
-import { reportWire, tokenHash } from "./wire.ts";
+import { DOMAIN, dmarcWire, reportWire, tokenHash } from "./wire.ts";
 
 export interface FeedbackDeps {
   db: Database;
@@ -60,10 +62,46 @@ export function feedbackMethods(deps: FeedbackDeps) {
     return { via: m[1] === "b" ? "bounce" : "unsubscribe", messageId: t.messageId };
   };
 
+  const dmarcDomain = (address: string): string | null => {
+    const m = /^dmarc@bounce\.(.+)$/i.exec(address.trim());
+    const domain = m?.[1]?.toLowerCase();
+    return domain && DOMAIN.test(domain) && getDomain(db, domain) ? domain : null;
+  };
+
   const methods: Methods = {
     inboundRecipient: method(z.object({ address: z.string().max(320) }), async ({ address }) => ({
-      accept: (await route(address)) !== null,
+      accept: dmarcDomain(address) !== null || (await route(address)) !== null,
     })),
+
+    inboundDmarc: method(
+      z.object({ recipients: z.array(z.string().max(320)).min(1).max(10), report: dmarcWire }),
+      async ({ recipients, report }) => {
+        const domains = recipients.map(dmarcDomain).filter((d) => d !== null);
+        if (!domains.includes(report.domain)) {
+          throw new RpcError("invalid", "the report is not about the domain it was sent to");
+        }
+        const saved = await writer.run((d) => saveDmarcReport(d, report, now()));
+        log.info("DMARC report received", {
+          domain: report.domain,
+          org: report.org,
+          rows: report.rows.length,
+          duplicate: !saved,
+        });
+        return { saved };
+      },
+    ),
+
+    dmarcReports: method(
+      z.object({ tokenHash, domain: z.string().max(253), days: z.number().int().min(1).max(90) }),
+      (p) => {
+        caller(p.tokenHash, "read");
+        const name = p.domain.toLowerCase();
+        if (!DOMAIN.test(name) || !getDomain(db, name)) {
+          throw new RpcError("not-found", "domain not found");
+        }
+        return { object: "list", domain: name, data: dmarcSummary(db, name, p.days, now()) };
+      },
+    ),
 
     inboundReport: method(
       z.object({
