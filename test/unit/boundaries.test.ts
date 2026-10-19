@@ -47,7 +47,14 @@ async function reachable(entry: string): Promise<Set<string>> {
 }
 
 const ROLE_LIMITS: Record<string, string[]> = {
-  delivery: ["core/store/", "signer/", "dkim/keys.ts", "crypto/", "roles/core.ts"],
+  delivery: [
+    "core/store/",
+    "signer/",
+    "dkim/keys.ts",
+    "crypto/",
+    "roles/core.ts",
+    "net/cloudflare.ts",
+  ],
   api: ["core/store/", "signer/", "dkim/", "crypto/", "smtp/", "dns/", "delivery/"],
   core: [
     "signer/",
@@ -61,6 +68,17 @@ const ROLE_LIMITS: Record<string, string[]> = {
   ],
   signer: ["core/store/", "smtp/", "dns/", "delivery/"],
   inbound: ["core/store/", "signer/", "dkim/", "crypto/", "smtp/", "delivery/"],
+  dns: [
+    "core/store/",
+    "signer/",
+    "dkim/",
+    "crypto/",
+    "smtp/",
+    "smtpd/",
+    "delivery/",
+    "mime/",
+    "inbound/",
+  ],
 };
 
 describe("role boundaries (what each process can even load)", () => {

@@ -17,6 +17,7 @@ const KILLS = [
   "api",
   "core",
   "inbound",
+  "dns",
   "signer",
   "delivery",
   "core",

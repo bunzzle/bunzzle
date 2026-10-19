@@ -11,7 +11,7 @@ sudo sh install.sh
 
 `install.sh` downloads the binary and the deploy files for your architecture, checks them against `SHA256SUMS`, and then:
 
-- creates five users (`bunzzle-signer`, `-core`, `-delivery`, `-api`, `-inbound`), one per role;
+- creates six users (`bunzzle-signer`, `-core`, `-delivery`, `-dns`, `-api`, `-inbound`), one per role;
 - installs a hardened systemd unit per role and `bunzzle.target` to start and stop them together;
 - writes `/etc/bunzzle/bunzzle.env` (settings) and `/etc/bunzzle/master.key` (secret, root only) if they don't exist yet;
 - starts everything and fails loudly if any role isn't running.
@@ -44,7 +44,7 @@ Secrets are passed as systemd credentials, readable only by the role that needs 
 
 ```sh
 sudo install -m 0600 /dev/stdin /etc/bunzzle/cloudflare-token <<< "your-token"
-sudo systemctl edit bunzzle-delivery
+sudo systemctl edit bunzzle-dns
 ```
 ```ini
 [Service]
@@ -91,9 +91,9 @@ docker run -d --name bunzzle \
   ghcr.io/bunzzle/bunzzle:latest
 ```
 
-Create the key file first with `docker run --rm ghcr.io/bunzzle/bunzzle master-key > master.key` and make it readable by uid 10001. The five roles run as processes of one user (uid 10001) inside the container. For separate users, use compose.
+Create the key file first with `docker run --rm ghcr.io/bunzzle/bunzzle master-key > master.key` and make it readable by uid 10001. The six roles run as processes of one user (uid 10001) inside the container. For separate users, use compose.
 
-## Docker compose, five containers
+## Docker compose, six containers
 
 `deploy/compose.yaml` runs each role in its own container with its own uid; `signer` and `core` have no network at all. In the `deploy` directory:
 

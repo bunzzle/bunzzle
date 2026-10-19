@@ -9,6 +9,7 @@ import { MimeError } from "../mime/builder.ts";
 import { runApi } from "../roles/api.ts";
 import { runCore } from "../roles/core.ts";
 import { runDelivery } from "../roles/delivery.ts";
+import { runDns } from "../roles/dns.ts";
 import { runInbound } from "../roles/inbound.ts";
 import { runSigner } from "../roles/signer.ts";
 import { runSupervisor } from "../roles/supervisor.ts";
@@ -33,7 +34,7 @@ import { sendCommand } from "./send.ts";
 const USAGE = `bunzzle ${VERSION}
 
 Usage:
-  bunzzle serve       Start Bunzzle (five sandboxed roles: api, core, delivery, signer, inbound)
+  bunzzle serve       Start Bunzzle (six sandboxed roles: api, core, delivery, dns, signer, inbound)
   bunzzle send        Send one email straight to the recipients' mail servers
   bunzzle dkim        Create DKIM keys and print their DNS records
   bunzzle master-key  Print a new random master key
@@ -140,6 +141,8 @@ async function role(name: string | undefined) {
       return runCore(config, log);
     case "delivery":
       return runDelivery(config, log);
+    case "dns":
+      return runDns(config, log);
     case "api":
       return runApi(config, log);
     case "inbound":

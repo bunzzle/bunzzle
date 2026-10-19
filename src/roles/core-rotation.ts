@@ -35,6 +35,7 @@ export interface RotationDeps {
   log: Logger;
   signer: RpcClient;
   delivery: RpcClient;
+  dns: RpcClient;
   sourceIp: string | string[] | null;
   inboundHost: string | null;
   rotateDays: number;
@@ -48,7 +49,7 @@ export interface SelfCheck {
 }
 
 export function rotation(deps: RotationDeps) {
-  const { db, writer, log, signer, delivery } = deps;
+  const { db, writer, log, signer, delivery, dns } = deps;
   const now = deps.now ?? Date.now;
 
   const lookup = (queries: { name: string; type: "TXT" | "MX" }[]) =>
@@ -81,8 +82,8 @@ export function rotation(deps: RotationDeps) {
   };
 
   const publish = async (records: DomainRecord[], remove = false) => {
-    const status = await delivery
-      .call<{ enabled: boolean }>("cloudflare", { op: "status" }, { timeoutMs: 5_000 })
+    const status = await dns
+      .call<{ enabled: boolean }>("publish", { op: "status" }, { timeoutMs: 5_000 })
       .catch(() => ({ enabled: false }));
     if (!status.enabled) return false;
     for (const r of records) {
@@ -96,9 +97,9 @@ export function rotation(deps: RotationDeps) {
               priority: Number(r.value.split(" ")[0]),
             }
           : { type: "TXT", name: r.name, content: r.value };
-      const result = await delivery
+      const result = await dns
         .call<{ ok: boolean; action?: string; error?: string }>(
-          "cloudflare",
+          "publish",
           { op: remove ? "remove" : "upsert", record },
           { timeoutMs: 60_000 },
         )

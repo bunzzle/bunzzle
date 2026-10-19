@@ -49,7 +49,7 @@ fi
 install -m 0755 "$binary" "$PREFIX/bunzzle"
 install -m 0644 "$SRC/systemd/bunzzle.sysusers" /usr/lib/sysusers.d/bunzzle.conf
 install -m 0644 "$SRC/systemd/bunzzle.tmpfiles" /usr/lib/tmpfiles.d/bunzzle.conf
-for unit in bunzzle.target bunzzle-signer.service bunzzle-core.service bunzzle-delivery.service bunzzle-api.service bunzzle-inbound.service; do
+for unit in bunzzle.target bunzzle-signer.service bunzzle-dns.service bunzzle-core.service bunzzle-delivery.service bunzzle-api.service bunzzle-inbound.service; do
   install -m 0644 "$SRC/systemd/$unit" "/etc/systemd/system/$unit"
 done
 systemd-sysusers bunzzle.conf
@@ -73,11 +73,11 @@ systemctl enable bunzzle.target >/dev/null
 systemctl restart bunzzle.target
 sleep 3
 failed=""
-for role in signer core delivery api inbound; do
+for role in signer dns core delivery api inbound; do
   systemctl is-active --quiet "bunzzle-$role" || failed="$failed $role"
 done
 if [ -n "$failed" ]; then
   die "not running:$failed (see journalctl -u 'bunzzle-*')"
 fi
 echo "bunzzle $("$PREFIX/bunzzle" --version) is running: systemctl status 'bunzzle-*'"
-echo "optional egress filter (only delivery may connect out, on 25, 53 and 443): nft -f /etc/bunzzle/bunzzle.nft"
+echo "optional egress filter (only delivery and dns may connect out): nft -f /etc/bunzzle/bunzzle.nft"
