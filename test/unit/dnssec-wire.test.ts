@@ -87,18 +87,17 @@ describe("DNSSEC records from real answers", () => {
     expect(sig?.name).toBe("org");
   });
 
-  test("RSA and ECDSA signatures over address records", async () => {
-    const iana = (await fixture("iana-a")).answers.find((r) => r.type === "RRSIG");
-    expect(iana?.type === "RRSIG" && iana.rrsig).toMatchObject({
-      typeCovered: 1,
-      signer: "iana.org",
-    });
-    const cf = (await fixture("cloudflare-a")).answers.find((r) => r.type === "RRSIG");
-    expect(cf?.type === "RRSIG" && cf.rrsig).toMatchObject({
-      algorithm: 13,
-      signer: "cloudflare.com",
-    });
-    expect(cf?.type === "RRSIG" && cf.rrsig.signature.length).toBe(64);
+  test("RSA and ECDSA signatures over other record types", async () => {
+    for (const [file, typeCovered, algorithm, length] of [
+      ["rsa-signed-soa", RRType.SOA, 8, 128],
+      ["ecdsa-signed-a", RRType.A, 13, 64],
+    ] as const) {
+      const m = await fixture(file);
+      const sig = m.answers.find((r) => r.type === "RRSIG");
+      expect(sig?.type === "RRSIG" && sig.rrsig).toMatchObject({ typeCovered, algorithm });
+      expect(sig?.type === "RRSIG" && sig.rrsig.signer).toBe(sig?.name);
+      expect(sig?.type === "RRSIG" && sig.rrsig.signature.length).toBe(length);
+    }
   });
 
   test("NSEC denial from the root", async () => {
