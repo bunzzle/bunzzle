@@ -17,6 +17,7 @@ let served: Served;
 let key = "";
 let readOnly = "";
 let ca = "";
+let deliveredId = "";
 
 async function cli(...args: string[]) {
   const proc = Bun.spawn(["bun", MAIN, ...args], {
@@ -67,6 +68,7 @@ beforeAll(async () => {
     BUNZZLE_SUBMISSION_HOSTNAME: "mx.example.test",
     BUNZZLE_SUBMISSION_TLS_CERT_FILE: `${TLS}/mx.pem`,
     BUNZZLE_SUBMISSION_TLS_KEY_FILE: `${TLS}/mx.key`,
+    BUNZZLE_EVENT_LOG: "true",
   });
   key = await newKey("send");
   readOnly = await newKey("read");
@@ -138,6 +140,7 @@ describe("SMTP submission", () => {
       if (status !== "delivered") await Bun.sleep(100);
     }
     expect(status).toBe("delivered");
+    deliveredId = id;
     const received = mx.sessions
       .slice(before)
       .flatMap((s) => s.messages)
@@ -177,6 +180,31 @@ describe("SMTP submission", () => {
     expect(JSON.stringify(body)).toContain('"class":"requiretls-unsupported"');
     expect(JSON.stringify(body)).toContain('"suppression_candidate":false');
     expect(await say("QUIT")).toStartWith("221");
+  });
+
+  test("the event log has the email's events as JSON lines", async () => {
+    const dir = `${served.dir}/logs/events`;
+    const mine = async () => {
+      const out: Record<string, unknown>[] = [];
+      for (const name of new Bun.Glob("events-*.jsonl").scanSync({ cwd: dir })) {
+        for (const line of (await Bun.file(`${dir}/${name}`).text()).split("\n").filter(Boolean)) {
+          const e = JSON.parse(line) as Record<string, unknown>;
+          if (e["email_id"] === deliveredId) out.push(e);
+        }
+      }
+      return out;
+    };
+    let events = await mine();
+    for (let i = 0; i < 50 && !events.some((e) => e["event"] === "recipient"); i++) {
+      await Bun.sleep(100);
+      events = await mine();
+    }
+    expect(events.map((e) => e["event"])).toContain("queued");
+    expect(events.find((e) => e["event"] === "recipient")).toMatchObject({
+      source: expect.any(String),
+      data: { status: "delivered" },
+    });
+    expect((await Bun.file(dir).stat()).mode & 0o777).toBe(0o750);
   });
 
   test("a sender domain that is not verified, and a wrong key, are refused clearly", async () => {

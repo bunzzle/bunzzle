@@ -30,6 +30,7 @@ describe("loadConfig", () => {
       inboundTlsKeyFile: null,
       dane: "auto",
       requiretls: "enforce",
+      eventLog: null,
       dnsUpdate: null,
       relay: null,
       acme: null,

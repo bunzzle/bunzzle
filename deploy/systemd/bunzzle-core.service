@@ -21,6 +21,9 @@ TimeoutStopSec=15
 StateDirectory=bunzzle/data
 StateDirectoryMode=0700
 Environment=BUNZZLE_DATA_DIR=/var/lib/bunzzle/data
+LogsDirectory=bunzzle/events
+LogsDirectoryMode=0750
+Environment=BUNZZLE_EVENT_LOG_DIR=/var/log/bunzzle/events
 ReadWritePaths=/run/bunzzle
 PrivateNetwork=yes
 IPAddressDeny=any

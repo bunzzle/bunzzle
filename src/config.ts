@@ -28,6 +28,10 @@ const schema = b.object({
   BUNZZLE_KEYS_DIR: b.string().min(1).default("./keys"),
   BUNZZLE_RUN_DIR: b.string().min(1).default("./run"),
   BUNZZLE_RETENTION_DAYS: b.coerce.number().int().min(7).max(3650).default(30),
+  BUNZZLE_EVENT_LOG: bool,
+  BUNZZLE_EVENT_LOG_DIR: b.string().min(1).default("./logs/events"),
+  BUNZZLE_EVENT_LOG_MAX_MB: b.coerce.number().int().min(1).max(100_000).default(100),
+  BUNZZLE_EVENT_LOG_DAYS: b.coerce.number().int().min(1).max(3650).default(30),
   BUNZZLE_INBOUND_HOST: b.string().min(1).default("0.0.0.0"),
   BUNZZLE_INBOUND_PORT: b.coerce.number().int().min(0).max(65535).optional(),
   BUNZZLE_RETRY_SCALE: b.coerce.number().positive().max(1).default(1),
@@ -126,6 +130,7 @@ export interface Config {
   keysDir: string;
   runDir: string;
   retentionDays: number;
+  eventLog: { dir: string; maxBytes: number; keepDays: number } | null;
   inboundHost: string;
   inboundPort: number | null;
   retryScale: number;
@@ -268,6 +273,13 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     keysDir: c.BUNZZLE_KEYS_DIR.replace(/\/+$/, ""),
     runDir: c.BUNZZLE_RUN_DIR.replace(/\/+$/, ""),
     retentionDays: c.BUNZZLE_RETENTION_DAYS,
+    eventLog: c.BUNZZLE_EVENT_LOG
+      ? {
+          dir: c.BUNZZLE_EVENT_LOG_DIR,
+          maxBytes: c.BUNZZLE_EVENT_LOG_MAX_MB * 1024 * 1024,
+          keepDays: c.BUNZZLE_EVENT_LOG_DAYS,
+        }
+      : null,
     inboundHost: c.BUNZZLE_INBOUND_HOST,
     inboundPort: c.BUNZZLE_INBOUND_PORT ?? null,
     retryScale: c.BUNZZLE_RETRY_SCALE,
