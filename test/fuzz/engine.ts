@@ -95,11 +95,59 @@ export interface Finding {
   seed: number;
   iteration: number;
   input: string;
+  size: number;
   error: string;
 }
 
 export const ITERATIONS = Number(Bun.env["BUNZZLE_FUZZ_ITERATIONS"] ?? 1_000);
 export const SEED = Number(Bun.env["BUNZZLE_FUZZ_SEED"] ?? Date.now() % 0x7fff_ffff);
+
+function describe(err: unknown): string {
+  return err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+}
+
+async function failure(t: Target, input: Uint8Array): Promise<string | null> {
+  try {
+    await t.run(input, rng(SEED));
+    return null;
+  } catch (err) {
+    return t.expected?.(err) ? null : describe(err);
+  }
+}
+
+function without(input: Uint8Array, at: number, n: number): Uint8Array {
+  const out = new Uint8Array(input.length - n);
+  out.set(input.subarray(0, at));
+  out.set(input.subarray(at + n), at);
+  return out;
+}
+
+export async function shrink(
+  t: Target,
+  input: Uint8Array,
+  { runs = 2_000, ms = 10_000 } = {},
+): Promise<Uint8Array> {
+  const deadline = performance.now() + ms;
+  let best = input;
+  let left = runs;
+  let chunk = best.length >> 1;
+  while (chunk >= 1 && left > 0 && performance.now() < deadline) {
+    let removed = false;
+    for (let at = 0; at + chunk <= best.length && left > 0 && performance.now() < deadline; ) {
+      const candidate = without(best, at, chunk);
+      left--;
+      if ((await failure(t, candidate)) !== null) {
+        best = candidate;
+        removed = true;
+      } else {
+        at += chunk;
+      }
+    }
+    if (!removed) chunk >>= 1;
+    else chunk = Math.min(chunk, best.length >> 1);
+  }
+  return best;
+}
 
 export async function fuzz(t: Target): Promise<Finding[]> {
   const seeds = t.seeds.map(bytes);
@@ -117,11 +165,13 @@ export async function fuzz(t: Target): Promise<Finding[]> {
       await t.run(input, r);
     } catch (err) {
       if (!t.expected?.(err)) {
+        const small = await shrink(t, input);
         findings.push({
           seed: SEED,
           iteration: i,
-          input: input.toBase64(),
-          error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+          input: small.toBase64(),
+          size: input.length,
+          error: (await failure(t, small)) ?? describe(err),
         });
         continue;
       }
@@ -132,6 +182,7 @@ export async function fuzz(t: Target): Promise<Finding[]> {
         seed: SEED,
         iteration: i,
         input: input.toBase64(),
+        size: input.length,
         error: `slow: ${Math.round(took)} ms`,
       });
     }
@@ -141,9 +192,10 @@ export async function fuzz(t: Target): Promise<Finding[]> {
 
 export function report(findings: Finding[]): string {
   return findings
-    .map(
-      (f) =>
-        `seed ${f.seed} iteration ${f.iteration}: ${f.error}\n  input (base64): ${f.input.slice(0, 400)}`,
-    )
+    .map((f) => {
+      const n = Uint8Array.fromBase64(f.input).length;
+      const from = n < f.size ? `, shrunk from ${f.size} to ${n} bytes` : "";
+      return `seed ${f.seed} iteration ${f.iteration}: ${f.error}${from}\n  input (base64): ${f.input.slice(0, 2_000)}`;
+    })
     .join("\n");
 }
