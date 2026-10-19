@@ -25,6 +25,7 @@ import {
   webhooksCommand,
 } from "./admin.ts";
 import { UsageError } from "./args.ts";
+import { backupCommand, restoreCommand } from "./backup.ts";
 import { dkimCommand } from "./dkim.ts";
 import { sendCommand } from "./send.ts";
 
@@ -43,6 +44,8 @@ Usage:
   bunzzle doctor      check configuration, IPs, every DNS record and DKIM against live DNS
   bunzzle holds       bulk mail paused by the reputation or anomaly guard; release ID (needs \`serve\` running)
   bunzzle suppressions list|add|remove suppressed addresses (needs \`serve\` running)
+  bunzzle backup      --to DIR: copy the database and keys, safe while Bunzzle runs
+  bunzzle restore     --from DIR: put a backup back (stop \`serve\` first, needs the same master key)
   bunzzle --version   Print the version
   bunzzle --help      Show this help
 
@@ -171,6 +174,10 @@ async function main(argv: string[]) {
       return webhooksCommand(argv.slice(1), loadConfig());
     case "suppressions":
       return suppressionsCommand(argv.slice(1), loadConfig());
+    case "backup":
+      return backupCommand(argv.slice(1), loadConfig());
+    case "restore":
+      return restoreCommand(argv.slice(1), loadConfig());
     case "master-key":
       console.log(generateMasterKey());
       return;

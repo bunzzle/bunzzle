@@ -110,3 +110,23 @@ Settings go in `deploy/bunzzle.env`. `delivery` uses the host network, so mail l
 ## Upgrade
 
 Run `install.sh` again (or pull the new image). The database migrates itself on start.
+
+## Backup and restore
+
+`bunzzle backup --to DIR` writes a consistent copy of the database and the key files into an empty directory, with a `manifest.json` that lists every file and its SHA-256. It is safe to run while Bunzzle is running.
+
+```sh
+sudo bunzzle backup --to /var/backups/bunzzle/2026-10-19
+```
+
+The backup does not contain the master key, and everything secret in it is encrypted with that key. Keep the master key somewhere other than the backups: a backup without its master key cannot be read, and a master key without the backup is useless to anyone else.
+
+To restore, stop Bunzzle, set the same master key and run:
+
+```sh
+sudo systemctl stop bunzzle
+sudo bunzzle restore --from /var/backups/bunzzle/2026-10-19
+sudo systemctl start bunzzle
+```
+
+`restore` checks every file against the manifest and refuses a different master key. The files it replaces are moved into `before-restore-<time>` in the data directory, not deleted.
