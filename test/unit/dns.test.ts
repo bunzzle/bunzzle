@@ -91,7 +91,7 @@ describe("resolver", () => {
 
   test("falls back to TCP when the UDP answer is truncated", async () => {
     const ans = await resolver.query("big.test", "TXT");
-    expect(ans.records).toEqual([
+    expect(ans.records).toMatchObject([
       { name: "big.test", ttl: 300, type: "TXT", strings: ["v=spf1 -all"] },
     ]);
     expect(dns.queries.filter((q) => q.name === "big.test").map((q) => q.tcp)).toEqual([

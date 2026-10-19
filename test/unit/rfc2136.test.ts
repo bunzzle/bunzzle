@@ -162,7 +162,16 @@ const resolver: Resolver = {
       authenticated: false,
       ttl: 60,
       records: apex
-        ? [{ name, ttl: 60, type: "SOA", soa: { mname: "ns.acme.test", minimum: 60 } }]
+        ? [
+            {
+              name,
+              ttl: 60,
+              rrtype: 6,
+              rdata: new Uint8Array(),
+              type: "SOA",
+              soa: { mname: "ns.acme.test", minimum: 60 },
+            },
+          ]
         : [],
     };
   },

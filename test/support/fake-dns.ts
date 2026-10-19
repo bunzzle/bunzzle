@@ -144,6 +144,16 @@ function answer(zone: Zone, q: Uint8Array, tcp: boolean): Uint8Array | null {
 }
 
 export async function startFakeDns(zone: Zone, port = 0): Promise<FakeDns> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await listenFakeDns(zone, port);
+    } catch (err) {
+      if (port !== 0 || attempt >= 10) throw err;
+    }
+  }
+}
+
+async function listenFakeDns(zone: Zone, port: number): Promise<FakeDns> {
   const queries: FakeDns["queries"] = [];
   const udp = await Bun.udpSocket({
     hostname: "127.0.0.1",
@@ -158,9 +168,27 @@ export async function startFakeDns(zone: Zone, port = 0): Promise<FakeDns> {
       },
     },
   });
-  const tcp = Bun.listen({
-    hostname: "127.0.0.1",
+  let tcp: { stop(closeActive?: boolean): void };
+  try {
+    tcp = listenTcp(zone, udp.port, queries);
+  } catch (err) {
+    udp.close();
+    throw err;
+  }
+  return {
     port: udp.port,
+    queries,
+    stop() {
+      udp.close();
+      tcp.stop(true);
+    },
+  };
+}
+
+function listenTcp(zone: Zone, port: number, queries: FakeDns["queries"]) {
+  return Bun.listen({
+    hostname: "127.0.0.1",
+    port,
     socket: {
       data(sock, data) {
         const msg = new Uint8Array(data).subarray(2);
@@ -172,12 +200,4 @@ export async function startFakeDns(zone: Zone, port = 0): Promise<FakeDns> {
       },
     },
   });
-  return {
-    port: udp.port,
-    queries,
-    stop() {
-      udp.close();
-      tcp.stop(true);
-    },
-  };
 }
