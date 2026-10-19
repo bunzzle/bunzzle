@@ -8,6 +8,8 @@ const tag = z
   .string()
   .regex(/^[A-Za-z0-9_-]{1,256}$/, "tags may only use letters, digits, _ and -");
 
+export const rescheduleSchema = z.object({ scheduled_at: z.string().max(64) });
+
 export const sendSchema = z.object({
   from: z.string().min(3).max(1000),
   to: addresses,

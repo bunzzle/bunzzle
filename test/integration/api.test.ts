@@ -233,6 +233,76 @@ describe("POST /emails and GET /emails/:id", () => {
   });
 });
 
+describe("scheduled emails", () => {
+  let key = "";
+  beforeAll(async () => {
+    key = await newKey("--scope", "full", "--rate-limit", "1000");
+  });
+  const call = (path: string, init: RequestInit = {}) => api(path, { token: key, ...init });
+  const later = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
+  const status = async (id: string) =>
+    ((await (await call(`/emails/${id}`)).json()) as { last_event: string; scheduled_at: string })
+      .last_event;
+
+  test("a scheduled email can be moved, then canceled, and stays canceled", async () => {
+    const { id } = (await (
+      await send(email({ scheduled_at: later(2) }), { token: key })
+    ).json()) as {
+      id: string;
+    };
+    expect(await status(id)).toBe("scheduled");
+    const moved = await call(`/emails/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ scheduled_at: later(5) }),
+    });
+    expect(moved.status).toBe(200);
+    const view = (await (await call(`/emails/${id}`)).json()) as { scheduled_at: string };
+    expect(Date.parse(view.scheduled_at)).toBeGreaterThan(Date.now() + 4 * 3_600_000);
+    const tooFar = await call(`/emails/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ scheduled_at: later(100) }),
+    });
+    expect(tooFar.status).toBe(422);
+    const canceled = await call(`/emails/${id}/cancel`, { method: "POST" });
+    expect(canceled.status).toBe(200);
+    expect(await status(id)).toBe("canceled");
+    const again = await call(`/emails/${id}/cancel`, { method: "POST" });
+    expect(again.status).toBe(409);
+    const body = (await (await call(`/emails/${id}`)).json()) as { events: { type: string }[] };
+    expect(body.events.map((e) => e.type)).toEqual(
+      expect.arrayContaining(["rescheduled", "canceled"]),
+    );
+  });
+
+  test("moving a scheduled email to now sends it", async () => {
+    const { id } = (await (
+      await send(email({ scheduled_at: later(1) }), { token: key })
+    ).json()) as {
+      id: string;
+    };
+    await call(`/emails/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ scheduled_at: new Date().toISOString() }),
+    });
+    for (let i = 0; i < 100 && (await status(id)) !== "delivered"; i++) await Bun.sleep(50);
+    expect(await status(id)).toBe("delivered");
+  });
+
+  test("an email that was not scheduled cannot be canceled or moved", async () => {
+    const { id } = (await (await send(email(), { token: key })).json()) as { id: string };
+    expect((await call(`/emails/${id}/cancel`, { method: "POST" })).status).toBe(409);
+    const moved = await call(`/emails/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ scheduled_at: later(1) }),
+    });
+    expect(moved.status).toBe(409);
+    expect(
+      (await call("/emails/0190aaaa-0000-7000-8000-000000000000/cancel", { method: "POST" }))
+        .status,
+    ).toBe(404);
+  });
+});
+
 describe("scopes, domain limits, rate limits, revocation", () => {
   test("a send-only key cannot read, a read-only key cannot send", async () => {
     const sendOnly = await newKey("--scope", "send");

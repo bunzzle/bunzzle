@@ -9,6 +9,7 @@ export const EVENT_TYPES = [
   "email.unsubscribed",
   "email.suppressed",
   "email.failed",
+  "email.canceled",
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];
