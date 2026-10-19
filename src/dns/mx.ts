@@ -22,6 +22,7 @@ export type Destination =
       mxHosts: string[];
       implicit: boolean;
       authenticated: boolean;
+      canonical?: string;
       targets: Target[];
       skipped: Skipped[];
     }
@@ -93,6 +94,7 @@ export async function lookupDestination(
     };
   }
 
+  const canonical = mx.records.find((r) => r.type === "MX")?.name ?? domain;
   let hosts: MxHost[] = [];
   let implicit = false;
   for (const r of mx.records) {
@@ -159,6 +161,7 @@ export async function lookupDestination(
       mxHosts: hosts.map((h) => h.host),
       implicit,
       authenticated: mx.authenticated,
+      ...(canonical !== domain ? { canonical } : {}),
       targets,
       skipped,
     };

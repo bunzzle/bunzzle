@@ -54,6 +54,7 @@ export class SessionPool {
       input.ehloName,
       input.policy.rule,
       input.policy.required ? "tls" : "",
+      input.policy.rule === "dane" ? (input.names ?? []).join(",") : "",
     ].join("|");
   }
 

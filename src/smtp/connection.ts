@@ -264,13 +264,22 @@ export class SmtpConnection {
     });
   }
 
-  peerCertificate(): Uint8Array | null {
+  peerChain(): Uint8Array[] {
+    type Peer = { raw?: Uint8Array; issuerCertificate?: Peer };
+    const out: Uint8Array[] = [];
     try {
-      const raw = (this.socket.getPeerCertificate() as { raw?: Uint8Array } | null)?.raw;
-      return raw ? new Uint8Array(raw) : null;
+      const getPeer = this.socket.getPeerCertificate as unknown as (abbreviated: boolean) => Peer;
+      let cert: Peer | undefined = getPeer.call(this.socket, false);
+      const seen = new Set<Peer>();
+      while (cert?.raw && !seen.has(cert) && out.length < 16) {
+        seen.add(cert);
+        out.push(new Uint8Array(cert.raw));
+        cert = cert.issuerCertificate;
+      }
     } catch {
-      return null;
+      return out;
     }
+    return out;
   }
 
   close() {

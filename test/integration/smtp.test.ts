@@ -396,6 +396,17 @@ describe("connection reuse", () => {
     expect(commandsOf().at(-1)).toBe("QUIT");
   });
 
+  test("DANE connections are shared only between the same accepted names", () => {
+    const pool = new SessionPool();
+    const dane = { rule: "dane", required: true } as const;
+    const a = SessionPool.key(input(0, pool, { policy: dane, names: ["mx.a.test", "a.test"] }));
+    const b = SessionPool.key(input(0, pool, { policy: dane, names: ["mx.a.test", "b.test"] }));
+    expect(a).not.toBe(b);
+    const plainA = SessionPool.key(input(0, pool, { names: ["mx.a.test", "a.test"] }));
+    const plainB = SessionPool.key(input(0, pool, { names: ["mx.a.test", "b.test"] }));
+    expect(plainA).toBe(plainB);
+  });
+
   test("the per-connection limit opens a new connection", async () => {
     mx = startFakeMx({});
     const pool = new SessionPool();

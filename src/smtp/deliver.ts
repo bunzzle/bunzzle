@@ -240,6 +240,11 @@ export async function deliverTo(
       ...(opts.localAddress ? { localAddress: opts.localAddress } : {}),
       ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
       ...(opts.tlsCa ? { tlsCa: opts.tlsCa } : {}),
+      ...(targetPolicy.rule === "dane"
+        ? {
+            names: [...new Set([target.host, input.domain, destination.canonical ?? input.domain])],
+          }
+        : {}),
       ...(opts.pool
         ? {
             pool: opts.pool,

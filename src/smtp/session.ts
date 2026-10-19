@@ -1,6 +1,6 @@
 import type { TlsaData } from "../dns/wire.ts";
 import { type Reply, replyText, SmtpConnection, SmtpError } from "./connection.ts";
-import { trustAnchors, usable, verifyDane } from "./dane.ts";
+import { verifyDane } from "./dane.ts";
 import { SessionPool } from "./pool.ts";
 
 export type TlsStatus = "none" | "unverified" | "verified" | "dane";
@@ -82,6 +82,7 @@ export interface SessionInput {
   smtpUtf8: boolean;
   timeouts?: Partial<Timeouts>;
   tlsCa?: string;
+  names?: string[];
   implicitTls?: boolean;
   auth?: { username: string; password: string };
   pool?: SessionPool;
@@ -252,18 +253,13 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
         const r = await conn.readReply(t.starttls);
         if (r.code === 220) {
           const tlsa = input.policy.tlsa;
-          const anchors = tlsa ? trustAnchors(usable(tlsa)) : null;
-          const info = await conn.startTls(input.host, t.starttls, anchors ?? input.tlsCa);
+          const info = await conn.startTls(input.host, t.starttls, input.tlsCa);
           tls.version = info.version;
           tls.cipher = info.cipher;
           tls.error = info.error;
           tls.status = info.authorized ? "verified" : "unverified";
           if (tlsa) {
-            const verdict = verifyDane(
-              tlsa,
-              conn.peerCertificate(),
-              anchors !== null && info.authorized,
-            );
+            const verdict = await verifyDane(tlsa, conn.peerChain(), input.names ?? [input.host]);
             if (!verdict.ok) {
               throw new Abort(
                 phase,
