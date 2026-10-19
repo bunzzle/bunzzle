@@ -303,8 +303,10 @@ async function daneFor(resolver: Resolver, host: string): Promise<DaneLookup> {
   } catch (err) {
     return { kind: "fail", reason: `TLSA lookup for ${host} failed: ${(err as Error).message}` };
   }
-  if (answer.rcode === 2)
-    return { kind: "fail", reason: `TLSA lookup for ${host} failed (SERVFAIL)` };
+  if (answer.rcode === 2) {
+    const why = answer.bogus ? `DNSSEC: ${answer.bogus}` : "SERVFAIL";
+    return { kind: "fail", reason: `TLSA lookup for ${host} failed (${why})` };
+  }
   if (!answer.authenticated) return { kind: "none" };
   const records = answer.records.flatMap((r) => (r.type === "TLSA" ? [r.tlsa] : []));
   return records.length ? { kind: "tlsa", records } : { kind: "none" };

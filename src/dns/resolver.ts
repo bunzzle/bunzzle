@@ -19,10 +19,12 @@ export interface DnsAnswer {
   authenticated: boolean;
   records: ResourceRecord[];
   ttl: number;
+  bogus?: string;
 }
 
 export interface Resolver {
   query(name: string, type: QueryType): Promise<DnsAnswer>;
+  message?(name: string, type: number): Promise<DnsMessage>;
 }
 
 export class DnsError extends Error {
@@ -204,6 +206,12 @@ function tcpExchange(
   });
 }
 
+export function answerFrom(msg: DnsMessage, name: string, type: QueryType): DnsAnswer {
+  const records = chainRecords(msg, name, type);
+  const ttl = records.length > 0 ? Math.min(...records.map((r) => r.ttl)) : negativeTtl(msg);
+  return { name, type, rcode: msg.rcode, authenticated: msg.authenticated, records, ttl };
+}
+
 function chainRecords(msg: DnsMessage, name: string, type: QueryType): ResourceRecord[] {
   const names = new Set([name]);
   for (let changed = true; changed; ) {
@@ -230,40 +238,35 @@ export function createResolver(opts: ResolverOptions): Resolver {
   const timeoutMs = opts.timeoutMs ?? 2000;
   const attempts = opts.attempts ?? 2;
 
+  const exchange = async (name: string, code: number, dnssec: boolean): Promise<DnsMessage> => {
+    let lastError: DnsError = new DnsError("timeout", "no DNS answer");
+    let lastFailure: DnsMessage | null = null;
+    for (let a = 0; a < attempts; a++) {
+      for (const server of opts.servers) {
+        const id = randomId();
+        const packet = encodeQuery(id, name, code, dnssec);
+        try {
+          let msg = await udpExchange(server, packet, id, name, code, timeoutMs);
+          if (msg.truncated) msg = await tcpExchange(server, packet, id, name, code, timeoutMs);
+          if (msg.rcode !== Rcode.SERVFAIL && msg.rcode !== Rcode.REFUSED) return msg;
+          lastFailure = msg;
+        } catch (err) {
+          if (!(err instanceof DnsError)) throw err;
+          lastError = err;
+        }
+      }
+    }
+    if (lastFailure) return lastFailure;
+    throw lastError;
+  };
+
   return {
     async query(rawName, type) {
       const name = normalizeName(rawName);
-      const code = RRType[type as RRTypeName];
-      let lastError: DnsError = new DnsError("timeout", "no DNS answer");
-      let lastFailure: DnsAnswer | null = null;
-      for (let a = 0; a < attempts; a++) {
-        for (const server of opts.servers) {
-          const id = randomId();
-          const packet = encodeQuery(id, name, code);
-          try {
-            let msg = await udpExchange(server, packet, id, name, code, timeoutMs);
-            if (msg.truncated) msg = await tcpExchange(server, packet, id, name, code, timeoutMs);
-            const records = chainRecords(msg, name, type);
-            const ttl =
-              records.length > 0 ? Math.min(...records.map((r) => r.ttl)) : negativeTtl(msg);
-            const answer = {
-              name,
-              type,
-              rcode: msg.rcode,
-              authenticated: msg.authenticated,
-              records,
-              ttl,
-            };
-            if (msg.rcode !== Rcode.SERVFAIL && msg.rcode !== Rcode.REFUSED) return answer;
-            lastFailure = answer;
-          } catch (err) {
-            if (!(err instanceof DnsError)) throw err;
-            lastError = err;
-          }
-        }
-      }
-      if (lastFailure) return lastFailure;
-      throw lastError;
+      return answerFrom(await exchange(name, RRType[type as RRTypeName], false), name, type);
+    },
+    message(name, type) {
+      return exchange(name === "" ? "" : normalizeName(name), type, true);
     },
   };
 }
