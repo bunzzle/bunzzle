@@ -12,7 +12,7 @@ test("a role started by a service manager reads the master key from a file", asy
   await Bun.write(`${dir}/master.key`, `${generateMasterKey()}\n`);
   const proc = Bun.spawn([process.execPath, "src/cli/main.ts", "role", "signer"], {
     env: {
-      PATH: process.env["PATH"] ?? "",
+      PATH: Bun.env["PATH"] ?? "",
       BUNZZLE_LOG_LEVEL: "error",
       BUNZZLE_RUN_DIR: `${dir}/run`,
       BUNZZLE_KEYS_DIR: `${dir}/keys`,
@@ -44,7 +44,7 @@ test("without a key on standard input or in a file the signer refuses to start",
   await Bun.$`mkdir -p ${dir}/run2 ${dir}/keys2`.quiet();
   const proc = Bun.spawn([process.execPath, "src/cli/main.ts", "role", "signer"], {
     env: {
-      PATH: process.env["PATH"] ?? "",
+      PATH: Bun.env["PATH"] ?? "",
       BUNZZLE_RUN_DIR: `${dir}/run2`,
       BUNZZLE_KEYS_DIR: `${dir}/keys2`,
     },

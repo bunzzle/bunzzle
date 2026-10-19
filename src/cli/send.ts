@@ -156,7 +156,7 @@ export async function sendCommand(argv: string[], config: Config): Promise<numbe
   }
 
   if (args.flags.has("dry-run")) {
-    process.stdout.write(raw);
+    await Bun.write(Bun.stdout, raw);
     return 0;
   }
 

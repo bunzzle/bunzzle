@@ -26,7 +26,7 @@ function roleCommand(role: Role): string[] {
 export async function runSupervisor(
   config: Config,
   log: Logger,
-  env: Record<string, string | undefined> = process.env,
+  env: Record<string, string | undefined> = Bun.env,
 ) {
   const masterText = await readMasterKeyText(config);
   if (!masterText) {

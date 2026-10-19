@@ -35,6 +35,6 @@ export function createLogger(
 }
 
 function defaultWrite(line: string, level: LogLevel) {
-  if (level === "error") process.stderr.write(`${line}\n`);
-  else process.stdout.write(`${line}\n`);
+  if (level === "error") console.error(line);
+  else console.log(line);
 }

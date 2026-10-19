@@ -15,7 +15,7 @@ let keys: KeyFile;
 async function cli(args: string[], env: Record<string, string> = {}) {
   const proc = Bun.spawn(["bun", MAIN, ...args], {
     env: {
-      PATH: process.env["PATH"] ?? "",
+      PATH: Bun.env["PATH"] ?? "",
       BUNZZLE_DNS_SERVERS: `127.0.0.1:${dns.port}`,
       BUNZZLE_SMTP_PORT: String(mx.port),
       BUNZZLE_ALLOW_PRIVATE_DESTINATIONS: "true",
