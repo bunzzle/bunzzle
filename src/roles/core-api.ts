@@ -15,7 +15,14 @@ import { countByState } from "../core/jobs.ts";
 import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
 import { type EpochPublicKey, sealBody } from "../crypto/envelope.ts";
-import { emailExists, enqueueEmail, recipientsOf } from "../delivery/queue.ts";
+import {
+  cancelEmail,
+  emailExists,
+  enqueueEmail,
+  recipientsOf,
+  rescheduleEmail,
+  scheduledEmail,
+} from "../delivery/queue.ts";
 import {
   type Domain,
   type DomainRecord,
@@ -145,6 +152,17 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
     }
     touch(key.id);
     return key;
+  };
+
+  const changeable = (key: ApiKey, id: string) => {
+    const email = MESSAGE_ID.test(id) ? scheduledEmail(db, id) : null;
+    if (!email) throw new RpcError("not-found", "email not found");
+    if (key.domains && !key.domains.includes(domainOf(email.from))) {
+      throw new RpcError("forbidden", "this API key cannot change this email");
+    }
+    if (email.scheduledAt === null) {
+      throw new RpcError("started", "Only a scheduled email can be canceled or changed.");
+    }
   };
 
   const domainName = (raw: string): string => {
@@ -350,6 +368,41 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
       if (!view) throw new RpcError("not-found", "email not found");
       return view;
     }),
+
+    cancelEmail: method(z.object({ tokenHash, id: z.string() }), async (p) => {
+      const key = caller(p.tokenHash, "send");
+      changeable(key, p.id);
+      const r = await writer.run((d) => cancelEmail(d, p.id, now()));
+      if (r === "started") {
+        throw new RpcError(
+          "started",
+          "This email has started sending and can no longer be canceled.",
+        );
+      }
+      return { id: p.id };
+    }),
+
+    rescheduleEmail: method(
+      z.object({ tokenHash, id: z.string(), scheduledAt: z.number().int().positive() }),
+      async (p) => {
+        const key = caller(p.tokenHash, "send");
+        changeable(key, p.id);
+        const t = now();
+        if (p.scheduledAt > t + MAX_SCHEDULE_MS) {
+          throw new RpcError("invalid", "scheduled_at can be at most 72 hours ahead");
+        }
+        const r = await writer.run((d) => rescheduleEmail(d, p.id, p.scheduledAt, t));
+        if (r === "started") {
+          throw new RpcError(
+            "started",
+            "This email has started sending and can no longer be changed.",
+          );
+        }
+        if (r === "expires")
+          throw new RpcError("invalid", "scheduled_at is after the email expires");
+        return { id: p.id };
+      },
+    ),
 
     status: method(z.object({ id: z.string().regex(MESSAGE_ID) }), ({ id }) =>
       recipientsOf(db, id).map((r) => ({

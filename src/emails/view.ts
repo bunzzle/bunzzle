@@ -11,7 +11,8 @@ export type PublicStatus =
   | "bounced"
   | "failed"
   | "expired"
-  | "suppressed";
+  | "suppressed"
+  | "canceled";
 
 export interface EmailMeta {
   from: string;
@@ -42,14 +43,22 @@ function recipientStatus(status: string, cls: string | null, scheduled: boolean)
       return "bounced";
     default:
       if (cls === "suppressed") return "suppressed";
+      if (cls === "canceled") return "canceled";
       return cls === "expired" ? "expired" : "failed";
   }
 }
 
 function emailStatus(all: PublicStatus[]): PublicStatus {
-  const final = new Set<PublicStatus>(["delivered", "bounced", "failed", "expired", "suppressed"]);
+  const final = new Set<PublicStatus>([
+    "delivered",
+    "bounced",
+    "failed",
+    "expired",
+    "suppressed",
+    "canceled",
+  ]);
   if (all.every((s) => final.has(s))) {
-    for (const s of ["bounced", "failed", "expired", "suppressed"] as const) {
+    for (const s of ["canceled", "bounced", "failed", "expired", "suppressed"] as const) {
       if (all.includes(s)) return s;
     }
     return "delivered";

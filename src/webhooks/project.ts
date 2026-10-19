@@ -28,6 +28,8 @@ function typeOf(kind: string, data: Record<string, unknown>): EventType | null {
       return "email.unsubscribed";
     case "suppressed":
       return "email.suppressed";
+    case "canceled":
+      return "email.canceled";
     case "dead":
       return data["code"] === "expired" || data["code"] === "retries_exhausted"
         ? "email.failed"

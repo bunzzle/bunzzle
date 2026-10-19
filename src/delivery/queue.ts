@@ -166,3 +166,75 @@ export function pendingRecipients(db: Database, job: string): string[] {
     .all(job)
     .map((r) => r.address);
 }
+
+export interface ScheduledEmail {
+  from: string;
+  scheduledAt: number | null;
+}
+
+export function scheduledEmail(db: Database, id: string): ScheduledEmail | null {
+  const row = db
+    .query<{ payload: string; metadata: string }, [string]>(
+      "SELECT payload, metadata FROM messages WHERE id = ? AND type = 'email'",
+    )
+    .get(id);
+  if (!row) return null;
+  const payload = JSON.parse(row.payload) as Partial<EmailPayload>;
+  const meta = JSON.parse(row.metadata) as { scheduledAt?: number | null };
+  return { from: payload.from ?? "", scheduledAt: meta.scheduledAt ?? null };
+}
+
+function notStarted(db: Database, id: string): boolean {
+  const jobs = db
+    .query<{ state: string; attempt: number }, [string]>(
+      "SELECT state, attempt FROM jobs WHERE message_id = ?",
+    )
+    .all(id);
+  return (
+    jobs.some((j) => j.state === "ready") &&
+    jobs.every((j) => j.attempt === 0 && j.state !== "leased" && j.state !== "unknown")
+  );
+}
+
+export function cancelEmail(db: Database, id: string, now: number): "ok" | "started" {
+  if (!notStarted(db, id)) return "started";
+  db.query<unknown, [number, string]>(
+    "UPDATE jobs SET state = 'dead', last_error = 'canceled', updated_at = ? WHERE message_id = ? AND state = 'ready'",
+  ).run(now, id);
+  db.query<unknown, [number, string]>(
+    `UPDATE recipients SET status = 'failed', class = 'canceled', reply = 'canceled', updated_at = ?
+     WHERE status = 'queued' AND job_id IN (SELECT id FROM jobs WHERE message_id = ?)`,
+  ).run(now, id);
+  db.query<unknown, [string]>("DELETE FROM bodies WHERE message_id = ?").run(id);
+  appendEvent(db, { messageId: id, kind: "canceled", source: "api", at: now });
+  return "ok";
+}
+
+export function rescheduleEmail(
+  db: Database,
+  id: string,
+  at: number,
+  now: number,
+): "ok" | "started" | "expires" {
+  if (!notStarted(db, id)) return "started";
+  const exp = db
+    .query<{ t: number | null }, [string]>(
+      "SELECT min(expires_at) AS t FROM jobs WHERE message_id = ? AND state = 'ready'",
+    )
+    .get(id)?.t;
+  if (exp !== null && exp !== undefined && at >= exp) return "expires";
+  db.query<unknown, [number, number, string]>(
+    "UPDATE jobs SET run_after = ?, updated_at = ? WHERE message_id = ? AND state = 'ready'",
+  ).run(at, now, id);
+  db.query<unknown, [number, string]>(
+    "UPDATE messages SET metadata = json_set(metadata, '$.scheduledAt', ?) WHERE id = ?",
+  ).run(at, id);
+  appendEvent(db, {
+    messageId: id,
+    kind: "rescheduled",
+    source: "api",
+    at: now,
+    data: { scheduled_at: new Date(at).toISOString() },
+  });
+  return "ok";
+}

@@ -4,7 +4,7 @@ import type { Logger } from "../core/log.ts";
 import type { RpcClient } from "../ipc/rpc.ts";
 import { VERSION } from "../version.ts";
 import { ApiError, errorResponse, fromRpc } from "./errors.ts";
-import { prepareEmail, sendSchema } from "./send.ts";
+import { prepareEmail, rescheduleSchema, sendSchema } from "./send.ts";
 
 const MAX_BODY = 50 * 1024 * 1024;
 
@@ -231,6 +231,32 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           return Response.json(
             await rpc("getEmail", { tokenHash: caller.hash, id: req.params["id"] }),
           );
+        }),
+        PATCH: handle(async (req) => {
+          const caller = await authenticate(req);
+          let body: unknown;
+          try {
+            body = await req.json();
+          } catch {
+            throw new ApiError(422, "validation_error", "The request body must be valid JSON.");
+          }
+          const parsed = rescheduleSchema.safeParse(body);
+          if (!parsed.success) throw invalid(parsed.error);
+          const scheduledAt = Date.parse(parsed.data.scheduled_at);
+          if (Number.isNaN(scheduledAt)) {
+            throw new ApiError(422, "validation_error", "`scheduled_at` must be an ISO 8601 date");
+          }
+          const id = req.params["id"];
+          await rpc("rescheduleEmail", { tokenHash: caller.hash, id, scheduledAt });
+          return Response.json({ object: "email", id });
+        }),
+      },
+      "/emails/:id/cancel": {
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          const id = req.params["id"];
+          await rpc("cancelEmail", { tokenHash: caller.hash, id });
+          return Response.json({ object: "email", id });
         }),
       },
       "/domains": {
