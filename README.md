@@ -61,6 +61,19 @@ curl http://127.0.0.1:3000/emails/<id> -H "Authorization: Bearer bz_…"
 
 API keys are shown once and stored only as a hash. They have a scope (`send`, `read`, `full`), can be limited to some domains (`--domain`) and have a per-second rate limit.
 
+### SMTP
+
+Apps that can only send through SMTP can use Bunzzle as their mail server. Set `BUNZZLE_SUBMISSION_PORT=587` (and `BUNZZLE_SUBMISSION_TLS_PORT=465` if the app wants TLS from the start) with a certificate, then give the app these settings:
+
+```
+host      mail.your.domain
+port      587 (STARTTLS) or 465 (TLS)
+username  anything
+password  an API key with the send scope (bz_…)
+```
+
+Nothing is accepted before TLS: `AUTH` and `MAIL` are refused on a plain connection. Each message goes through the same checks as `POST /emails`: the From domain must be verified and allowed for the key, `Bcc:` is removed, `Message-ID` and `Date` are added when missing, and the reply carries the email id (`250 2.0.0 Ok: queued as …`). 8-bit content must be UTF-8. Ten failed logins from one address lock it out for 15 minutes.
+
 ### Polite sending
 
 Bunzzle keeps a speed per destination (per provider for Gmail, Microsoft, Yahoo and others), starting from conservative limits. When a receiver says "too many connections", the speed is halved and held; when it says your IP is blocked, sending there pauses, then resumes with one probe email and climbs back slowly. Connections are reused. Emails sent with `"lane": "bulk"` never delay transactional ones: a password reset goes ahead of any queued newsletter, while bulk still gets a small guaranteed share. `GET /paths` (or `bunzzle paths`) shows each destination's current speed, its limits and every change with the reason. During an incident, `bunzzle queue` (or `GET /queue`) shows what is waiting per recipient domain and per route. `bunzzle queue suspend --domain NAME` or `--provider ID` holds delivery there with a reason and an optional end time; emails stay queued and still expire on time, and `bunzzle queue resume` releases them at once. `bunzzle queue fail` and `bunzzle queue cancel` remove queued emails by recipient domain, sender domain or age, with `--dry-run` to see the count first. `GET /metrics` (API key with the read scope) gives the same state in the OpenMetrics text format for a monitoring system: jobs by state, recipients by status and domain, each path's speed, pause and backlog, webhook backlog, suppressions and holds.

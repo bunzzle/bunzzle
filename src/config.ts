@@ -37,6 +37,12 @@ const schema = b.object({
   BUNZZLE_INBOUND_HOSTNAME: optional,
   BUNZZLE_INBOUND_TLS_CERT_FILE: optional,
   BUNZZLE_INBOUND_TLS_KEY_FILE: optional,
+  BUNZZLE_SUBMISSION_HOST: b.string().min(1).default("0.0.0.0"),
+  BUNZZLE_SUBMISSION_PORT: b.coerce.number().int().min(0).max(65535).optional(),
+  BUNZZLE_SUBMISSION_TLS_PORT: b.coerce.number().int().min(0).max(65535).optional(),
+  BUNZZLE_SUBMISSION_HOSTNAME: optional,
+  BUNZZLE_SUBMISSION_TLS_CERT_FILE: optional,
+  BUNZZLE_SUBMISSION_TLS_KEY_FILE: optional,
   BUNZZLE_SOURCE_IPS: optional,
   BUNZZLE_ESTABLISHED_IPS: optional,
   BUNZZLE_GUARD_MIN_VOLUME: b.coerce.number().int().min(1).default(300),
@@ -109,6 +115,14 @@ export interface Config {
   inboundHostname: string | null;
   inboundTlsCertFile: string | null;
   inboundTlsKeyFile: string | null;
+  submission: {
+    host: string;
+    port: number | null;
+    tlsPort: number | null;
+    hostname: string | null;
+    certFile: string;
+    keyFile: string;
+  } | null;
   sourceIps: SourceIp[];
   guardMinVolume: number;
   anomalyFloor: number;
@@ -130,6 +144,15 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
   if (c.BUNZZLE_CLOUDFLARE_API_TOKEN && c.BUNZZLE_CLOUDFLARE_API_TOKEN_FILE) {
     throw new ConfigError(
       "invalid configuration:\n  set BUNZZLE_CLOUDFLARE_API_TOKEN or BUNZZLE_CLOUDFLARE_API_TOKEN_FILE, not both",
+    );
+  }
+  const wantsSubmission =
+    c.BUNZZLE_SUBMISSION_PORT !== undefined || c.BUNZZLE_SUBMISSION_TLS_PORT !== undefined;
+  const certFile = c.BUNZZLE_SUBMISSION_TLS_CERT_FILE;
+  const keyFile = c.BUNZZLE_SUBMISSION_TLS_KEY_FILE;
+  if (wantsSubmission && (!certFile || !keyFile)) {
+    throw new ConfigError(
+      "invalid configuration:\n  SMTP submission needs a certificate: set BUNZZLE_SUBMISSION_TLS_CERT_FILE and BUNZZLE_SUBMISSION_TLS_KEY_FILE",
     );
   }
   return {
@@ -160,6 +183,18 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     inboundHostname: c.BUNZZLE_INBOUND_HOSTNAME ?? c.BUNZZLE_EHLO_NAME,
     inboundTlsCertFile: c.BUNZZLE_INBOUND_TLS_CERT_FILE,
     inboundTlsKeyFile: c.BUNZZLE_INBOUND_TLS_KEY_FILE,
+    submission:
+      wantsSubmission && certFile && keyFile
+        ? {
+            host: c.BUNZZLE_SUBMISSION_HOST,
+            port: c.BUNZZLE_SUBMISSION_PORT ?? null,
+            tlsPort: c.BUNZZLE_SUBMISSION_TLS_PORT ?? null,
+            hostname:
+              c.BUNZZLE_SUBMISSION_HOSTNAME ?? c.BUNZZLE_INBOUND_HOSTNAME ?? c.BUNZZLE_EHLO_NAME,
+            certFile,
+            keyFile,
+          }
+        : null,
     sourceIps: sourceIps(c.BUNZZLE_SOURCE_IPS, c.BUNZZLE_SOURCE_IP, c.BUNZZLE_ESTABLISHED_IPS),
     guardMinVolume: c.BUNZZLE_GUARD_MIN_VOLUME,
     anomalyFloor: c.BUNZZLE_ANOMALY_FLOOR,

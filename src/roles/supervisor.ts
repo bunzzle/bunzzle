@@ -112,12 +112,16 @@ export async function runSupervisor(
 
   let url: unknown = null;
   let inboundPort: unknown = null;
+  let submissionPorts: unknown = null;
   for (const role of ROLES) {
     const child = spawn(role);
     children.set(role, child);
     try {
       const info = await child.ready;
-      if (role === "api") url = info["url"];
+      if (role === "api") {
+        url = info["url"];
+        submissionPorts = info["submissionPorts"] ?? null;
+      }
       if (role === "inbound") inboundPort = info["port"] ?? null;
     } catch (err) {
       log.error("could not start", { role, error: (err as Error).message });
@@ -128,6 +132,7 @@ export async function runSupervisor(
   log.info("listening", {
     url,
     inboundPort,
+    ...(submissionPorts ? { submissionPorts } : {}),
     roles: Object.fromEntries([...children].map(([r, c]) => [r, c.proc.pid])),
   });
 

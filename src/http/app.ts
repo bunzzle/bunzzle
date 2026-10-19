@@ -14,14 +14,14 @@ interface Caller {
   domains: string[] | null;
 }
 
-const authResult = b.object({
+export const authResult = b.object({
   id: b.string(),
   scope: b.enum(["send", "read", "full"]),
   domains: b.array(b.string()).nullable(),
   rateLimit: b.number(),
 });
 
-class Buckets {
+export class Buckets {
   readonly #state = new Map<string, { tokens: number; at: number }>();
 
   take(id: string, perSecond: number, now: number): { ok: boolean; remaining: number } {

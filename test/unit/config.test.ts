@@ -28,6 +28,7 @@ describe("loadConfig", () => {
       inboundHostname: null,
       inboundTlsCertFile: null,
       inboundTlsKeyFile: null,
+      submission: null,
       sourceIps: [],
       guardMinVolume: 300,
       anomalyFloor: 500,
