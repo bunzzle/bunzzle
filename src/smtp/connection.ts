@@ -264,6 +264,15 @@ export class SmtpConnection {
     });
   }
 
+  peerCertificate(): Uint8Array | null {
+    try {
+      const raw = (this.socket.getPeerCertificate() as { raw?: Uint8Array } | null)?.raw;
+      return raw ? new Uint8Array(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
   close() {
     this.closedError ??= new SmtpError("closed", "connection closed");
     this.socket.end();

@@ -2,6 +2,7 @@ import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { localTransport, rememberingTransport } from "../delivery/transport.ts";
 import { cachingResolver } from "../dns/cache.ts";
+import { localValidatingResolver } from "../dns/dnssec.ts";
 import { createResolver, parseServer, systemServers } from "../dns/resolver.ts";
 import { checkReverse, type ReverseCheck } from "../dns/reverse.ts";
 import { method, RpcClient, serveRpc } from "../ipc/rpc.ts";
@@ -23,6 +24,12 @@ export async function runDelivery(config: Config, log: Logger) {
   const uncached = createResolver({ servers });
   const resolver = cachingResolver(uncached);
   const signer = new RpcClient(sock.signer);
+  const dane = config.dane === "off" ? false : await localValidatingResolver(servers, uncached);
+  if (config.dane !== "off" && !dane) {
+    log.info(
+      "DANE is off: it needs a local DNSSEC-validating resolver (see the configuration docs)",
+    );
+  }
   const ehloName = config.ehloName;
   const ips = config.sourceIps.map((s) => s.ip);
   const reverse = new Map<string, ReverseCheck>();
@@ -73,6 +80,7 @@ export async function runDelivery(config: Config, log: Logger) {
         port: config.smtpPort,
         families: config.ipv6 ? [4, 6] : [4],
         allowPrivate: config.allowPrivateDestinations,
+        dane,
         ...(ips.length ? { ownAddresses: ips } : {}),
       },
       async (messageId, body, o) =>
@@ -169,6 +177,6 @@ export async function runDelivery(config: Config, log: Logger) {
     server.stop();
     await pool.closeAll();
   });
-  log.info("delivery ready", { ehlo: ehloName, sources: ips.length ? ips : ["default"] });
+  log.info("delivery ready", { ehlo: ehloName, sources: ips.length ? ips : ["default"], dane });
   ready();
 }

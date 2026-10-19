@@ -41,6 +41,7 @@ const BY_ROLE: Record<Role, string[]> = {
     "BUNZZLE_SMTP_PORT",
     "BUNZZLE_ALLOW_PRIVATE_DESTINATIONS",
     "BUNZZLE_SOURCE_IPS",
+    "BUNZZLE_DANE",
   ],
   dns: [
     "BUNZZLE_DNS_SERVERS",
