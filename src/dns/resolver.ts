@@ -115,7 +115,9 @@ function udpExchange(
           if (matches(msg, id, name, type)) finish(() => resolve(msg));
         },
         error(_s, err) {
-          finish(() => reject(new DnsError("network", err.message)));
+          finish(() =>
+            reject(new DnsError("network", (err as Error | undefined)?.message ?? "socket error")),
+          );
         },
       },
     }).then(
@@ -124,7 +126,10 @@ function udpExchange(
         if (done) s.close();
         else s.send(packet, server.port, server.host);
       },
-      (err: Error) => finish(() => reject(new DnsError("network", err.message))),
+      (err: Error) =>
+        finish(() =>
+          reject(new DnsError("network", (err as Error | undefined)?.message ?? "socket error")),
+        ),
     );
   });
 }
@@ -187,10 +192,16 @@ function tcpExchange(
           finish(() => reject(new DnsError("network", "TCP connection closed early")));
         },
         error(_s, err) {
-          finish(() => reject(new DnsError("network", err.message)));
+          finish(() =>
+            reject(new DnsError("network", (err as Error | undefined)?.message ?? "socket error")),
+          );
         },
       },
-    }).catch((err: Error) => finish(() => reject(new DnsError("network", err.message))));
+    }).catch((err: Error) =>
+      finish(() =>
+        reject(new DnsError("network", (err as Error | undefined)?.message ?? "socket error")),
+      ),
+    );
   });
 }
 
