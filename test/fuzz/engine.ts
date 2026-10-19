@@ -98,8 +98,8 @@ export interface Finding {
   error: string;
 }
 
-export const ITERATIONS = Number(process.env["BUNZZLE_FUZZ_ITERATIONS"] ?? 1_000);
-export const SEED = Number(process.env["BUNZZLE_FUZZ_SEED"] ?? Date.now() % 0x7fff_ffff);
+export const ITERATIONS = Number(Bun.env["BUNZZLE_FUZZ_ITERATIONS"] ?? 1_000);
+export const SEED = Number(Bun.env["BUNZZLE_FUZZ_SEED"] ?? Date.now() % 0x7fff_ffff);
 
 export async function fuzz(t: Target): Promise<Finding[]> {
   const seeds = t.seeds.map(bytes);

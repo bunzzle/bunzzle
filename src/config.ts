@@ -120,7 +120,7 @@ export interface Config {
 
 export class ConfigError extends Error {}
 
-export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
+export function loadConfig(env: Record<string, string | undefined> = Bun.env): Config {
   const parsed = schema.safeParse(env);
   if (!parsed.success) {
     const problems = parsed.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`);
