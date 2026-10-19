@@ -1,36 +1,36 @@
-import { z } from "zod";
 import { familyOf } from "./dns/ip.ts";
+import { b } from "./validate/schema.ts";
 
-const bool = z
+const bool = b
   .enum(["true", "false", "1", "0"])
   .default("false")
   .transform((v) => v === "true" || v === "1");
 
-const optional = z
+const optional = b
   .string()
   .optional()
   .transform((v) => (v?.trim() ? v.trim() : null));
 
-const schema = z.object({
-  BUNZZLE_HOST: z.string().min(1).default("127.0.0.1"),
-  BUNZZLE_PORT: z.coerce.number().int().min(0).max(65535).default(3000),
-  BUNZZLE_DATA_DIR: z.string().min(1).default("./data"),
-  BUNZZLE_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+const schema = b.object({
+  BUNZZLE_HOST: b.string().min(1).default("127.0.0.1"),
+  BUNZZLE_PORT: b.coerce.number().int().min(0).max(65535).default(3000),
+  BUNZZLE_DATA_DIR: b.string().min(1).default("./data"),
+  BUNZZLE_LOG_LEVEL: b.enum(["debug", "info", "warn", "error"]).default("info"),
   BUNZZLE_EHLO_NAME: optional,
   BUNZZLE_SOURCE_IP: optional,
   BUNZZLE_DNS_SERVERS: optional,
   BUNZZLE_DKIM_KEY_FILE: optional,
   BUNZZLE_IPV6: bool,
-  BUNZZLE_SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(25),
+  BUNZZLE_SMTP_PORT: b.coerce.number().int().min(1).max(65535).default(25),
   BUNZZLE_ALLOW_PRIVATE_DESTINATIONS: bool,
   BUNZZLE_MASTER_KEY: optional,
   BUNZZLE_MASTER_KEY_FILE: optional,
-  BUNZZLE_KEYS_DIR: z.string().min(1).default("./keys"),
-  BUNZZLE_RUN_DIR: z.string().min(1).default("./run"),
-  BUNZZLE_RETENTION_DAYS: z.coerce.number().int().min(7).max(3650).default(30),
-  BUNZZLE_INBOUND_HOST: z.string().min(1).default("0.0.0.0"),
-  BUNZZLE_INBOUND_PORT: z.coerce.number().int().min(0).max(65535).optional(),
-  BUNZZLE_RETRY_SCALE: z.coerce.number().positive().max(1).default(1),
+  BUNZZLE_KEYS_DIR: b.string().min(1).default("./keys"),
+  BUNZZLE_RUN_DIR: b.string().min(1).default("./run"),
+  BUNZZLE_RETENTION_DAYS: b.coerce.number().int().min(7).max(3650).default(30),
+  BUNZZLE_INBOUND_HOST: b.string().min(1).default("0.0.0.0"),
+  BUNZZLE_INBOUND_PORT: b.coerce.number().int().min(0).max(65535).optional(),
+  BUNZZLE_RETRY_SCALE: b.coerce.number().positive().max(1).default(1),
   BUNZZLE_PUBLIC_URL: optional.refine((v) => v === null || /^https?:\/\/[^\s/]+/.test(v), {
     message: "must be an http(s) URL like https://mail.example.com",
   }),
@@ -39,12 +39,12 @@ const schema = z.object({
   BUNZZLE_INBOUND_TLS_KEY_FILE: optional,
   BUNZZLE_SOURCE_IPS: optional,
   BUNZZLE_ESTABLISHED_IPS: optional,
-  BUNZZLE_GUARD_MIN_VOLUME: z.coerce.number().int().min(1).default(300),
-  BUNZZLE_ANOMALY_FLOOR: z.coerce.number().int().min(1).default(500),
-  BUNZZLE_DKIM_ROTATE_DAYS: z.coerce.number().int().min(7).max(3650).default(90),
+  BUNZZLE_GUARD_MIN_VOLUME: b.coerce.number().int().min(1).default(300),
+  BUNZZLE_ANOMALY_FLOOR: b.coerce.number().int().min(1).default(500),
+  BUNZZLE_DKIM_ROTATE_DAYS: b.coerce.number().int().min(7).max(3650).default(90),
   BUNZZLE_CLOUDFLARE_API_TOKEN: optional,
   BUNZZLE_CLOUDFLARE_API_TOKEN_FILE: optional,
-  BUNZZLE_CLOUDFLARE_API_URL: z.string().url().default("https://api.cloudflare.com/client/v4"),
+  BUNZZLE_CLOUDFLARE_API_URL: b.string().url().default("https://api.cloudflare.com/client/v4"),
 });
 
 export interface SourceIp {

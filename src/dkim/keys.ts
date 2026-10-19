@@ -1,22 +1,22 @@
-import { z } from "zod";
 import type { MasterKey } from "../crypto/master.ts";
+import { b } from "../validate/schema.ts";
 import type { DkimAlgorithm, DkimKey } from "./sign.ts";
 
-const keyFileSchema = z.object({
-  domain: z.string().min(1),
-  masterKeyId: z.string().min(1).optional(),
-  keys: z
+const keyFileSchema = b.object({
+  domain: b.string().min(1),
+  masterKeyId: b.string().min(1).optional(),
+  keys: b
     .array(
-      z
+      b
         .object({
-          selector: z.string().regex(/^[a-z0-9-]+(\.[a-z0-9-]+)*$/i),
-          algorithm: z.enum(["rsa-sha256", "ed25519-sha256"]),
-          privateKey: z.string().min(1).optional(),
-          sealedPrivateKey: z.string().min(1).optional(),
-          publicKey: z.string().min(1),
-          state: z.enum(["active", "next", "retiring"]).optional(),
-          createdAt: z.number().int().optional(),
-          retiringSince: z.number().int().optional(),
+          selector: b.string().regex(/^[a-z0-9-]+(\.[a-z0-9-]+)*$/i),
+          algorithm: b.enum(["rsa-sha256", "ed25519-sha256"]),
+          privateKey: b.string().min(1).optional(),
+          sealedPrivateKey: b.string().min(1).optional(),
+          publicKey: b.string().min(1),
+          state: b.enum(["active", "next", "retiring"]).optional(),
+          createdAt: b.number().int().optional(),
+          retiringSince: b.number().int().optional(),
         })
         .refine((k) => (k.privateKey === undefined) !== (k.sealedPrivateKey === undefined), {
           message: "each key needs exactly one of privateKey or sealedPrivateKey",
@@ -25,7 +25,7 @@ const keyFileSchema = z.object({
     .min(1),
 });
 
-export type KeyFile = z.infer<typeof keyFileSchema>;
+export type KeyFile = b.infer<typeof keyFileSchema>;
 
 export interface DnsRecord {
   name: string;

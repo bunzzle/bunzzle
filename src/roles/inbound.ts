@@ -1,10 +1,10 @@
-import { z } from "zod";
 import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { DmarcError, readDmarcReport } from "../dmarc/report.ts";
 import { classifyReport, type Report } from "../inbound/parse.ts";
 import { startInboundServer } from "../inbound/server.ts";
 import { RpcClient, RpcError } from "../ipc/rpc.ts";
+import { b } from "../validate/schema.ts";
 import { onStop, ready } from "./runtime.ts";
 import { sockets } from "./wire.ts";
 
@@ -45,7 +45,7 @@ export async function runInbound(config: Config, log: Logger) {
                 await core.call(
                   "inboundRecipient",
                   { address },
-                  { result: z.object({ accept: z.boolean() }), timeoutMs: 10_000 },
+                  { result: b.object({ accept: b.boolean() }), timeoutMs: 10_000 },
                 )
               ).accept,
             message: async (recipients, raw) => {

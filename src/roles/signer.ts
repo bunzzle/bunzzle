@@ -1,9 +1,9 @@
-import { z } from "zod";
 import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { masterKeyFrom } from "../crypto/master.ts";
 import { method, RpcError, serveRpc } from "../ipc/rpc.ts";
 import { dkimKeyFilesIn, Signer, SignerError } from "../signer/signer.ts";
+import { b } from "../validate/schema.ts";
 import { every, onStop, privateDir, ready } from "./runtime.ts";
 import { fromWire, MESSAGE_ID, sealedBodyWire, sockets } from "./wire.ts";
 
@@ -31,60 +31,60 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
   await shred();
 
   const server = await serveRpc(sockets(config.runDir).signer, {
-    epochKey: method(z.object({}), async () => {
+    epochKey: method(b.object({}), async () => {
       const k = await signer.epochKey();
       return { epoch: k.epoch, publicKey: k.publicKey.toBase64() };
     }),
-    domains: method(z.object({}), () => signer.domains()),
+    domains: method(b.object({}), () => signer.domains()),
     ensureKeys: method(
-      z.object({
-        domain: z.string().regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/),
-        selectorBase: z.string().regex(/^[a-z0-9-]{1,40}$/),
+      b.object({
+        domain: b.string().regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/),
+        selectorBase: b.string().regex(/^[a-z0-9-]{1,40}$/),
       }),
       ({ domain, selectorBase }) => signer.ensureKeys(domain, selectorBase),
     ),
     keyStates: method(
-      z.object({ domain: z.string().max(253) }),
+      b.object({ domain: b.string().max(253) }),
       ({ domain }) => signer.publicKeys(domain) ?? [],
     ),
     rotateStart: method(
-      z.object({
-        domain: z.string().max(253),
-        selectorBase: z.string().regex(/^[a-z0-9-]{1,40}$/),
+      b.object({
+        domain: b.string().max(253),
+        selectorBase: b.string().regex(/^[a-z0-9-]{1,40}$/),
       }),
       ({ domain, selectorBase }) => signer.rotateStart(domain, selectorBase),
     ),
-    promote: method(z.object({ domain: z.string().max(253) }), ({ domain }) =>
+    promote: method(b.object({ domain: b.string().max(253) }), ({ domain }) =>
       signer.promote(domain),
     ),
-    dropRetiring: method(z.object({ domain: z.string().max(253) }), ({ domain }) =>
+    dropRetiring: method(b.object({ domain: b.string().max(253) }), ({ domain }) =>
       signer.dropRetiring(domain),
     ),
     signCanary: method(
-      z.object({ domain: z.string().max(253), which: z.enum(["active", "next"]) }),
+      b.object({ domain: b.string().max(253), which: b.enum(["active", "next"]) }),
       ({ domain, which }) => signer.signCanary(domain, which),
     ),
-    readToken: method(z.object({ token: z.string().max(100) }), ({ token }) =>
+    readToken: method(b.object({ token: b.string().max(100) }), ({ token }) =>
       signer.readToken(token),
     ),
-    webhookSecret: method(z.object({ id: z.string().min(1).max(64) }), ({ id }) =>
+    webhookSecret: method(b.object({ id: b.string().min(1).max(64) }), ({ id }) =>
       signer.webhookSecret(id),
     ),
     signWebhook: method(
-      z.object({
-        id: z.string().min(1).max(64),
-        msgId: z.string().min(1).max(100),
-        timestamp: z.number().int(),
-        body: z.string().max(1_000_000),
+      b.object({
+        id: b.string().min(1).max(64),
+        msgId: b.string().min(1).max(100),
+        timestamp: b.number().int(),
+        body: b.string().max(1_000_000),
       }),
       (p) => signer.signWebhook(p.id, p.msgId, p.timestamp, p.body),
     ),
     open: method(
-      z.object({
-        messageId: z.string().regex(MESSAGE_ID),
+      b.object({
+        messageId: b.string().regex(MESSAGE_ID),
         body: sealedBodyWire,
-        lane: z.enum(["transactional", "bulk"]).default("transactional"),
-        bounceDomain: z.string().max(253).nullable().default(null),
+        lane: b.enum(["transactional", "bulk"]).default("transactional"),
+        bounceDomain: b.string().max(253).nullable().default(null),
       }),
       async ({ messageId, body, lane, bounceDomain }) => {
         try {

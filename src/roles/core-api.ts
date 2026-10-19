@@ -1,5 +1,4 @@
 import type { Database } from "bun:sqlite";
-import { z } from "zod";
 import {
   type ApiKey,
   allows,
@@ -50,9 +49,10 @@ import { AddressError, asciiDomain, domainOf, normalizeAddress } from "../mime/a
 import { senderDomainOf } from "../mime/from.ts";
 import type { PathView } from "../shaping/shaper.ts";
 import { suppressionFor } from "../suppressions/store.ts";
+import { b } from "../validate/schema.ts";
 import { DOMAIN, enqueueParams, MESSAGE_ID, tokenHash } from "./wire.ts";
 
-type EnqueueInput = Omit<z.output<typeof enqueueParams>, "tokenHash">;
+type EnqueueInput = Omit<b.output<typeof enqueueParams>, "tokenHash">;
 
 const MAX_SCHEDULE_MS = 72 * 3_600_000;
 
@@ -84,11 +84,11 @@ const OPERATOR: ApiKey = {
   revokedAt: null,
 };
 
-const publicKeyInfo = z.array(
-  z.object({
-    selector: z.string(),
-    algorithm: z.enum(["rsa-sha256", "ed25519-sha256"]),
-    publicKey: z.string(),
+const publicKeyInfo = b.array(
+  b.object({
+    selector: b.string(),
+    algorithm: b.enum(["rsa-sha256", "ed25519-sha256"]),
+    publicKey: b.string(),
   }),
 );
 
@@ -128,7 +128,7 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
   let fetchingDomains: Promise<Set<string>> | null = null;
   const fetchSignerDomains = (): Promise<Set<string>> => {
     fetchingDomains ??= signer
-      .call("domains", {}, { result: z.array(z.string()) })
+      .call("domains", {}, { result: b.array(b.string()) })
       .then((list) => {
         signerDomains = { at: now(), domains: new Set(list) };
         return signerDomains.domains;
@@ -338,7 +338,7 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
       "dns",
       { queries },
       {
-        result: z.record(z.string(), z.array(z.string())),
+        result: b.record(b.string(), b.array(b.string())),
         timeoutMs: 30_000,
       },
     );
@@ -361,7 +361,7 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
   };
 
   const methods: Methods = {
-    authenticate: method(z.object({ tokenHash: z.string() }), ({ tokenHash: hash }) => {
+    authenticate: method(b.object({ tokenHash: b.string() }), ({ tokenHash: hash }) => {
       const key = keyForHash(db, hash);
       if (!key) throw new RpcError("unauthenticated", "API key is invalid");
       return { id: key.id, scope: key.scope, domains: key.domains, rateLimit: key.rateLimit };
@@ -380,9 +380,9 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
     }),
 
     enqueueBatch: method(
-      z.object({
+      b.object({
         tokenHash,
-        emails: z
+        emails: b
           .array(enqueueParams.omit({ tokenHash: true }))
           .min(1)
           .max(100),
@@ -411,7 +411,7 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
       },
     ),
 
-    getEmail: method(z.object({ tokenHash, id: z.string() }), ({ tokenHash: hash, id }) => {
+    getEmail: method(b.object({ tokenHash, id: b.string() }), ({ tokenHash: hash, id }) => {
       caller(hash, "read");
       if (!MESSAGE_ID.test(id)) throw new RpcError("not-found", "email not found");
       const view = emailView(db, id, now());
@@ -419,7 +419,7 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
       return view;
     }),
 
-    cancelEmail: method(z.object({ tokenHash, id: z.string() }), async (p) => {
+    cancelEmail: method(b.object({ tokenHash, id: b.string() }), async (p) => {
       const key = caller(p.tokenHash, "send");
       changeable(key, p.id);
       const r = await writer.run((d) => cancelEmail(d, p.id, now()));
@@ -433,7 +433,7 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
     }),
 
     rescheduleEmail: method(
-      z.object({ tokenHash, id: z.string(), scheduledAt: z.number().int().positive() }),
+      b.object({ tokenHash, id: b.string(), scheduledAt: b.number().int().positive() }),
       async (p) => {
         const key = caller(p.tokenHash, "send");
         changeable(key, p.id);
@@ -454,7 +454,7 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
       },
     ),
 
-    status: method(z.object({ id: z.string().regex(MESSAGE_ID) }), ({ id }) =>
+    status: method(b.object({ id: b.string().regex(MESSAGE_ID) }), ({ id }) =>
       recipientsOf(db, id).map((r) => ({
         address: r.address,
         status: r.status,
@@ -464,7 +464,7 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
       })),
     ),
 
-    addDomain: method(z.object({ tokenHash, name: z.string().max(253) }), async (p) => {
+    addDomain: method(b.object({ tokenHash, name: b.string().max(253) }), async (p) => {
       caller(p.tokenHash, "full");
       const name = domainName(p.name);
       const existing = getDomain(db, name);
@@ -493,29 +493,29 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
       return domainView(getDomain(db, name) as Domain);
     }),
 
-    getDomain: method(z.object({ tokenHash, name: z.string().max(253) }), (p) => {
+    getDomain: method(b.object({ tokenHash, name: b.string().max(253) }), (p) => {
       caller(p.tokenHash, "read");
       const d = getDomain(db, domainName(p.name));
       if (!d) throw new RpcError("not-found", "domain not found");
       return domainView(d);
     }),
 
-    listDomains: method(z.object({ tokenHash }), (p) => {
+    listDomains: method(b.object({ tokenHash }), (p) => {
       caller(p.tokenHash, "read");
       return listDomains(db).map(domainView);
     }),
 
-    verifyDomain: method(z.object({ tokenHash, name: z.string().max(253) }), async (p) => {
+    verifyDomain: method(b.object({ tokenHash, name: b.string().max(253) }), async (p) => {
       caller(p.tokenHash, "full");
       return domainView(await verify(domainName(p.name)));
     }),
 
     createKey: method(
-      z.object({
-        name: z.string().min(1).max(100),
-        scope: z.enum(["send", "read", "full"]),
-        domains: z.array(z.string().max(253)).max(100).optional(),
-        rateLimit: z.number().int().min(1).max(10_000).optional(),
+      b.object({
+        name: b.string().min(1).max(100),
+        scope: b.enum(["send", "read", "full"]),
+        domains: b.array(b.string().max(253)).max(100).optional(),
+        rateLimit: b.number().int().min(1).max(10_000).optional(),
       }),
       async (p) => {
         const domains = p.domains?.map(domainName);
@@ -535,18 +535,18 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
       },
     ),
 
-    listKeys: method(z.object({}), () => listKeys(db)),
+    listKeys: method(b.object({}), () => listKeys(db)),
 
-    revokeKey: method(z.object({ id: z.string().min(1).max(64) }), async ({ id }) => {
+    revokeKey: method(b.object({ id: b.string().min(1).max(64) }), async ({ id }) => {
       if (!(await writer.run((d) => revokeKey(d, id, now())))) {
         throw new RpcError("not-found", "no active key with that id");
       }
       return { id, revoked: true };
     }),
 
-    health: method(z.object({}), () => ({ ok: true, jobs: countByState(db) })),
+    health: method(b.object({}), () => ({ ok: true, jobs: countByState(db) })),
 
-    ips: method(z.object({ tokenHash }), async (p) => {
+    ips: method(b.object({ tokenHash }), async (p) => {
       caller(p.tokenHash, "read");
       const reverse = await delivery
         .call<
@@ -601,7 +601,7 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
       });
     }),
 
-    holds: method(z.object({ tokenHash, all: z.boolean().default(false) }), (p) => {
+    holds: method(b.object({ tokenHash, all: b.boolean().default(false) }), (p) => {
       caller(p.tokenHash, "read");
       return {
         holds: listHolds(db, p.all).map((h) => ({
@@ -625,7 +625,7 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
       };
     }),
 
-    releaseHold: method(z.object({ tokenHash, id: z.string().max(64) }), async (p) => {
+    releaseHold: method(b.object({ tokenHash, id: b.string().max(64) }), async (p) => {
       caller(p.tokenHash, "full");
       if (!(await writer.run((d) => releaseHold(d, p.id, now())))) {
         throw new RpcError("not-found", "no active hold with that id");
@@ -634,12 +634,12 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
       return { id: p.id, released: true };
     }),
 
-    metrics: method(z.object({ tokenHash }), (p) => {
+    metrics: method(b.object({ tokenHash }), (p) => {
       caller(p.tokenHash, "read");
       return { text: render(collect(db, deps.paths?.() ?? [], now(), startedAt)) };
     }),
 
-    paths: method(z.object({ tokenHash }), (p) => {
+    paths: method(b.object({ tokenHash }), (p) => {
       caller(p.tokenHash, "read");
       return (deps.paths?.() ?? []).map((v) => ({
         object: "path",

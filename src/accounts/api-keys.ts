@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { z } from "zod";
+import { b } from "../validate/schema.ts";
 
 export type Scope = "send" | "read" | "full";
 
@@ -46,7 +46,7 @@ const fromRow = (r: Row): ApiKey => ({
   name: r.name,
   prefix: r.prefix,
   scope: r.scope,
-  domains: r.domains === null ? null : z.array(z.string()).parse(JSON.parse(r.domains)),
+  domains: r.domains === null ? null : b.array(b.string()).parse(JSON.parse(r.domains)),
   rateLimit: r.rate_limit,
   createdAt: r.created_at,
   lastUsedAt: r.last_used_at,

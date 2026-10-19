@@ -1,13 +1,19 @@
 {
   "name": "bunzzle",
   "version": "0.1.0",
-  "description": "Self-hosted email delivery engine for apps. Bun-native.",
-  "license": "AGPL-3.0-only",
-  "private": true,
-  "type": "module",
+  "devDependencies": {
+    "@types/bun": "^1.4.3",
+    "typescript": "^7.0.2"
+  },
   "bin": {
     "bunzzle": "src/cli/main.ts"
   },
+  "description": "Self-hosted email delivery engine for apps. Bun-native.",
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "license": "AGPL-3.0-only",
+  "private": true,
   "scripts": {
     "dev": "bun --watch src/cli/main.ts serve",
     "start": "bun src/cli/main.ts serve",
@@ -20,14 +26,5 @@
     "bench": "bun bench/queue.ts",
     "crash": "bun bench/crash.ts"
   },
-  "engines": {
-    "bun": ">=1.4.0"
-  },
-  "devDependencies": {
-    "@types/bun": "^1.4.3",
-    "typescript": "^7.0.2"
-  },
-  "dependencies": {
-    "zod": "^4.6.7"
-  }
+  "type": "module"
 }

@@ -1,5 +1,4 @@
 import type { Database } from "bun:sqlite";
-import { z } from "zod";
 import { allows, keyForHash, type Scope } from "../accounts/api-keys.ts";
 import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
@@ -9,6 +8,7 @@ import { getDomain } from "../domains/domains.ts";
 import { type Applied, applyInbound, applyUnsubscribe, type Via } from "../inbound/apply.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import { listSuppressions, removeSuppression, suppress } from "../suppressions/store.ts";
+import { b } from "../validate/schema.ts";
 import { projectEvents } from "../webhooks/project.ts";
 import {
   claimDeliveries,
@@ -32,7 +32,7 @@ export interface FeedbackDeps {
   now?: () => number;
 }
 
-const tokenResult = z.object({ purpose: z.enum(["b", "u"]), messageId: z.string() }).nullable();
+const tokenResult = b.object({ purpose: b.enum(["b", "u"]), messageId: b.string() }).nullable();
 
 export function feedbackMethods(deps: FeedbackDeps) {
   const { db, writer, log, signer, delivery } = deps;
@@ -69,12 +69,12 @@ export function feedbackMethods(deps: FeedbackDeps) {
   };
 
   const methods: Methods = {
-    inboundRecipient: method(z.object({ address: z.string().max(320) }), async ({ address }) => ({
+    inboundRecipient: method(b.object({ address: b.string().max(320) }), async ({ address }) => ({
       accept: dmarcDomain(address) !== null || (await route(address)) !== null,
     })),
 
     inboundDmarc: method(
-      z.object({ recipients: z.array(z.string().max(320)).min(1).max(10), report: dmarcWire }),
+      b.object({ recipients: b.array(b.string().max(320)).min(1).max(10), report: dmarcWire }),
       async ({ recipients, report }) => {
         const domains = recipients.map(dmarcDomain).filter((d) => d !== null);
         if (!domains.includes(report.domain)) {
@@ -92,7 +92,7 @@ export function feedbackMethods(deps: FeedbackDeps) {
     ),
 
     dmarcReports: method(
-      z.object({ tokenHash, domain: z.string().max(253), days: z.number().int().min(1).max(90) }),
+      b.object({ tokenHash, domain: b.string().max(253), days: b.number().int().min(1).max(90) }),
       (p) => {
         caller(p.tokenHash, "read");
         const name = p.domain.toLowerCase();
@@ -104,10 +104,10 @@ export function feedbackMethods(deps: FeedbackDeps) {
     ),
 
     inboundReport: method(
-      z.object({
-        recipients: z.array(z.string().max(320)).min(1).max(10),
+      b.object({
+        recipients: b.array(b.string().max(320)).min(1).max(10),
         report: reportWire,
-        raw: z.string().max(2 * 1024 * 1024),
+        raw: b.string().max(2 * 1024 * 1024),
       }),
       async ({ recipients, report, raw }) => {
         const routes = new Map<string, { via: Via; messageId: string | null }>();
@@ -142,7 +142,7 @@ export function feedbackMethods(deps: FeedbackDeps) {
       },
     ),
 
-    unsubscribe: method(z.object({ token: z.string().max(100) }), async ({ token }) => {
+    unsubscribe: method(b.object({ token: b.string().max(100) }), async ({ token }) => {
       const t = await readToken(token);
       if (t?.purpose !== "u") throw new RpcError("not-found", "unknown unsubscribe link");
       const address = await writer.run((d) => applyUnsubscribe(d, t.messageId, "one-click", now()));
@@ -150,7 +150,7 @@ export function feedbackMethods(deps: FeedbackDeps) {
       return { unsubscribed: true };
     }),
 
-    listSuppressions: method(z.object({ tokenHash }), (p) => {
+    listSuppressions: method(b.object({ tokenHash }), (p) => {
       caller(p.tokenHash, "read");
       return listSuppressions(db, now()).map((s) => ({
         object: "suppression",
@@ -165,10 +165,10 @@ export function feedbackMethods(deps: FeedbackDeps) {
     }),
 
     addSuppression: method(
-      z.object({
+      b.object({
         tokenHash,
-        email: z.string().email().max(320),
-        scope: z.enum(["all", "bulk"]).default("all"),
+        email: b.string().email().max(320),
+        scope: b.enum(["all", "bulk"]).default("all"),
       }),
       async (p) => {
         caller(p.tokenHash, "full");
@@ -180,10 +180,10 @@ export function feedbackMethods(deps: FeedbackDeps) {
     ),
 
     removeSuppression: method(
-      z.object({
+      b.object({
         tokenHash,
-        email: z.string().max(320),
-        scope: z.enum(["all", "bulk"]).nullable().default(null),
+        email: b.string().max(320),
+        scope: b.enum(["all", "bulk"]).nullable().default(null),
       }),
       async (p) => {
         caller(p.tokenHash, "full");
@@ -194,10 +194,10 @@ export function feedbackMethods(deps: FeedbackDeps) {
     ),
 
     createWebhook: method(
-      z.object({
+      b.object({
         tokenHash,
-        url: z.string().url().max(2048),
-        events: z.array(z.enum(EVENT_TYPES)).max(EVENT_TYPES.length).default([]),
+        url: b.string().url().max(2048),
+        events: b.array(b.enum(EVENT_TYPES)).max(EVENT_TYPES.length).default([]),
       }),
       async (p) => {
         caller(p.tokenHash, "full");
@@ -206,7 +206,7 @@ export function feedbackMethods(deps: FeedbackDeps) {
           throw new RpcError("invalid", "webhook URLs must be http or https");
         }
         const hook = await writer.run((d) => createWebhook(d, p.url, p.events, now()));
-        const secret = await signer.call("webhookSecret", { id: hook.id }, { result: z.string() });
+        const secret = await signer.call("webhookSecret", { id: hook.id }, { result: b.string() });
         return {
           object: "webhook",
           id: hook.id,
@@ -218,7 +218,7 @@ export function feedbackMethods(deps: FeedbackDeps) {
       },
     ),
 
-    listWebhooks: method(z.object({ tokenHash }), (p) => {
+    listWebhooks: method(b.object({ tokenHash }), (p) => {
       caller(p.tokenHash, "read");
       return listWebhooks(db).map((h) => ({
         object: "webhook",
@@ -229,7 +229,7 @@ export function feedbackMethods(deps: FeedbackDeps) {
       }));
     }),
 
-    deleteWebhook: method(z.object({ tokenHash, id: z.string().max(64) }), async (p) => {
+    deleteWebhook: method(b.object({ tokenHash, id: b.string().max(64) }), async (p) => {
       caller(p.tokenHash, "full");
       if (!(await writer.run((d) => deleteWebhook(d, p.id, now())))) {
         throw new RpcError("not-found", "webhook not found");
@@ -256,7 +256,7 @@ export function feedbackMethods(deps: FeedbackDeps) {
             const signature = await signer.call(
               "signWebhook",
               { id: d.webhookId, msgId, timestamp, body: d.payload },
-              { result: z.string(), timeoutMs: 10_000 },
+              { result: b.string(), timeoutMs: 10_000 },
             );
             const r = await delivery.call(
               "postWebhook",
@@ -271,9 +271,9 @@ export function feedbackMethods(deps: FeedbackDeps) {
               },
               {
                 timeoutMs: 20_000,
-                result: z.union([
-                  z.object({ ok: z.literal(true), status: z.number() }),
-                  z.object({ ok: z.literal(false), error: z.string() }),
+                result: b.union([
+                  b.object({ ok: b.literal(true), status: b.number() }),
+                  b.object({ ok: b.literal(false), error: b.string() }),
                 ]),
               },
             );

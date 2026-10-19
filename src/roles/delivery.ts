@@ -1,4 +1,3 @@
-import { z } from "zod";
 import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { localTransport, rememberingTransport } from "../delivery/transport.ts";
@@ -13,6 +12,7 @@ import { limitsFor } from "../shaping/limits.ts";
 import { allRecipients } from "../smtp/deliver.ts";
 import { StsCache } from "../smtp/mta-sts.ts";
 import { SessionPool } from "../smtp/pool.ts";
+import { b } from "../validate/schema.ts";
 import { every, onStop, ready } from "./runtime.ts";
 import { deliverRequestWire, requestFromWire, sockets, toWire } from "./wire.ts";
 
@@ -94,20 +94,20 @@ export async function runDelivery(config: Config, log: Logger) {
         signer.call(
           "open",
           { messageId, body: toWire(body), lane: o.lane, bounceDomain: o.bounceDomain },
-          { result: z.object({ data: z.string(), bounceToken: z.string() }), timeoutMs: 60_000 },
+          { result: b.object({ data: b.string(), bounceToken: b.string() }), timeoutMs: 60_000 },
         ),
     ),
   );
 
   const server = await serveRpc(sock.delivery, {
-    lookup: method(z.object({ domain: z.string().min(1).max(255) }), ({ domain }) =>
+    lookup: method(b.object({ domain: b.string().min(1).max(255) }), ({ domain }) =>
       transport.lookup(domain),
     ),
     postWebhook: method(
-      z.object({
-        url: z.string().max(2048),
-        headers: z.record(z.string().regex(/^[A-Za-z0-9-]+$/), z.string().max(1000)),
-        body: z.string().max(1_000_000),
+      b.object({
+        url: b.string().max(2048),
+        headers: b.record(b.string().regex(/^[A-Za-z0-9-]+$/), b.string().max(1000)),
+        body: b.string().max(1_000_000),
       }),
       ({ url, headers, body }) =>
         guardedPost(url, headers, body, {
@@ -117,7 +117,7 @@ export async function runDelivery(config: Config, log: Logger) {
           families: config.ipv6 ? [4, 6] : [4],
         }),
     ),
-    ips: method(z.object({}), () =>
+    ips: method(b.object({}), () =>
       ips.map((ip) => ({
         ip,
         ehlo: ehloFor(ip),
@@ -125,14 +125,14 @@ export async function runDelivery(config: Config, log: Logger) {
       })),
     ),
     cloudflare: method(
-      z.object({
-        op: z.enum(["status", "upsert", "remove"]),
-        record: z
+      b.object({
+        op: b.enum(["status", "upsert", "remove"]),
+        record: b
           .object({
-            type: z.enum(["TXT", "MX"]),
-            name: z.string().min(1).max(253),
-            content: z.string().min(1).max(4096),
-            priority: z.number().int().min(0).max(65535).optional(),
+            type: b.enum(["TXT", "MX"]),
+            name: b.string().min(1).max(253),
+            content: b.string().min(1).max(4096),
+            priority: b.number().int().min(0).max(65535).optional(),
           })
           .optional(),
       }),
@@ -145,9 +145,9 @@ export async function runDelivery(config: Config, log: Logger) {
       },
     ),
     dns: method(
-      z.object({
-        queries: z
-          .array(z.object({ name: z.string().min(1).max(255), type: z.enum(["TXT", "MX"]) }))
+      b.object({
+        queries: b
+          .array(b.object({ name: b.string().min(1).max(255), type: b.enum(["TXT", "MX"]) }))
           .max(20),
       }),
       async ({ queries }) => {
@@ -188,7 +188,7 @@ export async function runDelivery(config: Config, log: Logger) {
       return transport.deliver(req);
     }),
     forget: method(
-      z.object({ keys: z.array(z.string().min(1).max(200)).max(5000) }),
+      b.object({ keys: b.array(b.string().min(1).max(200)).max(5000) }),
       ({ keys }) => {
         transport.forget(keys);
         return { remembered: transport.remembered };

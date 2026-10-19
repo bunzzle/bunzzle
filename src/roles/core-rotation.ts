@@ -1,5 +1,4 @@
 import type { Database } from "bun:sqlite";
-import { z } from "zod";
 import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
 import { keyFromTxt, selectorsOf, verifyDkim } from "../dkim/verify.ts";
@@ -13,21 +12,22 @@ import {
   saveDomain,
 } from "../domains/domains.ts";
 import type { RpcClient } from "../ipc/rpc.ts";
+import { b } from "../validate/schema.ts";
 
 const DAY = 86_400_000;
 const OVERLAP_DAYS = 7;
 
-const keyInfo = z.array(
-  z.object({
-    selector: z.string(),
-    algorithm: z.enum(["rsa-sha256", "ed25519-sha256"]),
-    publicKey: z.string(),
-    state: z.enum(["active", "next", "retiring"]),
-    createdAt: z.number().nullable(),
-    retiringSince: z.number().nullable(),
+const keyInfo = b.array(
+  b.object({
+    selector: b.string(),
+    algorithm: b.enum(["rsa-sha256", "ed25519-sha256"]),
+    publicKey: b.string(),
+    state: b.enum(["active", "next", "retiring"]),
+    createdAt: b.number().nullable(),
+    retiringSince: b.number().nullable(),
   }),
 );
-type KeyInfo = z.infer<typeof keyInfo>[number];
+type KeyInfo = b.infer<typeof keyInfo>[number];
 
 export interface RotationDeps {
   db: Database;
@@ -55,7 +55,7 @@ export function rotation(deps: RotationDeps) {
     delivery.call(
       "dns",
       { queries },
-      { result: z.record(z.string(), z.array(z.string())), timeoutMs: 30_000 },
+      { result: b.record(b.string(), b.array(b.string())), timeoutMs: 30_000 },
     );
 
   const keys = (domain: string) => signer.call("keyStates", { domain }, { result: keyInfo });
@@ -118,7 +118,7 @@ export function rotation(deps: RotationDeps) {
   };
 
   const selfCheck = async (domain: string, which: "active" | "next"): Promise<SelfCheck> => {
-    const canary = await signer.call("signCanary", { domain, which }, { result: z.string() });
+    const canary = await signer.call("signCanary", { domain, which }, { result: b.string() });
     const selectors = selectorsOf(canary);
     const found = await lookup(
       selectors.map((s) => ({ name: `${s}._domainkey.${domain}`, type: "TXT" as const })),

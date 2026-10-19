@@ -53,4 +53,4 @@ One private-network filter covers SMTP, webhooks, MTA-STS and Cloudflare request
 
 ## Supply chain
 
-Runtime dependencies are Bun and zod. Releases are built in GitHub Actions (actions pinned by commit) and ship with checksums, Sigstore signatures, SBOMs and build provenance (see [verify.md](verify.md)).
+The only runtime dependency is Bun itself. Releases are built in GitHub Actions (actions pinned by commit) and ship with checksums, Sigstore signatures, SBOMs and build provenance (see [verify.md](verify.md)).

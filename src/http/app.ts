@@ -1,7 +1,7 @@
-import { z } from "zod";
 import { hashToken, TOKEN } from "../accounts/api-keys.ts";
 import type { Logger } from "../core/log.ts";
 import type { RpcClient } from "../ipc/rpc.ts";
+import { b } from "../validate/schema.ts";
 import { VERSION } from "../version.ts";
 import { ApiError, errorResponse, fromRpc } from "./errors.ts";
 import { type PreparedEmail, prepareEmail, rescheduleSchema, sendSchema } from "./send.ts";
@@ -14,11 +14,11 @@ interface Caller {
   domains: string[] | null;
 }
 
-const authResult = z.object({
-  id: z.string(),
-  scope: z.enum(["send", "read", "full"]),
-  domains: z.array(z.string()).nullable(),
-  rateLimit: z.number(),
+const authResult = b.object({
+  id: b.string(),
+  scope: b.enum(["send", "read", "full"]),
+  domains: b.array(b.string()).nullable(),
+  rateLimit: b.number(),
 });
 
 class Buckets {
@@ -92,7 +92,7 @@ function enqueueFields(email: PreparedEmail) {
   };
 }
 
-function invalid(error: z.ZodError): ApiError {
+function invalid(error: b.ValidationError): ApiError {
   const issue = error.issues[0];
   const field = issue?.path.join(".") || "body";
   return new ApiError(
@@ -142,7 +142,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
     if (!token || !TOKEN.test(token))
       throw new ApiError(403, "invalid_api_key", "API key is invalid");
     const hash = hashToken(token);
-    let key: z.infer<typeof authResult>;
+    let key: b.infer<typeof authResult>;
     try {
       key = await core.call(
         "authenticate",
@@ -184,7 +184,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
       }
     };
 
-  const rpc = async <T>(method: string, params: unknown, result?: z.ZodType<T>): Promise<T> => {
+  const rpc = async <T>(method: string, params: unknown, result?: b.Schema<T>): Promise<T> => {
     try {
       return await core.call(method, params, { timeoutMs: 60_000, ...(result ? { result } : {}) });
     } catch (err) {
@@ -205,7 +205,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
               await core.call(
                 "health",
                 {},
-                { timeoutMs: 2_000, result: z.object({ ok: z.boolean() }) },
+                { timeoutMs: 2_000, result: b.object({ ok: b.boolean() }) },
               )
             ).ok;
           } catch {
@@ -235,7 +235,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
               ...enqueueFields(email),
               ...(idempotencyKey !== null ? { idempotencyKey, bodyHash: hashToken(text) } : {}),
             },
-            z.object({ id: z.string(), existed: z.boolean() }),
+            b.object({ id: b.string(), existed: b.boolean() }),
           );
           return Response.json({ id: r.id });
         }),
@@ -244,7 +244,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
         POST: handle(async (req) => {
           const caller = await authenticate(req);
           const text = await req.text();
-          const list = z.array(z.unknown()).min(1).max(100).safeParse(parseJson(text));
+          const list = b.array(b.unknown()).min(1).max(100).safeParse(parseJson(text));
           if (!list.success) {
             throw new ApiError(
               422,
@@ -277,7 +277,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           const r = await rpc(
             "enqueueBatch",
             { tokenHash: caller.hash, emails },
-            z.object({ data: z.array(z.object({ id: z.string() })) }),
+            b.object({ data: b.array(b.object({ id: b.string() })) }),
           );
           return Response.json({ data: r.data.map((x) => ({ id: x.id })) });
         }),
@@ -319,12 +319,12 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
       "/domains": {
         GET: handle(async (req) => {
           const caller = await authenticate(req);
-          const data = await rpc("listDomains", { tokenHash: caller.hash }, z.array(z.unknown()));
+          const data = await rpc("listDomains", { tokenHash: caller.hash }, b.array(b.unknown()));
           return Response.json({ object: "list", data });
         }),
         POST: handle(async (req) => {
           const caller = await authenticate(req);
-          const parsed = z.object({ name: z.string().min(1).max(253) }).safeParse(await json(req));
+          const parsed = b.object({ name: b.string().min(1).max(253) }).safeParse(await json(req));
           if (!parsed.success) throw invalid(parsed.error);
           return Response.json(
             await rpc("addDomain", { tokenHash: caller.hash, name: parsed.data.name }),
@@ -359,13 +359,13 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
       "/webhooks": {
         GET: handle(async (req) => {
           const caller = await authenticate(req);
-          const data = await rpc("listWebhooks", { tokenHash: caller.hash }, z.array(z.unknown()));
+          const data = await rpc("listWebhooks", { tokenHash: caller.hash }, b.array(b.unknown()));
           return Response.json({ object: "list", data });
         }),
         POST: handle(async (req) => {
           const caller = await authenticate(req);
-          const parsed = z
-            .object({ endpoint: z.string().max(2048), events: z.array(z.string()).optional() })
+          const parsed = b
+            .object({ endpoint: b.string().max(2048), events: b.array(b.string()).optional() })
             .safeParse(await json(req));
           if (!parsed.success) throw invalid(parsed.error);
           return Response.json(
@@ -391,14 +391,14 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           const data = await rpc(
             "listSuppressions",
             { tokenHash: caller.hash },
-            z.array(z.unknown()),
+            b.array(b.unknown()),
           );
           return Response.json({ object: "list", data });
         }),
         POST: handle(async (req) => {
           const caller = await authenticate(req);
-          const parsed = z
-            .object({ email: z.string().max(320), scope: z.enum(["all", "bulk"]).optional() })
+          const parsed = b
+            .object({ email: b.string().max(320), scope: b.enum(["all", "bulk"]).optional() })
             .safeParse(await json(req));
           if (!parsed.success) throw invalid(parsed.error);
           return Response.json(
@@ -463,7 +463,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
       "/ips": {
         GET: handle(async (req) => {
           const caller = await authenticate(req);
-          const data = await rpc("ips", { tokenHash: caller.hash }, z.array(z.unknown()));
+          const data = await rpc("ips", { tokenHash: caller.hash }, b.array(b.unknown()));
           return Response.json({ object: "list", data });
         }),
       },
@@ -488,7 +488,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           const r = await rpc(
             "metrics",
             { tokenHash: caller.hash },
-            z.object({ text: z.string() }),
+            b.object({ text: b.string() }),
           );
           return new Response(r.text, {
             headers: {
@@ -500,7 +500,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
       "/paths": {
         GET: handle(async (req) => {
           const caller = await authenticate(req);
-          const data = await rpc("paths", { tokenHash: caller.hash }, z.array(z.unknown()));
+          const data = await rpc("paths", { tokenHash: caller.hash }, b.array(b.unknown()));
           return Response.json({ object: "list", data });
         }),
       },

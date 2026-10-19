@@ -1,11 +1,11 @@
 import type { Database } from "bun:sqlite";
-import { z } from "zod";
 import { allows, keyForHash } from "../accounts/api-keys.ts";
 import type { Config } from "../config.ts";
 import { listDomains } from "../domains/domains.ts";
 import { listHolds } from "../guards/guards.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import type { PathView } from "../shaping/shaper.ts";
+import { b } from "../validate/schema.ts";
 import type { rotation } from "./core-rotation.ts";
 import { tokenHash } from "./wire.ts";
 
@@ -27,13 +27,13 @@ export interface DoctorDeps {
   now?: () => number;
 }
 
-const ipInfo = z.array(
-  z.object({
-    ip: z.string(),
-    ehlo: z.string(),
-    ptr: z.string().nullable(),
-    forwardConfirmed: z.boolean(),
-    problem: z.string().nullable(),
+const ipInfo = b.array(
+  b.object({
+    ip: b.string(),
+    ehlo: b.string(),
+    ptr: b.string().nullable(),
+    forwardConfirmed: b.boolean(),
+    problem: b.string().nullable(),
   }),
 );
 
@@ -166,7 +166,7 @@ export function doctorMethods(deps: DoctorDeps): Methods {
   };
 
   return {
-    doctor: method(z.object({ tokenHash }), async (p) => {
+    doctor: method(b.object({ tokenHash }), async (p) => {
       caller(p.tokenHash);
       const checks = await run();
       return {
@@ -178,7 +178,7 @@ export function doctorMethods(deps: DoctorDeps): Methods {
         },
       };
     }),
-    rotateDomain: method(z.object({ tokenHash, name: z.string().max(253) }), async (p) => {
+    rotateDomain: method(b.object({ tokenHash, name: b.string().max(253) }), async (p) => {
       caller(p.tokenHash);
       return { result: await rotation.step(p.name.toLowerCase(), true) };
     }),
