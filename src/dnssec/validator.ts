@@ -8,6 +8,15 @@ import {
   type RrsigData,
 } from "../dns/wire.ts";
 import { ALGORITHMS, DIGESTS, dsMatches } from "./crypto.ts";
+import {
+  type Denial,
+  type Nsec3Record,
+  type NsecRecord,
+  nsec3Denial,
+  nsec3WildcardProof,
+  nsecDenial,
+  nsecWildcardProof,
+} from "./denial.ts";
 import { isSubdomain, labelCount, verifyRrset } from "./rrset.ts";
 
 export type Status = "secure" | "insecure" | "bogus";
@@ -53,6 +62,11 @@ type ZoneState =
   | { status: "secure"; keys: DnskeyData[] }
   | { status: "insecure"; reason: string }
   | { status: "bogus"; reason: string; transient?: boolean };
+
+type Outcome = { status: Status; reason: string; transient?: boolean; verdict?: Denial };
+
+const insecure = (reason: string): Outcome => ({ status: "insecure", reason });
+const bogus = (reason: string): Outcome => ({ status: "bogus", reason });
 
 class Bogus extends Error {}
 
@@ -102,6 +116,7 @@ export class Validator {
   readonly #anchors: DsData[];
   readonly #now: () => number;
   readonly #zones = new Map<string, { until: number; state: Promise<ZoneState> }>();
+  readonly #unsignedAt = new Map<string, number>();
 
   constructor(o: ValidatorOptions) {
     this.#fetch = o.fetch;
@@ -127,18 +142,20 @@ export class Validator {
         return { status: "bogus", reason: `the server answered rcode ${message.rcode}`, message };
       }
       const sets = rrsets(message.answers);
-      if (sets.length === 0) {
-        return { status: "bogus", reason: "a missing record is not proven", message };
-      }
-      let status: Status = "secure";
-      let reason: string | null = null;
+      const acc: { status: Status; reason: string | null } = { status: "secure", reason: null };
+      const add = (r: Outcome) => {
+        acc.status = worst(acc.status, r.status);
+        if (r.status !== "secure") acc.reason ??= r.reason;
+      };
       for (const set of sets) {
-        const r = await this.#rrset(set, budget, 0);
-        status = worst(status, r.status);
-        if (r.status !== "secure") reason ??= r.reason;
-        if (status === "bogus") break;
+        add(await this.#rrset(set, message.authority, budget, 0));
+        if (acc.status === "bogus") break;
       }
-      return { status, reason: status === "secure" ? null : reason, message };
+      const end = chainEnd(sets, name, type);
+      if (acc.status !== "bogus" && !sets.some((x) => x.name === end && x.type === type)) {
+        add(await this.#denial(message, end, type, budget, 0, true));
+      }
+      return { status: acc.status, reason: acc.status === "secure" ? null : acc.reason, message };
     } catch (err) {
       if (err instanceof Bogus) return { status: "bogus", reason: err.message, message };
       throw err;
@@ -147,30 +164,133 @@ export class Validator {
 
   async #rrset(
     set: RRset,
+    authority: ResourceRecord[],
     budget: Budget,
     depth: number,
-  ): Promise<{ status: Status; reason: string; transient?: boolean }> {
-    if (set.sigs.length === 0)
-      return { status: "bogus", reason: `${set.name || "."} is not signed` };
+  ): Promise<Outcome> {
+    if (set.sigs.length === 0) return this.#unsigned(set.name, budget, depth);
     let reason = "";
     let transient = false;
     for (const sig of set.sigs) {
-      if (sig.labels < labelCount(set.name)) {
-        reason = `${set.name} comes from a wildcard that is not proven`;
-        continue;
-      }
       const zone = await this.#zone(sig.signer, budget, depth + 1);
-      if (zone.status === "insecure") return { status: "insecure", reason: zone.reason };
+      if (zone.status === "insecure") return insecure(zone.reason);
       if (zone.status === "bogus") {
         reason = zone.reason;
         transient ||= zone.transient === true;
         continue;
       }
       const r = await this.#verify(set, sig, zone.keys, budget);
-      if (r === null) return { status: "secure", reason: "" };
-      reason = r;
+      if (r !== null) {
+        reason = r;
+        continue;
+      }
+      const own = labelCount(set.name) - (set.name.startsWith("*.") || set.name === "*" ? 1 : 0);
+      if (sig.labels < own) {
+        const proof = await this.#proofs(authority, sig.signer, budget, depth);
+        if (proof.outcome) return proof.outcome;
+        const proven = proof.nsec3.length
+          ? nsec3WildcardProof(proof.nsec3, sig.signer, set.name, sig.labels)
+          : nsecWildcardProof(proof.nsec, set.name);
+        if (!proven) {
+          reason = `${set.name} comes from a wildcard that is not proven`;
+          continue;
+        }
+      }
+      return { status: "secure", reason: "" };
     }
     return { status: "bogus", reason, ...(transient ? { transient } : {}) };
+  }
+
+  async #proofs(
+    authority: ResourceRecord[],
+    zone: string,
+    budget: Budget,
+    depth: number,
+  ): Promise<{ outcome: Outcome | null; nsec: NsecRecord[]; nsec3: Nsec3Record[] }> {
+    const nsec: NsecRecord[] = [];
+    const nsec3: Nsec3Record[] = [];
+    for (const set of rrsets(authority)) {
+      if (set.type !== RRType.NSEC && set.type !== RRType.NSEC3) continue;
+      const sigs = set.sigs.filter((g) => g.signer === zone);
+      if (sigs.length === 0) continue;
+      const r = await this.#rrset({ ...set, sigs }, [], budget, depth);
+      if (r.status !== "secure") return { outcome: r, nsec, nsec3 };
+      for (const rec of set.records) {
+        if (rec.type === "NSEC") nsec.push({ owner: rec.name, nsec: rec.nsec });
+        if (rec.type === "NSEC3") nsec3.push({ owner: rec.name, nsec3: rec.nsec3 });
+      }
+    }
+    return { outcome: null, nsec, nsec3 };
+  }
+
+  async #denial(
+    message: DnsMessage,
+    name: string,
+    type: number,
+    budget: Budget,
+    depth: number,
+    walk: boolean,
+  ): Promise<Outcome> {
+    const signers = rrsets(message.authority)
+      .flatMap((x) => x.sigs.map((g) => g.signer))
+      .filter((z) => isSubdomain(name, z) && (type !== RRType.DS || z !== name))
+      .sort((a, b) => b.length - a.length);
+    const zone = signers[0];
+    if (zone === undefined) {
+      return walk
+        ? this.#unsigned(name, budget, depth)
+        : bogus(`the denial of ${name || "."} is not signed`);
+    }
+    const keys = await this.#zone(zone, budget, depth + 1);
+    if (keys.status === "insecure") return insecure(keys.reason);
+    if (keys.status === "bogus")
+      return {
+        status: "bogus",
+        reason: keys.reason,
+        ...(keys.transient ? { transient: true } : {}),
+      };
+    const proof = await this.#proofs(message.authority, zone, budget, depth);
+    if (proof.outcome) return proof.outcome;
+    const verdict = proof.nsec3.length
+      ? nsec3Denial(proof.nsec3, zone, name, type)
+      : nsecDenial(proof.nsec, name, type);
+    if (verdict === "too-many-iterations")
+      return insecure(`${zone || "."} uses too many NSEC3 iterations`);
+    if (verdict === null) return bogus(`the denial of ${name || "."} is not proven`);
+    if (verdict === "insecure") return { ...insecure(`${name} is delegated without DS`), verdict };
+    const nx = message.rcode === Rcode.NXDOMAIN;
+    if (nx !== (verdict === "nxdomain"))
+      return bogus(`the denial of ${name || "."} does not match the answer`);
+    return { status: "secure", reason: "", verdict };
+  }
+
+  async #unsigned(name: string, budget: Budget, depth: number): Promise<Outcome> {
+    const parts = name === "" ? [] : name.split(".");
+    const now = this.#now();
+    for (let i = 0; i < parts.length; i++) {
+      const cut = parts.slice(i).join(".");
+      if ((this.#unsignedAt.get(cut) ?? 0) > now) return insecure(`${cut} is delegated without DS`);
+    }
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const cut = parts.slice(i).join(".");
+      budget.query();
+      const msg = await this.#fetch(cut, RRType.DS);
+      const set = rrsets(msg.answers).find((x) => x.name === cut && x.type === RRType.DS);
+      if (set) {
+        const z = await this.#zone(cut, budget, depth + 1);
+        if (z.status === "insecure") return insecure(z.reason);
+        if (z.status === "bogus")
+          return { status: "bogus", reason: z.reason, ...(z.transient ? { transient: true } : {}) };
+        continue;
+      }
+      const d = await this.#denial(msg, cut, RRType.DS, budget, depth + 1, false);
+      if (d.status === "insecure") {
+        if (d.verdict === "insecure") this.#unsignedAt.set(cut, now + HOUR);
+        return d;
+      }
+      if (d.status === "bogus") return d;
+    }
+    return bogus(`${name || "."} is not signed`);
   }
 
   async #verify(
@@ -237,10 +357,18 @@ export class Validator {
       budget.query();
       const msg = await this.#fetch(zone, RRType.DS);
       const set = rrsets(msg.answers).find((s) => s.name === zone && s.type === RRType.DS);
-      if (!set) throw new Bogus(`the delegation to ${zone} is not proven`);
+      if (!set) {
+        const d = await this.#denial(msg, zone, RRType.DS, budget, depth, false);
+        if (d.status === "insecure")
+          return { state: { status: "insecure", reason: d.reason }, ttl };
+        if (d.transient) throw new Transient(d.reason);
+        throw new Bogus(
+          d.status === "bogus" ? d.reason : `${zone} signs itself but its parent has no DS for it`,
+        );
+      }
       const sigs = set.sigs.filter((s) => s.signer !== zone && isSubdomain(zone, s.signer));
       if (sigs.length === 0) throw new Bogus(`the DS for ${zone} is not signed by a parent zone`);
-      const p = await this.#rrset({ ...set, sigs }, budget, depth);
+      const p = await this.#rrset({ ...set, sigs }, [], budget, depth);
       if (p.status === "insecure") return { state: { status: "insecure", reason: p.reason }, ttl };
       if (p.status === "bogus") throw p.transient ? new Transient(p.reason) : new Bogus(p.reason);
       ds = set.records.flatMap((r) => (r.type === "DS" ? [r.ds] : []));
@@ -285,6 +413,18 @@ export class Validator {
     }
     throw new Bogus(reason);
   }
+}
+
+function chainEnd(sets: RRset[], name: string, type: number): string {
+  if (type === RRType.CNAME) return name;
+  let current = name;
+  for (let hops = 0; hops < 8; hops++) {
+    const alias = sets.find((x) => x.name === current && x.type === RRType.CNAME);
+    const target = alias?.records.find((r) => r.type === "CNAME");
+    if (target?.type !== "CNAME") return current;
+    current = target.target;
+  }
+  return current;
 }
 
 function emptyMessage(): DnsMessage {

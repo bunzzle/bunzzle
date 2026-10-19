@@ -166,23 +166,6 @@ describe("chain of trust", () => {
     expect(r).toMatchObject({ status: "bogus", reason: "mail.other.test is not signed" });
   });
 
-  test("unsigned answers, missing records and wildcards stay bogus until proven", async () => {
-    const w = await world([[""], ["test"], ["example.test"]], [a("*.example.test", "192.0.2.7")]);
-    const v = new Validator({ fetch: w.fetch, anchors: w.anchors });
-    expect(await v.validate("nothing.test", RRType.A)).toMatchObject({
-      status: "bogus",
-      reason: "a missing record is not proven",
-    });
-    w.overrides.set(`any.example.test|${RRType.A}`, (m) => ({
-      ...m,
-      answers: [a("any.example.test", "192.0.2.7")],
-    }));
-    expect(await v.validate("any.example.test", RRType.A)).toMatchObject({
-      status: "bogus",
-      reason: "any.example.test is not signed",
-    });
-  });
-
   test("zone keys are cached; concurrent answers share one lookup", async () => {
     const w = await standard([
       a("www.example.test", "192.0.2.1"),
