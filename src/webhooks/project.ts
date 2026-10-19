@@ -31,7 +31,9 @@ function typeOf(kind: string, data: Record<string, unknown>): EventType | null {
     case "canceled":
       return "email.canceled";
     case "dead":
-      return data["code"] === "expired" || data["code"] === "retries_exhausted"
+      return data["code"] === "expired" ||
+        data["code"] === "retries_exhausted" ||
+        data["code"] === "operator"
         ? "email.failed"
         : null;
     default:

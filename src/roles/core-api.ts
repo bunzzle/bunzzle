@@ -47,10 +47,21 @@ import { dayOf, estimatedDays, listWarmup } from "../ips/warmup.ts";
 import { collect, render } from "../metrics/metrics.ts";
 import { AddressError, asciiDomain, domainOf, normalizeAddress } from "../mime/address.ts";
 import { senderDomainOf } from "../mime/from.ts";
+import { queueSummary, removeQueued, resume, type Suspension, suspend } from "../queue/control.ts";
 import type { PathView } from "../shaping/shaper.ts";
 import { suppressionFor } from "../suppressions/store.ts";
 import { b } from "../validate/schema.ts";
 import { DOMAIN, enqueueParams, MESSAGE_ID, tokenHash } from "./wire.ts";
+
+const SUSPEND_TARGET =
+  /^(domain:(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}|provider:[a-z0-9-]{1,40})$/;
+
+const suspensionView = (s: Suspension) => ({
+  target: s.target,
+  reason: s.reason,
+  until: s.until === null ? null : new Date(s.until).toISOString(),
+  since: new Date(s.createdAt).toISOString(),
+});
 
 type EnqueueInput = Omit<b.output<typeof enqueueParams>, "tokenHash">;
 
@@ -633,6 +644,76 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
       log.info("hold released", { id: p.id });
       return { id: p.id, released: true };
     }),
+
+    queue: method(b.object({ tokenHash }), (p) => {
+      caller(p.tokenHash, "read");
+      const q = queueSummary(db, now());
+      return { ...q, suspensions: q.suspensions.map(suspensionView) };
+    }),
+
+    suspend: method(
+      b.object({
+        tokenHash,
+        target: b.string().regex(SUSPEND_TARGET, "must be domain:NAME or provider:ID"),
+        reason: b.string().min(1).max(500),
+        until: b.number().int().positive().nullable().default(null),
+      }),
+      async (p) => {
+        caller(p.tokenHash, "full");
+        const t = now();
+        if (p.until !== null && p.until <= t) throw new RpcError("invalid", "until is in the past");
+        const s = await writer.run((d) => suspend(d, p.target, p.reason, p.until, t));
+        log.warn("delivery suspended by an operator", { target: p.target, reason: p.reason });
+        return suspensionView(s);
+      },
+    ),
+
+    resume: method(b.object({ tokenHash, target: b.string().max(300) }), async (p) => {
+      caller(p.tokenHash, "full");
+      const r = await writer.run((d) => resume(d, p.target, now()));
+      if (!r.resumed) throw new RpcError("not-found", `${p.target} is not suspended`);
+      log.info("delivery resumed by an operator", { target: p.target, woken: r.woken });
+      return { target: p.target, resumed: true, woken: r.woken };
+    }),
+
+    removeQueued: method(
+      b.object({
+        tokenHash,
+        action: b.enum(["fail", "cancel"]),
+        reason: b.string().min(1).max(500),
+        domain: b.string().regex(DOMAIN).optional(),
+        senderDomain: b.string().regex(DOMAIN).optional(),
+        olderThanMs: b.number().int().nonnegative().optional(),
+        dryRun: b.boolean().default(false),
+      }),
+      async (p) => {
+        caller(p.tokenHash, "full");
+        const filter = {
+          ...(p.domain !== undefined ? { domain: p.domain } : {}),
+          ...(p.senderDomain !== undefined ? { senderDomain: p.senderDomain } : {}),
+          ...(p.olderThanMs !== undefined ? { olderThanMs: p.olderThanMs } : {}),
+        };
+        if (Object.keys(filter).length === 0) {
+          throw new RpcError("invalid", "give at least one filter: domain, sender domain or age");
+        }
+        const r = await writer.run((d) =>
+          removeQueued(d, filter, p.action, p.reason, now(), p.dryRun),
+        );
+        if (!p.dryRun && r.jobs > 0) {
+          log.warn(`queued email ${p.action === "cancel" ? "canceled" : "failed"} by an operator`, {
+            ...filter,
+            reason: p.reason,
+            emails: r.emails,
+          });
+        }
+        return {
+          dry_run: p.dryRun,
+          emails: r.emails,
+          recipients: r.recipients,
+          skipped_sending: r.skippedSending,
+        };
+      },
+    ),
 
     metrics: method(b.object({ tokenHash }), (p) => {
       caller(p.tokenHash, "read");
