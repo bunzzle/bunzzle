@@ -51,6 +51,19 @@ Bounces, complaints and unsubscribe replies. Off unless a port is set.
 | `BUNZZLE_INBOUND_TLS_CERT_FILE` | | Certificate for STARTTLS on the inbound port. |
 | `BUNZZLE_INBOUND_TLS_KEY_FILE` | | Private key for that certificate. |
 
+## SMTP submission
+
+For apps that can only send through SMTP. Off unless a port is set, and it needs a certificate: nothing is accepted before TLS.
+
+| Variable | Default | |
+|---|---|---|
+| `BUNZZLE_SUBMISSION_PORT` | | Port with STARTTLS. `587` in production. |
+| `BUNZZLE_SUBMISSION_TLS_PORT` | | Port with TLS from the first byte. `465` in production. |
+| `BUNZZLE_SUBMISSION_HOST` | `0.0.0.0` | Address the submission ports listen on. |
+| `BUNZZLE_SUBMISSION_HOSTNAME` | `BUNZZLE_INBOUND_HOSTNAME` or `BUNZZLE_EHLO_NAME` | Name in the greeting; the certificate must match it. |
+| `BUNZZLE_SUBMISSION_TLS_CERT_FILE` | | Certificate for the submission ports. Required when a port is set. |
+| `BUNZZLE_SUBMISSION_TLS_KEY_FILE` | | Private key for that certificate. Readable by the `bunzzle-api` user. |
+
 ## DNS on Cloudflare
 
 | Variable | Default | |

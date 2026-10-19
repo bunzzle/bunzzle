@@ -7,6 +7,7 @@ export interface Served {
   dir: string;
   url: string;
   inboundPort: number | null;
+  submissionPorts: number[];
   pids: Map<string, number>;
   logs: Record<string, unknown>[];
   stop(): Promise<number>;
@@ -32,6 +33,7 @@ export async function startServe(env: Record<string, string>): Promise<Served> {
   const logs: Record<string, unknown>[] = [];
   const listening = Promise.withResolvers<string>();
   let inboundPort: number | null = null;
+  let submissionPorts: number[] = [];
   let stderrText = "";
   const read = async (stream: ReadableStream<Uint8Array>, isErr: boolean) => {
     let buf = "";
@@ -60,6 +62,9 @@ export async function startServe(env: Record<string, string>): Promise<Served> {
         }
         if (entry["msg"] === "listening") {
           inboundPort = typeof entry["inboundPort"] === "number" ? entry["inboundPort"] : null;
+          submissionPorts = Array.isArray(entry["submissionPorts"])
+            ? (entry["submissionPorts"] as number[])
+            : [];
           listening.resolve(String(entry["url"]));
         }
       }
@@ -76,6 +81,9 @@ export async function startServe(env: Record<string, string>): Promise<Served> {
     url,
     get inboundPort() {
       return inboundPort;
+    },
+    get submissionPorts() {
+      return submissionPorts;
     },
     pids,
     logs,
