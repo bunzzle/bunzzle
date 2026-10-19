@@ -51,6 +51,8 @@ import type { PathView } from "../shaping/shaper.ts";
 import { suppressionFor } from "../suppressions/store.ts";
 import { DOMAIN, enqueueParams, MESSAGE_ID, tokenHash } from "./wire.ts";
 
+type EnqueueInput = Omit<z.output<typeof enqueueParams>, "tokenHash">;
+
 const MAX_SCHEDULE_MS = 72 * 3_600_000;
 
 export interface CoreDeps {
@@ -154,6 +156,152 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
     return key;
   };
 
+  const prepareEnqueue = async (p: EnqueueInput, key: ApiKey) => {
+    const id = p.id ?? Bun.randomUUIDv7();
+    if (p.id !== undefined && emailExists(db, id)) return { id, existed: true as const };
+    let headerDomain: string;
+    let envelopeFrom: string;
+    try {
+      headerDomain = senderDomainOf(p.data);
+      envelopeFrom = normalizeAddress(p.from);
+    } catch (err) {
+      throw new RpcError("invalid", (err as Error).message);
+    }
+    if (domainOf(envelopeFrom) !== headerDomain) {
+      throw new RpcError("invalid", "the envelope sender must use the From header's domain");
+    }
+    if (key.domains && !key.domains.includes(headerDomain)) {
+      throw new RpcError("forbidden", `this API key cannot send from ${headerDomain}`);
+    }
+    const domain = getDomain(db, headerDomain);
+    if (domain?.status !== "verified") {
+      throw new RpcError(
+        "unverified-domain",
+        domain
+          ? `The ${headerDomain} domain is not verified yet. Publish its DNS records, then verify it.`
+          : `The ${headerDomain} domain is not registered. Add it with \`bunzzle domains add ${headerDomain}\`.`,
+      );
+    }
+    if (!(await signerHasKeys(headerDomain))) {
+      throw new RpcError("unverified-domain", `no DKIM key for ${headerDomain}; it cannot send`);
+    }
+    const t = now();
+    if (p.scheduledAt !== undefined && p.scheduledAt > t + MAX_SCHEDULE_MS) {
+      throw new RpcError("invalid", "scheduled_at can be at most 72 hours ahead");
+    }
+    if (p.expiresAt !== undefined && p.expiresAt <= t) {
+      throw new RpcError("invalid", "expires_at is in the past");
+    }
+    const idem =
+      p.idempotencyKey !== undefined ? { key: p.idempotencyKey, hash: p.bodyHash ?? "" } : null;
+    if (idem) {
+      const prev = findIdempotent(db, key.id, idem.key, t);
+      if (prev) {
+        if (prev.bodyHash !== idem.hash) {
+          throw new RpcError(
+            "idempotency-conflict",
+            "this Idempotency-Key was used with a different request",
+          );
+        }
+        return { id: prev.messageId, existed: true as const };
+      }
+    }
+    const lane = (p.priority ?? 0) > 0 ? "bulk" : "transactional";
+    if (lane === "bulk" && p.recipients.length !== 1) {
+      throw new RpcError("invalid", "a bulk email must have exactly one recipient");
+    }
+    if (lane === "bulk") {
+      const hold =
+        activeHold(db, `domain:${headerDomain}`, "bulk") ??
+        (key.id !== "operator" ? activeHold(db, `key:${key.id}`, "bulk") : null);
+      if (hold) {
+        throw new RpcError(
+          "held",
+          `Bulk sending is on hold (${hold.reason}). An operator must review and release it.`,
+        );
+      }
+      if (key.id !== "operator") {
+        const count = await writer.run((d) => countKeyBulk(d, key.id, 1, t));
+        const threshold = anomalyThreshold(db, key.id, t, deps.anomalyFloor ?? 500);
+        if (count > threshold) {
+          const reason = `unusual volume: ${count} bulk emails this hour from API key ${key.prefix}…, normal is under ${threshold}`;
+          const { created } = await writer.run((d) =>
+            createHold(d, `key:${key.id}`, "bulk", reason, t),
+          );
+          if (created)
+            log.error("bulk mail held for an API key: possible leaked key", {
+              key: key.prefix,
+              count,
+              threshold,
+            });
+          throw new RpcError(
+            "held",
+            `Bulk sending is on hold (${reason}). An operator must review and release it.`,
+          );
+        }
+      }
+    }
+    const suppressed = new Map<string, { reason: string; scope: string }>();
+    for (const raw of p.recipients) {
+      let address: string;
+      try {
+        address = normalizeAddress(raw);
+      } catch (err) {
+        throw new RpcError("invalid", (err as Error).message);
+      }
+      const s = suppressionFor(db, address, lane, t);
+      if (s) suppressed.set(address, { reason: s.reason, scope: s.scope });
+    }
+    const body = await sealBody(await deps.currentKey(), id, p.data);
+    return {
+      id,
+      existed: false as const,
+      persist: (d: Database) => {
+        if (idem) {
+          const prev = findIdempotent(d, key.id, idem.key, t);
+          if (prev) {
+            if (prev.bodyHash !== idem.hash) {
+              throw new RpcError(
+                "idempotency-conflict",
+                "this Idempotency-Key was used with a different request",
+              );
+            }
+            return { id: prev.messageId, existed: true };
+          }
+        }
+        enqueueEmail(
+          d,
+          {
+            id,
+            body,
+            from: envelopeFrom,
+            recipients: p.recipients,
+            smtpUtf8: p.smtpUtf8,
+            requireTls: p.requireTls,
+            suppressed,
+            metadata: {
+              ...(p.meta ?? {}),
+              apiKeyId: key.id === "operator" ? null : key.id,
+              scheduledAt: p.scheduledAt ?? null,
+            },
+            ...(p.expiresAt !== undefined ? { expiresAt: p.expiresAt } : {}),
+            ...(p.scheduledAt !== undefined ? { runAfter: p.scheduledAt } : {}),
+            ...(p.priority !== undefined ? { priority: p.priority } : {}),
+          },
+          t,
+        );
+        if (idem) rememberIdempotent(d, key.id, idem.key, idem.hash, id, t);
+        return { id, existed: false };
+      },
+    };
+  };
+
+  const enqueueFailed = (err: unknown): never => {
+    if (err instanceof RpcError) throw err;
+    if (err instanceof AddressError) throw new RpcError("invalid", err.message);
+    throw new RpcError("invalid", (err as Error).message);
+  };
+
   const changeable = (key: ApiKey, id: string) => {
     const email = MESSAGE_ID.test(id) ? scheduledEmail(db, id) : null;
     if (!email) throw new RpcError("not-found", "email not found");
@@ -219,147 +367,47 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
 
     enqueue: method(enqueueParams, async (p) => {
       const key = caller(p.tokenHash, "send");
-      const id = p.id ?? Bun.randomUUIDv7();
-      if (p.id !== undefined && emailExists(db, id)) return { id, existed: true };
-      let headerDomain: string;
-      let envelopeFrom: string;
+      const r = await prepareEnqueue(p, key);
+      if (r.existed) return { id: r.id, existed: true };
       try {
-        headerDomain = senderDomainOf(p.data);
-        envelopeFrom = normalizeAddress(p.from);
+        return await writer.run((d) => r.persist(d));
       } catch (err) {
-        throw new RpcError("invalid", (err as Error).message);
-      }
-      if (domainOf(envelopeFrom) !== headerDomain) {
-        throw new RpcError("invalid", "the envelope sender must use the From header's domain");
-      }
-      if (key.domains && !key.domains.includes(headerDomain)) {
-        throw new RpcError("forbidden", `this API key cannot send from ${headerDomain}`);
-      }
-      const domain = getDomain(db, headerDomain);
-      if (domain?.status !== "verified") {
-        throw new RpcError(
-          "unverified-domain",
-          domain
-            ? `The ${headerDomain} domain is not verified yet. Publish its DNS records, then verify it.`
-            : `The ${headerDomain} domain is not registered. Add it with \`bunzzle domains add ${headerDomain}\`.`,
-        );
-      }
-      if (!(await signerHasKeys(headerDomain))) {
-        throw new RpcError("unverified-domain", `no DKIM key for ${headerDomain}; it cannot send`);
-      }
-      const t = now();
-      if (p.scheduledAt !== undefined && p.scheduledAt > t + MAX_SCHEDULE_MS) {
-        throw new RpcError("invalid", "scheduled_at can be at most 72 hours ahead");
-      }
-      if (p.expiresAt !== undefined && p.expiresAt <= t) {
-        throw new RpcError("invalid", "expires_at is in the past");
-      }
-      const idem =
-        p.idempotencyKey !== undefined ? { key: p.idempotencyKey, hash: p.bodyHash ?? "" } : null;
-      if (idem) {
-        const prev = findIdempotent(db, key.id, idem.key, t);
-        if (prev) {
-          if (prev.bodyHash !== idem.hash) {
-            throw new RpcError(
-              "idempotency-conflict",
-              "this Idempotency-Key was used with a different request",
-            );
-          }
-          return { id: prev.messageId, existed: true };
-        }
-      }
-      const lane = (p.priority ?? 0) > 0 ? "bulk" : "transactional";
-      if (lane === "bulk" && p.recipients.length !== 1) {
-        throw new RpcError("invalid", "a bulk email must have exactly one recipient");
-      }
-      if (lane === "bulk") {
-        const hold =
-          activeHold(db, `domain:${headerDomain}`, "bulk") ??
-          (key.id !== "operator" ? activeHold(db, `key:${key.id}`, "bulk") : null);
-        if (hold) {
-          throw new RpcError(
-            "held",
-            `Bulk sending is on hold (${hold.reason}). An operator must review and release it.`,
-          );
-        }
-        if (key.id !== "operator") {
-          const count = await writer.run((d) => countKeyBulk(d, key.id, 1, t));
-          const threshold = anomalyThreshold(db, key.id, t, deps.anomalyFloor ?? 500);
-          if (count > threshold) {
-            const reason = `unusual volume: ${count} bulk emails this hour from API key ${key.prefix}…, normal is under ${threshold}`;
-            const { created } = await writer.run((d) =>
-              createHold(d, `key:${key.id}`, "bulk", reason, t),
-            );
-            if (created)
-              log.error("bulk mail held for an API key: possible leaked key", {
-                key: key.prefix,
-                count,
-                threshold,
-              });
-            throw new RpcError(
-              "held",
-              `Bulk sending is on hold (${reason}). An operator must review and release it.`,
-            );
-          }
-        }
-      }
-      const suppressed = new Map<string, { reason: string; scope: string }>();
-      for (const raw of p.recipients) {
-        let address: string;
-        try {
-          address = normalizeAddress(raw);
-        } catch (err) {
-          throw new RpcError("invalid", (err as Error).message);
-        }
-        const s = suppressionFor(db, address, lane, t);
-        if (s) suppressed.set(address, { reason: s.reason, scope: s.scope });
-      }
-      const body = await sealBody(await deps.currentKey(), id, p.data);
-      try {
-        return await writer.run((d) => {
-          if (idem) {
-            const prev = findIdempotent(d, key.id, idem.key, t);
-            if (prev) {
-              if (prev.bodyHash !== idem.hash) {
-                throw new RpcError(
-                  "idempotency-conflict",
-                  "this Idempotency-Key was used with a different request",
-                );
-              }
-              return { id: prev.messageId, existed: true };
-            }
-          }
-          enqueueEmail(
-            d,
-            {
-              id,
-              body,
-              from: envelopeFrom,
-              recipients: p.recipients,
-              smtpUtf8: p.smtpUtf8,
-              requireTls: p.requireTls,
-              suppressed,
-              metadata: {
-                ...(p.meta ?? {}),
-                apiKeyId: key.id === "operator" ? null : key.id,
-                scheduledAt: p.scheduledAt ?? null,
-              },
-              ...(p.expiresAt !== undefined ? { expiresAt: p.expiresAt } : {}),
-              ...(p.scheduledAt !== undefined ? { runAfter: p.scheduledAt } : {}),
-              ...(p.priority !== undefined ? { priority: p.priority } : {}),
-            },
-            t,
-          );
-          if (idem) rememberIdempotent(d, key.id, idem.key, idem.hash, id, t);
-          return { id, existed: false };
-        });
-      } catch (err) {
-        if (err instanceof RpcError) throw err;
-        if (emailExists(db, id)) return { id, existed: true };
-        if (err instanceof AddressError) throw new RpcError("invalid", err.message);
-        throw new RpcError("invalid", (err as Error).message);
+        if (!(err instanceof RpcError) && emailExists(db, r.id)) return { id: r.id, existed: true };
+        return enqueueFailed(err);
       }
     }),
+
+    enqueueBatch: method(
+      z.object({
+        tokenHash,
+        emails: z
+          .array(enqueueParams.omit({ tokenHash: true }))
+          .min(1)
+          .max(100),
+      }),
+      async (p) => {
+        const key = caller(p.tokenHash, "send");
+        const ready: Awaited<ReturnType<typeof prepareEnqueue>>[] = [];
+        for (const [i, e] of p.emails.entries()) {
+          try {
+            ready.push(await prepareEnqueue(e, key));
+          } catch (err) {
+            if (err instanceof RpcError)
+              throw new RpcError(err.code, `emails[${i}]: ${err.message}`);
+            throw err;
+          }
+        }
+        try {
+          return {
+            data: await writer.run((d) =>
+              ready.map((r) => (r.existed ? { id: r.id, existed: true } : r.persist(d))),
+            ),
+          };
+        } catch (err) {
+          return enqueueFailed(err);
+        }
+      },
+    ),
 
     getEmail: method(z.object({ tokenHash, id: z.string() }), ({ tokenHash: hash, id }) => {
       caller(hash, "read");

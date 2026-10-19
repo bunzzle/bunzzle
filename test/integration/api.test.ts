@@ -303,6 +303,59 @@ describe("scheduled emails", () => {
   });
 });
 
+describe("POST /emails/batch", () => {
+  let key = "";
+  beforeAll(async () => {
+    key = await newKey("--scope", "full", "--rate-limit", "1000");
+  });
+  const batch = (body: unknown, headers: Record<string, string> = {}) =>
+    api("/emails/batch", { method: "POST", body: JSON.stringify(body), token: key, headers });
+
+  test("queues every email and returns the ids in order", async () => {
+    const r = await batch([
+      email({ to: ["a@example.test"] }),
+      email({ to: ["b@example.test"] }),
+      email({ to: ["c@example.test"] }),
+    ]);
+    expect(r.status).toBe(200);
+    const { data } = (await r.json()) as { data: { id: string }[] };
+    expect(data.length).toBe(3);
+    expect(new Set(data.map((d) => d.id)).size).toBe(3);
+    const view = (await (await api(`/emails/${data[1]?.id}`, { token: key })).json()) as {
+      to: string[];
+    };
+    expect(view.to).toEqual(["b@example.test"]);
+  });
+
+  test("one bad email refuses the whole batch and nothing is queued", async () => {
+    const headers = { "idempotency-key": "batch-atomic" };
+    const bad = await batch([email(), email({ from: "x@unknown.test" })], headers);
+    expect(bad.status).toBe(403);
+    expect(((await bad.json()) as { message: string }).message).toStartWith("emails[1]:");
+    const invalid = await batch([email(), email({ subject: undefined, html: undefined })]);
+    expect(invalid.status).toBe(422);
+    expect(((await invalid.json()) as { message: string }).message).toStartWith("emails[1]:");
+    const after = await batch([email({ to: ["d@example.test"] })], headers);
+    expect(after.status).toBe(200);
+  });
+
+  test("the Idempotency-Key covers the whole batch", async () => {
+    const headers = { "idempotency-key": "batch-42" };
+    const body = [email({ to: ["e@example.test"] }), email({ to: ["f@example.test"] })];
+    const a = (await (await batch(body, headers)).json()) as { data: { id: string }[] };
+    const b = (await (await batch(body, headers)).json()) as { data: { id: string }[] };
+    expect(b.data).toEqual(a.data);
+    const changed = await batch([email({ to: ["g@example.test"] })], headers);
+    expect(changed.status).toBe(409);
+  });
+
+  test("empty, too large and non-array bodies are 422", async () => {
+    expect((await batch([])).status).toBe(422);
+    expect((await batch(Array.from({ length: 101 }, () => email()))).status).toBe(422);
+    expect((await batch(email())).status).toBe(422);
+  });
+});
+
 describe("scopes, domain limits, rate limits, revocation", () => {
   test("a send-only key cannot read, a read-only key cannot send", async () => {
     const sendOnly = await newKey("--scope", "send");
