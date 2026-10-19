@@ -3,7 +3,12 @@ import type { Logger } from "../core/log.ts";
 import { authResult, Buckets } from "../http/app.ts";
 import { type RpcClient, RpcError } from "../ipc/rpc.ts";
 import { type AddressError, normalizeAddress } from "../mime/address.ts";
-import { type SmtpReply, type SmtpSession, startSmtpServer } from "../smtpd/server.ts";
+import {
+  DEFAULT_BLOCKING,
+  type SmtpReply,
+  type SmtpSession,
+  startSmtpServer,
+} from "../smtpd/server.ts";
 import { b } from "../validate/schema.ts";
 import { prepareSubmitted, SubmitError } from "./prepare.ts";
 
@@ -62,6 +67,7 @@ export function startSubmission(o: SubmissionOptions): { port: number; stop(): v
     maxConnectionsPerIp: 20,
     idleMs: 5 * 60_000,
     authFailures: { max: 10, windowMs: 15 * 60_000 },
+    blocking: DEFAULT_BLOCKING,
     hooks: {
       auth: async (password, session) => {
         const token = password.trim();

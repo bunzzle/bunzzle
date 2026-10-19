@@ -1,4 +1,4 @@
-import { startSmtpServer } from "../smtpd/server.ts";
+import { DEFAULT_BLOCKING, startSmtpServer } from "../smtpd/server.ts";
 
 export interface InboundHandlers {
   recipient(address: string): Promise<boolean>;
@@ -14,6 +14,7 @@ export interface InboundOptions {
   maxRecipients?: number;
   idleMs?: number;
   tls?: { cert: string; key: string } | null;
+  blocking?: { maxStrikes: number; windowMs: number; banMs: number } | null;
 }
 
 export function startInboundServer(o: InboundOptions): { port: number; stop(): void } {
@@ -27,6 +28,7 @@ export function startInboundServer(o: InboundOptions): { port: number; stop(): v
     maxRecipients: o.maxRecipients ?? 10,
     idleMs: o.idleMs ?? 60_000,
     maxConnectionsPerIp: 50,
+    blocking: o.blocking === undefined ? DEFAULT_BLOCKING : o.blocking,
     hooks: {
       recipient: async (address) =>
         (await o.handlers.recipient(address))
