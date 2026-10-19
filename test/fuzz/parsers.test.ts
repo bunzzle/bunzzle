@@ -6,6 +6,14 @@ import { ApiError } from "../../src/http/errors.ts";
 import { prepareEmail, sendSchema } from "../../src/http/send.ts";
 import { classifyReport, LIMITS, ParseError, parseHeaders } from "../../src/inbound/parse.ts";
 import { AddressError, normalizeAddress, parseAddress } from "../../src/mime/address.ts";
+import {
+  decodeWords,
+  MIME_LIMITS,
+  MimeParseError,
+  parseMime,
+  parseParams,
+  walkParts,
+} from "../../src/mime/parse.ts";
 import { classify, retryHint } from "../../src/replies/classify.ts";
 import { makeToken, readToken, unbase32 } from "../../src/signer/tokens.ts";
 import { mxAllowed, parsePolicy } from "../../src/smtp/mta-sts.ts";
@@ -135,6 +143,12 @@ I'm afraid I wasn't able to deliver your message to the following addresses.
 `);
 
 const MIME_WORDS = [
+  "=?UTF-8?B?w4dh?=",
+  "=?iso-8859-1?Q?caf=E9_x?= ",
+  "; filename*0*=UTF-8''%C3%A7",
+  '; filename*1="b"',
+  "Content-Type: text/plain; charset=koi8-r\r\n",
+  "Content-Type: multipart/digest; boundary=ABC\r\n",
   "\r\n",
   "\r\n\r\n",
   "--ABC\r\n",
@@ -220,6 +234,51 @@ describe("fuzz: parsers that see outside data", () => {
         }
         expect(performance.now() - started).toBeLessThan(1_000);
       }
+    },
+    LONG,
+  );
+
+  test(
+    "MIME parser",
+    async () => {
+      const findings = await fuzz({
+        seeds: [DSN, ARF, AUTO, QMAIL],
+        dictionary: MIME_WORDS,
+        maxLength: 128 * 1024,
+        iterations: 3,
+        expected: (e) => e instanceof MimeParseError,
+        run(input) {
+          const parts = walkParts(parseMime(input));
+          expect(parts.length).toBeLessThanOrEqual(MIME_LIMITS.maxParts);
+          for (const p of parts) {
+            expect(p.content.length).toBeLessThanOrEqual(input.length);
+            for (const v of p.headers.values()) for (const h of v) decodeWords(h);
+          }
+        },
+      });
+      expect(report(findings)).toBe("");
+    },
+    LONG,
+  );
+
+  test(
+    "encoded words and parameters",
+    async () => {
+      const findings = await fuzz({
+        seeds: [
+          "=?UTF-8?B?w4dhbMSxxZ9tYQ==?= =?UTF-8?Q?a_b?=",
+          'attachment; filename*0*=UTF-8\'\'%C3%A7al; filename*1="x"; name="a;b" (c)',
+        ],
+        dictionary: MIME_WORDS,
+        maxLength: 8 * 1024,
+        run(input) {
+          const s = latin1.decode(input);
+          decodeWords(s);
+          const p = parseParams(s);
+          expect(p.params.size).toBeLessThanOrEqual(input.length);
+        },
+      });
+      expect(report(findings)).toBe("");
     },
     LONG,
   );
