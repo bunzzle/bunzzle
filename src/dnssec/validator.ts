@@ -257,7 +257,8 @@ export class Validator {
     if (verdict === "too-many-iterations")
       return insecure(`${zone || "."} uses too many NSEC3 iterations`);
     if (verdict === null) return bogus(`the denial of ${name || "."} is not proven`);
-    if (verdict === "insecure") return { ...insecure(`${name} is delegated without DS`), verdict };
+    if (verdict === "insecure")
+      return { ...insecure(`${name} is in an unsigned delegation`), verdict };
     const nx = message.rcode === Rcode.NXDOMAIN;
     if (nx !== (verdict === "nxdomain"))
       return bogus(`the denial of ${name || "."} does not match the answer`);
@@ -269,7 +270,8 @@ export class Validator {
     const now = this.#now();
     for (let i = 0; i < parts.length; i++) {
       const cut = parts.slice(i).join(".");
-      if ((this.#unsignedAt.get(cut) ?? 0) > now) return insecure(`${cut} is delegated without DS`);
+      if ((this.#unsignedAt.get(cut) ?? 0) > now)
+        return insecure(`${cut} is in an unsigned delegation`);
     }
     for (let i = parts.length - 1; i >= 0; i--) {
       const cut = parts.slice(i).join(".");

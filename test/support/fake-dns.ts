@@ -1,4 +1,4 @@
-import { RRType } from "../../src/dns/wire.ts";
+import { type DnsMessage, type ResourceRecord, RRType } from "../../src/dns/wire.ts";
 
 export interface ZoneEntry {
   MX?: [number, string][];
@@ -41,6 +41,54 @@ function ipv6Bytes(ip: string): number[] {
 function rr(name: string, type: number, ttl: number, data: number[]): number[] {
   return [...encodeName(name), ...u16(type), ...u16(1), ...u32(ttl), ...u16(data.length), ...data];
 }
+
+export interface MessageSource {
+  fetch(name: string, type: number): Promise<DnsMessage>;
+}
+
+function encodeRecord(r: ResourceRecord): number[] {
+  return [
+    ...encodeName(r.name),
+    ...u16(r.rrtype),
+    ...u16(1),
+    ...u32(r.ttl),
+    ...u16(r.rdata.length),
+    ...r.rdata,
+  ];
+}
+
+async function answerFromSource(
+  src: MessageSource,
+  q: Uint8Array,
+  tcp: boolean,
+): Promise<Uint8Array> {
+  const { id, name, type, end } = parseQuery(q);
+  const msg = await src.fetch(name, type);
+  const answers = msg.answers.map(encodeRecord);
+  const authority = msg.authority.map(encodeRecord);
+  const size = 12 + (end - 12) + [...answers, ...authority].reduce((n, r) => n + r.length, 0);
+  const truncated = !tcp && size > 1232;
+  const flags = 0x8000 | 0x0100 | 0x0080 | (truncated ? 0x0200 : 0) | msg.rcode;
+  return new Uint8Array([
+    ...u16(id),
+    ...u16(flags),
+    ...u16(1),
+    ...u16(truncated ? 0 : answers.length),
+    ...u16(truncated ? 0 : authority.length),
+    ...u16(0),
+    ...q.subarray(12, end),
+    ...(truncated ? [] : [...answers.flat(), ...authority.flat()]),
+  ]);
+}
+
+const respond = (
+  zone: Zone | MessageSource,
+  q: Uint8Array,
+  tcp: boolean,
+): Promise<Uint8Array | null> =>
+  "fetch" in zone && typeof zone.fetch === "function"
+    ? answerFromSource(zone as MessageSource, q, tcp)
+    : Promise.resolve(answer(zone as Zone, q, tcp));
 
 export interface FakeDns {
   port: number;
@@ -143,7 +191,7 @@ function answer(zone: Zone, q: Uint8Array, tcp: boolean): Uint8Array | null {
   ]);
 }
 
-export async function startFakeDns(zone: Zone, port = 0): Promise<FakeDns> {
+export async function startFakeDns(zone: Zone | MessageSource, port = 0): Promise<FakeDns> {
   for (let attempt = 1; ; attempt++) {
     try {
       return await listenFakeDns(zone, port);
@@ -153,7 +201,7 @@ export async function startFakeDns(zone: Zone, port = 0): Promise<FakeDns> {
   }
 }
 
-async function listenFakeDns(zone: Zone, port: number): Promise<FakeDns> {
+async function listenFakeDns(zone: Zone | MessageSource, port: number): Promise<FakeDns> {
   const queries: FakeDns["queries"] = [];
   const udp = await Bun.udpSocket({
     hostname: "127.0.0.1",
@@ -163,8 +211,9 @@ async function listenFakeDns(zone: Zone, port: number): Promise<FakeDns> {
       data(sock, data, port, address) {
         const q = parseQuery(data);
         queries.push({ name: q.name, type: q.type, tcp: false });
-        const res = answer(zone, data, false);
-        if (res) sock.send(res, port, address);
+        void respond(zone, data, false).then((res) => {
+          if (res) sock.send(res, port, address);
+        });
       },
     },
   });
@@ -185,7 +234,7 @@ async function listenFakeDns(zone: Zone, port: number): Promise<FakeDns> {
   };
 }
 
-function listenTcp(zone: Zone, port: number, queries: FakeDns["queries"]) {
+function listenTcp(zone: Zone | MessageSource, port: number, queries: FakeDns["queries"]) {
   return Bun.listen({
     hostname: "127.0.0.1",
     port,
@@ -194,9 +243,9 @@ function listenTcp(zone: Zone, port: number, queries: FakeDns["queries"]) {
         const msg = new Uint8Array(data).subarray(2);
         const q = parseQuery(msg);
         queries.push({ name: q.name, type: q.type, tcp: true });
-        const res = answer(zone, msg, true);
-        if (!res) return;
-        sock.write(new Uint8Array([...u16(res.length), ...res]));
+        void respond(zone, msg, true).then((res) => {
+          if (res) sock.write(new Uint8Array([...u16(res.length), ...res]));
+        });
       },
     },
   });

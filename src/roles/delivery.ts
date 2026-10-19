@@ -3,8 +3,9 @@ import type { Logger } from "../core/log.ts";
 import { localTransport, rememberingTransport } from "../delivery/transport.ts";
 import { cachingResolver } from "../dns/cache.ts";
 import { localValidatingResolver } from "../dns/dnssec.ts";
-import { createResolver, parseServer, systemServers } from "../dns/resolver.ts";
+import { createResolver, parseServer, type Resolver, systemServers } from "../dns/resolver.ts";
 import { checkReverse, type ReverseCheck } from "../dns/reverse.ts";
+import { ownValidation } from "../dnssec/resolver.ts";
 import { method, RpcClient, serveRpc } from "../ipc/rpc.ts";
 import { guardedPost } from "../net/post.ts";
 import { guardedRequest } from "../net/request.ts";
@@ -22,7 +23,30 @@ export async function runDelivery(config: Config, log: Logger) {
     ? config.dnsServers.map(parseServer)
     : await systemServers();
   const uncached = createResolver({ servers });
-  const resolver = cachingResolver(uncached);
+  let dnssec: { mode: "resolver" | "own" | "off"; detail: string } = {
+    mode: "off",
+    detail: "BUNZZLE_DANE is off",
+  };
+  let validating: Resolver = uncached;
+  if (config.dane !== "off") {
+    if (await localValidatingResolver(servers, uncached)) {
+      dnssec = { mode: "resolver", detail: "a local DNSSEC-validating resolver" };
+    } else {
+      let problem = "";
+      for (let attempt = 0; attempt < 3 && dnssec.mode === "off"; attempt++) {
+        if (attempt > 0) await Bun.sleep(2_000);
+        const own = await ownValidation((name, type) =>
+          (uncached.message as NonNullable<Resolver["message"]>)(name, type),
+        );
+        if ("resolver" in own) {
+          validating = own.resolver;
+          dnssec = { mode: "own", detail: "Bunzzle validates DNSSEC itself" };
+        } else problem = own.problem;
+      }
+      if (dnssec.mode === "off") dnssec = { mode: "off", detail: problem };
+    }
+  }
+  const resolver = cachingResolver(validating);
   const signer = new RpcClient(sock.signer);
   const relay = config.relay
     ? {
@@ -36,12 +60,8 @@ export async function runDelivery(config: Config, log: Logger) {
       }
     : null;
   if (relay) log.info("sending through a relay", { relay: `${relay.host}:${relay.port}` });
-  const dane = config.dane === "off" ? false : await localValidatingResolver(servers, uncached);
-  if (config.dane !== "off" && !dane) {
-    log.info(
-      "DANE is off: it needs a local DNSSEC-validating resolver (see the configuration docs)",
-    );
-  }
+  const dane = dnssec.mode !== "off";
+  if (config.dane !== "off" && !dane) log.warn("DANE is off", { reason: dnssec.detail });
   const ehloName = config.ehloName;
   const ips = config.sourceIps.map((s) => s.ip);
   const reverse = new Map<string, ReverseCheck>();
@@ -124,6 +144,7 @@ export async function runDelivery(config: Config, log: Logger) {
           families: config.ipv6 ? [4, 6] : [4],
         }),
     ),
+    dnssec: method(b.object({}), () => dnssec),
     ips: method(b.object({}), () =>
       ips.map((ip) => ({
         ip,
@@ -191,6 +212,10 @@ export async function runDelivery(config: Config, log: Logger) {
     server.stop();
     await pool.closeAll();
   });
-  log.info("delivery ready", { ehlo: ehloName, sources: ips.length ? ips : ["default"], dane });
+  log.info("delivery ready", {
+    ehlo: ehloName,
+    sources: ips.length ? ips : ["default"],
+    dnssec: dnssec.mode,
+  });
   ready();
 }

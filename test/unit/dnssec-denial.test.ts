@@ -118,7 +118,7 @@ for (const denial of ["nsec", "nsec3"] as const) {
       const r = await v(w).validate("www.child.example.test", RRType.A);
       expect(r).toMatchObject({
         status: "insecure",
-        reason: "child.example.test is delegated without DS",
+        reason: "child.example.test is in an unsigned delegation",
       });
       const validator = v(w);
       await validator.validate("www.child.example.test", RRType.A);

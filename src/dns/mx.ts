@@ -90,7 +90,9 @@ export async function lookupDestination(
       kind: "defer",
       domain,
       code: "dns-temporary",
-      reason: `MX lookup for ${domain} failed (rcode ${mx.rcode})`,
+      reason: mx.bogus
+        ? `MX lookup for ${domain} failed DNSSEC: ${mx.bogus}`
+        : `MX lookup for ${domain} failed (rcode ${mx.rcode})`,
     };
   }
 

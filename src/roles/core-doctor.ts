@@ -27,6 +27,8 @@ export interface DoctorDeps {
   now?: () => number;
 }
 
+const dnssecInfo = b.object({ mode: b.enum(["resolver", "own", "off"]), detail: b.string() });
+
 const ipInfo = b.array(
   b.object({
     ip: b.string(),
@@ -77,6 +79,18 @@ export function doctorMethods(deps: DoctorDeps): Methods {
         ? `listening on port ${config.inboundPort}`
         : "BUNZZLE_INBOUND_PORT is not set: late bounces and complaints are not received",
     );
+
+    const dnssec = await delivery
+      .call("dnssec", {}, { result: dnssecInfo, timeoutMs: 10_000 })
+      .catch(() => null);
+    if (dnssec) {
+      add(
+        "dns",
+        "DNSSEC and DANE",
+        dnssec.mode === "off" ? "warn" : "ok",
+        dnssec.mode === "off" ? `DANE is off: ${dnssec.detail}` : `DANE is on: ${dnssec.detail}`,
+      );
+    }
 
     const ips = await delivery
       .call("ips", {}, { result: ipInfo, timeoutMs: 10_000 })
