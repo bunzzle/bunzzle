@@ -20,7 +20,7 @@ interface DomainView {
 
 const SYSTEM_RUN_DIR = "/run/bunzzle";
 
-async function runDirOf(config: Config): Promise<string> {
+export async function runDirOf(config: Config): Promise<string> {
   if (Bun.env["BUNZZLE_RUN_DIR"]) return config.runDir;
   const system = sockets(SYSTEM_RUN_DIR).core;
   const isSocket = await Bun.file(system)
