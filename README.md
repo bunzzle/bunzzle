@@ -140,7 +140,7 @@ export BUNZZLE_MASTER_KEY=$(./dist/bunzzle master-key)   # keep it safe, outside
 curl localhost:3000/health
 ```
 
-Configuration is read from environment variables. See `.env.example`.
+Configuration is read from environment variables. Every setting is listed in [docs/configuration.md](docs/configuration.md).
 
 ## License
 
