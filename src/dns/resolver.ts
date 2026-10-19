@@ -114,10 +114,9 @@ function udpExchange(
           }
           if (matches(msg, id, name, type)) finish(() => resolve(msg));
         },
-        error(_s, err) {
-          finish(() =>
-            reject(new DnsError("network", (err as Error | undefined)?.message ?? "socket error")),
-          );
+        error(...args: unknown[]) {
+          const err = args.find((a): a is Error => a instanceof Error);
+          finish(() => reject(new DnsError("network", err?.message ?? "socket error")));
         },
       },
     }).then(
