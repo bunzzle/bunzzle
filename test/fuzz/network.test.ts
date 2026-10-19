@@ -108,6 +108,7 @@ describe("fuzz: network input", () => {
         name: "mx.test",
         maxSize: 4096,
         tls: TLS,
+        blocking: null,
         handlers: {
           recipient: async (a) => a.startsWith("b-") || a.startsWith("fbl@"),
           message: async (rcpts, raw) => {

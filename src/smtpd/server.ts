@@ -36,6 +36,7 @@ export interface SmtpServerOptions {
   maxConnectionsPerIp?: number;
   idleMs?: number;
   authFailures?: { max: number; windowMs: number };
+  blocking?: { maxStrikes: number; windowMs: number; banMs: number } | null;
   utf8?: boolean;
 }
 
@@ -55,6 +56,8 @@ interface Conn {
 }
 
 const MAX_LINE = 4096;
+
+export const DEFAULT_BLOCKING = { maxStrikes: 20, windowMs: 10 * 60_000, banMs: 15 * 60_000 };
 const say = (r: SmtpReply) => `${r.code} ${r.text}`;
 
 export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): void } {
@@ -66,6 +69,32 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
   const conns = new Map<Socket<undefined>, Conn>();
   const open = new Map<string, number>();
   const failures = new Map<string, number[]>();
+  const strikes = new Map<string, number[]>();
+  const banned = new Map<string, number>();
+  const isBanned = (ip: string) => {
+    const until = banned.get(ip);
+    if (until === undefined) return false;
+    if (until > Date.now()) return true;
+    banned.delete(ip);
+    return false;
+  };
+  const strike = (s: Socket<undefined>, ip: string): boolean => {
+    const b = o.blocking;
+    if (!b) return false;
+    const now = Date.now();
+    const list = (strikes.get(ip) ?? []).filter((t) => now - t < b.windowMs);
+    list.push(now);
+    if (strikes.size > 10_000 && !strikes.has(ip))
+      strikes.delete(strikes.keys().next().value as string);
+    strikes.set(ip, list);
+    if (list.length < b.maxStrikes) return false;
+    strikes.delete(ip);
+    if (banned.size > 10_000) banned.delete(banned.keys().next().value as string);
+    banned.set(ip, now + b.banMs);
+    s.write("421 4.7.0 Too many errors from your address, try again later\r\n");
+    s.end();
+    return true;
+  };
 
   const reply = (s: Socket<undefined>, text: string): void => {
     s.write(`${text}\r\n`);
@@ -80,6 +109,7 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
   const touch = (s: Socket<undefined>, c: Conn) => {
     if (c.idle) clearTimeout(c.idle);
     c.idle = setTimeout(() => {
+      if (strike(s, c.session.remote)) return;
       reply(s, "421 4.4.2 Idle too long, closing");
       s.end();
     }, idleMs);
@@ -215,7 +245,10 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
       } catch {
         return reply(s, "451 4.3.0 Try again later");
       }
-      if (refused) return reply(s, say(refused));
+      if (refused) {
+        if (refused.code >= 500 && strike(s, c.session.remote)) return;
+        return reply(s, say(refused));
+      }
       c.rcpts.push(address);
       reply(s, "250 2.1.5 Ok");
     } else if (upper === "DATA") {
@@ -233,6 +266,7 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
       reply(s, "221 2.0.0 Bye");
       s.end();
     } else {
+      if (strike(s, c.session.remote)) return;
       reply(s, "502 5.5.2 Command not recognized");
     }
   };
@@ -322,6 +356,11 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
         s.end();
         return;
       }
+      if (isBanned(ip)) {
+        reply(s, "421 4.7.0 Too many errors from your address, try again later");
+        s.end();
+        return;
+      }
       if (blocked(ip)) {
         reply(s, "421 4.7.0 Too many failed logins, try again later");
         s.end();
@@ -350,6 +389,7 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
       }
       if (c.data === null && c.buffer.length > MAX_LINE) {
         c.buffer = "";
+        if (strike(s, c.session.remote)) return;
         reply(s, "500 5.5.6 Line too long");
       } else if (c.data !== null && c.buffer.length > maxSize) {
         c.tooBig = true;

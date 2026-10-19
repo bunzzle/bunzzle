@@ -115,4 +115,58 @@ describe("SMTP server engine", () => {
     expect((await talk([]))[0]).toStartWith("421 4.7.0 Too many failed logins");
     server.stop();
   });
+
+  test("an address that keeps guessing recipients or sending junk is shut out", async () => {
+    const server = startSmtpServer({
+      hostname: "127.0.0.1",
+      port: 0,
+      name: "t.test",
+      banner: "test",
+      blocking: { maxStrikes: 3, windowMs: 60_000, banMs: 60_000 },
+      hooks: {
+        recipient: async (a) => (a === "ok@t.test" ? null : { code: 550, text: "5.1.1 no" }),
+        message: async () => ({ code: 250, text: "2.0.0 ok" }),
+      },
+    });
+    const talk = async (lines: string[]) => {
+      const out: string[] = [];
+      let text = "";
+      const done = Promise.withResolvers<void>();
+      const s = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          data(sock, chunk) {
+            text += new TextDecoder().decode(chunk);
+            const replies = text.split("\r\n").filter((l) => /^\d{3} /.test(l));
+            if (replies.length > out.length) {
+              out.push(...replies.slice(out.length));
+              const next = lines[out.length - 1];
+              if (next === undefined) done.resolve();
+              else sock.write(`${next}\r\n`);
+            }
+          },
+          close() {
+            done.resolve();
+          },
+        },
+      });
+      await done.promise;
+      s.end();
+      return out;
+    };
+    const guesses = await talk([
+      "EHLO x",
+      "MAIL FROM:<a@b.test>",
+      "RCPT TO:<ok@t.test>",
+      "RCPT TO:<x1@t.test>",
+      "BOGUS",
+      "RCPT TO:<x2@t.test>",
+      "RCPT TO:<x3@t.test>",
+    ]);
+    expect(guesses.at(-1)).toStartWith("421 4.7.0 Too many errors");
+    expect(guesses.filter((r) => r.startsWith("550"))).toHaveLength(1);
+    expect((await talk([]))[0]).toStartWith("421 4.7.0 Too many errors");
+    server.stop();
+  });
 });
