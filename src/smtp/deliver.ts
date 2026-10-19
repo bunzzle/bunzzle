@@ -1,4 +1,4 @@
-import type { Family } from "../dns/ip.ts";
+import { type Family, familyOf } from "../dns/ip.ts";
 import { type Destination, lookupDestination } from "../dns/mx.ts";
 import type { Resolver } from "../dns/resolver.ts";
 import type { TlsaData } from "../dns/wire.ts";
@@ -40,6 +40,15 @@ export interface DeliveryOptions {
   pool?: SessionPool;
   perConnection?: (provider: string | null) => number;
   dane?: boolean;
+  relay?: Relay | null;
+}
+
+export interface Relay {
+  host: string;
+  port: number;
+  implicitTls: boolean;
+  username: string | null;
+  password: string | null;
 }
 
 export interface DeliveryReport {
@@ -81,7 +90,47 @@ export function allRecipients(
   }));
 }
 
+async function relayDestination(
+  domain: string,
+  relay: Relay,
+  opts: DeliveryOptions,
+): Promise<Destination> {
+  const families = opts.families ?? [4];
+  const literal = familyOf(relay.host);
+  const addresses: { address: string; family: Family }[] = [];
+  if (literal) {
+    addresses.push({ address: relay.host, family: literal });
+  } else {
+    for (const family of families) {
+      try {
+        const a = await opts.resolver.query(relay.host, family === 6 ? "AAAA" : "A");
+        for (const r of a.records) {
+          if (r.type === "A" || r.type === "AAAA") addresses.push({ address: r.address, family });
+        }
+      } catch {}
+    }
+  }
+  if (addresses.length === 0) {
+    return {
+      kind: "defer",
+      domain,
+      code: "dns-temporary",
+      reason: `the relay ${relay.host} has no address`,
+    };
+  }
+  return {
+    kind: "targets",
+    domain,
+    mxHosts: [relay.host],
+    implicit: false,
+    authenticated: false,
+    targets: addresses.map((a) => ({ host: relay.host, preference: 0, ...a })),
+    skipped: [],
+  };
+}
+
 export function findDestination(domain: string, opts: DeliveryOptions): Promise<Destination> {
+  if (opts.relay) return relayDestination(domain, opts.relay, opts);
   return lookupDestination(domain, {
     resolver: opts.resolver,
     ...(opts.families ? { families: opts.families } : {}),
@@ -121,8 +170,11 @@ export async function deliverTo(
   }
 
   report.provider = providerOf(destination.mxHosts[0] ?? "");
-  const sts = input.sts ?? null;
-  const policy = tlsPolicy(input.requireTls ?? false, report.provider, sts);
+  const relay = opts.relay ?? null;
+  const sts = relay ? null : (input.sts ?? null);
+  const policy: TlsPolicy = relay
+    ? { rule: "relay", required: true }
+    : tlsPolicy(input.requireTls ?? false, report.provider, sts);
   report.policy = policy;
   report.mtaSts =
     sts && sts.mode !== "none"
@@ -147,7 +199,7 @@ export async function deliverTo(
 
   for (const target of targets) {
     let targetPolicy = policy;
-    if (opts.dane && destination.authenticated) {
+    if (!relay && opts.dane && destination.authenticated) {
       const dane = await daneFor(opts.resolver, target.host);
       if (dane.kind === "fail") {
         const now = Date.now();
@@ -174,9 +226,13 @@ export async function deliverTo(
     const session = await runSession({
       host: target.host,
       address: target.address,
-      port: opts.port ?? 25,
+      port: relay ? relay.port : (opts.port ?? 25),
       ehloName: opts.ehloName,
       policy: targetPolicy,
+      ...(relay?.implicitTls ? { implicitTls: true } : {}),
+      ...(relay?.username && relay.password !== null
+        ? { auth: { username: relay.username, password: relay.password } }
+        : {}),
       from: input.from,
       recipients: input.recipients,
       data: input.data,

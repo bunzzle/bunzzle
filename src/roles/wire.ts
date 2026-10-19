@@ -81,12 +81,13 @@ const phase = b.enum([
   "greeting",
   "ehlo",
   "starttls",
+  "auth",
   "mail",
   "rcpt",
   "data",
   "dot",
 ]);
-const tlsRule = b.enum(["dane", "requiretls", "mta-sts", "provider", "opportunistic"]);
+const tlsRule = b.enum(["relay", "dane", "requiretls", "mta-sts", "provider", "opportunistic"]);
 const recipient = b.object({
   address: b.string().max(320),
   status: b.enum(["delivered", "deferred", "bounced", "unknown"]),

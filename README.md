@@ -9,7 +9,7 @@ Self-hosted email delivery engine for apps. Delivers straight to your recipients
 ## Why
 
 - A small HTTP API on your own server. `POST /emails` takes plain JSON, and webhooks are signed in the Standard Webhooks format.
-- No relay in between. Bunzzle talks SMTP to Gmail, Outlook and every other receiver itself, so there is no sending service to pay per email.
+- No relay in between. Bunzzle talks SMTP to Gmail, Outlook and every other receiver itself, so there is no sending service to pay per email. If your provider blocks port 25, you can still point it at a relay (`BUNZZLE_RELAY_HOST`).
 - New IPs warm up on their own, each destination gets a sending speed that follows its replies, bounces and complaints are suppressed, and bulk mail is held before it can delay your password resets.
 - Six processes, each with only the access it needs. Every email body is encrypted with its own key, and DKIM keys never leave the signer.
 

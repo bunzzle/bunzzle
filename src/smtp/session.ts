@@ -4,7 +4,7 @@ import { trustAnchors, usable, verifyDane } from "./dane.ts";
 import { SessionPool } from "./pool.ts";
 
 export type TlsStatus = "none" | "unverified" | "verified" | "dane";
-export type TlsRule = "dane" | "requiretls" | "mta-sts" | "provider" | "opportunistic";
+export type TlsRule = "relay" | "dane" | "requiretls" | "mta-sts" | "provider" | "opportunistic";
 
 export interface TlsPolicy {
   rule: TlsRule;
@@ -52,6 +52,7 @@ export type Phase =
   | "greeting"
   | "ehlo"
   | "starttls"
+  | "auth"
   | "mail"
   | "rcpt"
   | "data"
@@ -81,6 +82,8 @@ export interface SessionInput {
   smtpUtf8: boolean;
   timeouts?: Partial<Timeouts>;
   tlsCa?: string;
+  implicitTls?: boolean;
+  auth?: { username: string; password: string };
   pool?: SessionPool;
   perConnection?: number;
   maxOpen?: number;
@@ -202,6 +205,25 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
         ...(input.localAddress ? { localAddress: input.localAddress } : {}),
       });
 
+      if (input.implicitTls) {
+        phase = "starttls";
+        const info = await conn.startTls(input.host, t.starttls, input.tlsCa);
+        tls.version = info.version;
+        tls.cipher = info.cipher;
+        tls.error = info.error;
+        tls.status = info.authorized ? "verified" : "unverified";
+        if (!info.authorized) {
+          throw new Abort(
+            phase,
+            "deferred",
+            false,
+            `the certificate of ${input.host} is not valid: ${info.error}`,
+            null,
+            "4.7.5",
+          );
+        }
+      }
+
       phase = "greeting";
       await expect2xx(phase, t.greeting, (c) => c === 220);
 
@@ -225,7 +247,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
       }
 
       phase = "starttls";
-      if (ext.has("STARTTLS")) {
+      if (!input.implicitTls && ext.has("STARTTLS")) {
         await conn.write("STARTTLS\r\n", t.starttls);
         const r = await conn.readReply(t.starttls);
         if (r.code === 220) {
@@ -276,7 +298,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
             "4.7.10",
           );
         }
-      } else if (input.policy.required) {
+      } else if (input.policy.required && !input.implicitTls) {
         throw new Abort(
           phase,
           "deferred",
@@ -310,6 +332,36 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
         null,
         "5.6.7",
       );
+    }
+
+    if (input.auth && !result.reused) {
+      phase = "auth";
+      const mechs = (ext.get("AUTH") ?? "").toUpperCase().split(/\s+/);
+      if (!mechs.includes("PLAIN")) {
+        throw new Abort(
+          phase,
+          "deferred",
+          false,
+          `${input.host} does not offer AUTH PLAIN`,
+          null,
+          "4.7.0",
+        );
+      }
+      const token = enc
+        .encode(`\u0000${input.auth.username}\u0000${input.auth.password}`)
+        .toBase64();
+      await conn.write(`AUTH PLAIN ${token}\r\n`, t.mail);
+      const r = await conn.readReply(t.mail);
+      if (r.code !== 235) {
+        throw new Abort(
+          phase,
+          "deferred",
+          false,
+          `relay login failed: ${replyText(r)}`,
+          r,
+          "4.7.0",
+        );
+      }
     }
 
     phase = "mail";
