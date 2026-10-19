@@ -1,27 +1,32 @@
 import {
   type DnsMessage,
   type DsData,
+  nameToWire,
   Rcode,
   type ResourceRecord,
   RRType,
 } from "../../src/dns/wire.ts";
+import { canonicalCompare, nsec3Hash } from "../../src/dnssec/denial.ts";
 import { isSubdomain } from "../../src/dnssec/rrset.ts";
 import { ds, record, type SignOptions, sign, type ZoneKey, zoneKey } from "./dnssec.ts";
-
-export interface WorldZone {
-  name: string;
-  ksk: ZoneKey;
-  zsk: ZoneKey;
-  records: ResourceRecord[];
-  signed: boolean;
-  sign: SignOptions;
-}
 
 export interface ZoneOptions {
   algorithm?: number;
   signed?: boolean;
   delegated?: boolean;
   sign?: SignOptions;
+  denial?: "nsec" | "nsec3";
+  optOut?: boolean;
+  iterations?: number;
+  salt?: Uint8Array;
+}
+
+export interface WorldZone extends Required<Omit<ZoneOptions, "algorithm" | "delegated">> {
+  name: string;
+  ksk: ZoneKey;
+  zsk: ZoneKey;
+  records: ResourceRecord[];
+  proofs: ResourceRecord[];
 }
 
 const soa = (zone: string) =>
@@ -31,6 +36,46 @@ const soa = (zone: string) =>
     Uint8Array.from([0, 0, 1, 2, 3, 4, 0, 0, 0, 60, 0, 0, 0, 60, 0, 0, 0, 60, 0, 0, 0, 60]),
     60,
   );
+
+const BASE32HEX = "0123456789abcdefghijklmnopqrstuv";
+
+function base32hex(bytes: Uint8Array): string {
+  let out = "";
+  let bits = 0;
+  let value = 0;
+  for (const b of bytes) {
+    value = (value << 8) | b;
+    bits += 8;
+    while (bits >= 5) {
+      out += BASE32HEX[(value >> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += BASE32HEX[(value << (5 - bits)) & 31];
+  return out;
+}
+
+function compareBytes(a: Uint8Array, b: Uint8Array): number {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    if (a[i] !== b[i]) return (a[i] as number) - (b[i] as number);
+  }
+  return a.length - b.length;
+}
+
+function bitmap(types: number[]): number[] {
+  const out: number[] = [];
+  const windows = new Map<number, number[]>();
+  for (const t of [...new Set(types)].sort((x, y) => x - y)) {
+    const w = t >> 8;
+    const bits = windows.get(w) ?? [];
+    const i = (t & 0xff) >> 3;
+    while (bits.length <= i) bits.push(0);
+    bits[i] = (bits[i] as number) | (0x80 >> (t & 7));
+    windows.set(w, bits);
+  }
+  for (const [w, bits] of windows) out.push(w, bits.length, ...bits);
+  return out;
+}
 
 export class TestWorld {
   readonly zones = new Map<string, WorldZone>();
@@ -50,14 +95,22 @@ export class TestWorld {
       ksk: await zoneKey(name, algorithm),
       zsk: await zoneKey(name, algorithm, { ksk: false }),
       records: [soa(name)],
+      proofs: [],
       signed: o.signed ?? true,
       sign: o.sign ?? {},
+      denial: o.denial ?? "nsec",
+      optOut: o.optOut ?? false,
+      iterations: o.iterations ?? 0,
+      salt: o.salt ?? new Uint8Array(),
     };
-    this.zones.set(name, z);
-    if (name !== "" && o.delegated !== false) {
+    if (name !== "") {
       const parent = this.zoneOf(name, true);
-      if (parent && z.signed) parent.records.push(ds(z.ksk));
+      if (parent) {
+        parent.records.push(record(name, RRType.NS, nameToWire(`ns.${name}`)));
+        if (z.signed && o.delegated !== false) parent.records.push(ds(z.ksk));
+      }
     }
+    this.zones.set(name, z);
     return z;
   }
 
@@ -74,24 +127,96 @@ export class TestWorld {
     return best;
   }
 
+  #delegation(z: WorldZone, name: string): boolean {
+    return name !== z.name && z.records.some((r) => r.name === name && r.rrtype === RRType.NS);
+  }
+
+  #names(z: WorldZone): Map<string, Set<number>> {
+    const names = new Map<string, Set<number>>();
+    const all = z.signed ? [...z.records, z.ksk.record, z.zsk.record] : z.records;
+    for (const r of all) {
+      let n = r.name;
+      if (!names.has(n)) names.set(n, new Set());
+      names.get(n)?.add(r.rrtype);
+      while (n !== z.name) {
+        n = n.split(".").slice(1).join(".");
+        if (!names.has(n)) names.set(n, new Set());
+      }
+    }
+    return names;
+  }
+
   async build(): Promise<void> {
     this.#answers.clear();
     for (const z of this.zones.values()) {
       const groups = new Map<string, ResourceRecord[]>();
-      const all = [...z.records, z.ksk.record, z.zsk.record];
+      const all = z.signed ? [...z.records, z.ksk.record, z.zsk.record] : z.records;
       for (const r of all) {
         const key = `${r.name}|${r.rrtype}`;
         groups.set(key, [...(groups.get(key) ?? []), r]);
       }
       for (const [key, set] of groups) {
+        const first = set[0] as ResourceRecord;
         const out = [...set];
-        if (z.signed) {
-          const isKeys = set[0]?.rrtype === RRType.DNSKEY;
-          out.push(await sign(set, isKeys ? z.ksk : z.zsk, z.sign));
+        const delegationNs = first.rrtype === RRType.NS && this.#delegation(z, first.name);
+        if (z.signed && !delegationNs) {
+          out.push(await sign(set, first.rrtype === RRType.DNSKEY ? z.ksk : z.zsk, z.sign));
         }
         this.#answers.set(`${z.name}#${key}`, out);
       }
+      z.proofs = z.signed ? await this.#proofs(z) : [];
     }
+  }
+
+  async #proofs(z: WorldZone): Promise<ResourceRecord[]> {
+    const names = this.#names(z);
+    const typesAt = (n: string) => {
+      const t = [...(names.get(n) ?? [])];
+      const signedHere = t.some((x) => !(x === RRType.NS && this.#delegation(z, n)));
+      return signedHere ? [...t, RRType.RRSIG] : t;
+    };
+    const out: ResourceRecord[] = [];
+    if (z.denial === "nsec") {
+      const owners = [...names.keys()].sort(canonicalCompare);
+      for (const [i, owner] of owners.entries()) {
+        const next = owners[(i + 1) % owners.length] as string;
+        const types = [...typesAt(owner), RRType.NSEC, RRType.RRSIG];
+        const r = record(
+          owner,
+          RRType.NSEC,
+          Uint8Array.from([...nameToWire(next), ...bitmap(types)]),
+          60,
+        );
+        out.push(r, await sign([r], z.zsk, z.sign));
+      }
+      return out;
+    }
+    const unsignedCut = (n: string) =>
+      this.#delegation(z, n) && !(names.get(n)?.has(RRType.DS) ?? false);
+    const hashed = [...names.keys()]
+      .filter((n) => !(z.optOut && unsignedCut(n)))
+      .map((n) => ({ n, h: nsec3Hash(n, z.salt, z.iterations) }))
+      .sort((x, y) => compareBytes(x.h, y.h));
+    for (const [i, { n, h }] of hashed.entries()) {
+      const next = (hashed[(i + 1) % hashed.length] as { h: Uint8Array }).h;
+      const owner = z.name === "" ? base32hex(h) : `${base32hex(h)}.${z.name}`;
+      const head = [
+        1,
+        z.optOut ? 1 : 0,
+        z.iterations >> 8,
+        z.iterations & 0xff,
+        z.salt.length,
+        ...z.salt,
+      ];
+      const r = record(
+        owner,
+        RRType.NSEC3,
+        Uint8Array.from([...head, next.length, ...next, ...bitmap(typesAt(n))]),
+        60,
+      );
+      out.push(r, await sign([r], z.zsk, z.sign));
+    }
+    return out;
   }
 
   #lookup(zone: WorldZone, name: string, type: number): ResourceRecord[] {
@@ -101,11 +226,11 @@ export class TestWorld {
   fetch = async (name: string, type: number): Promise<DnsMessage> => {
     this.queries.push({ name, type });
     const answers: ResourceRecord[] = [];
+    const authority: ResourceRecord[] = [];
     let current = name;
     let rcode: number = Rcode.NOERROR;
-    let zone = this.zoneOf(current, type === RRType.DS) as WorldZone;
     for (let hops = 0; hops < 8; hops++) {
-      zone = this.zoneOf(current, type === RRType.DS) as WorldZone;
+      const zone = this.zoneOf(current, type === RRType.DS) as WorldZone;
       const direct = this.#lookup(zone, current, type);
       if (direct.length > 0) {
         answers.push(...direct);
@@ -118,11 +243,22 @@ export class TestWorld {
         current = target.target;
         continue;
       }
-      const exists = zone.records.some((r) => r.name === current || r.name.endsWith(`.${current}`));
-      if (!exists && !this.zones.has(current)) rcode = Rcode.NXDOMAIN;
+      const names = this.#names(zone);
+      if (!names.has(current)) {
+        let ce = current;
+        while (ce !== zone.name && !names.has(ce)) ce = ce.split(".").slice(1).join(".");
+        const star = ce === "" ? "*" : `*.${ce}`;
+        const wild = this.#lookup(zone, star, type);
+        if (wild.length > 0) {
+          answers.push(...wild.map((r) => ({ ...r, name: current })));
+          authority.push(...zone.proofs);
+          break;
+        }
+        if (!names.has(star)) rcode = Rcode.NXDOMAIN;
+      }
+      authority.push(...this.#lookup(zone, zone.name, RRType.SOA), ...zone.proofs);
       break;
     }
-    const authority = answers.length === 0 ? this.#lookup(zone, zone.name, RRType.SOA) : [];
     const msg: DnsMessage = {
       id: 0,
       rcode,
