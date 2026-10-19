@@ -4,7 +4,7 @@ import type { Logger } from "../core/log.ts";
 import type { RpcClient } from "../ipc/rpc.ts";
 import { VERSION } from "../version.ts";
 import { ApiError, errorResponse, fromRpc } from "./errors.ts";
-import { prepareEmail, rescheduleSchema, sendSchema } from "./send.ts";
+import { type PreparedEmail, prepareEmail, rescheduleSchema, sendSchema } from "./send.ts";
 
 const MAX_BODY = 50 * 1024 * 1024;
 
@@ -42,6 +42,54 @@ async function json(req: Request): Promise<unknown> {
   } catch {
     throw new ApiError(422, "validation_error", "The request body must be valid JSON.");
   }
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new ApiError(422, "validation_error", "The request body must be valid JSON.");
+  }
+}
+
+function idempotencyKeyOf(req: Request): string | null {
+  const key = req.headers.get("idempotency-key");
+  if (key !== null && (key.length < 1 || key.length > 256)) {
+    throw new ApiError(
+      400,
+      "invalid_idempotency_key",
+      "The Idempotency-Key must be 1 to 256 characters.",
+    );
+  }
+  return key;
+}
+
+function toSend(caller: { domains: string[] | null }, body: unknown, now: Date): PreparedEmail {
+  const parsed = sendSchema.safeParse(body);
+  if (!parsed.success) throw invalid(parsed.error);
+  const email = prepareEmail(parsed.data, now);
+  if (caller.domains && !caller.domains.includes(email.fromDomain)) {
+    throw new ApiError(
+      403,
+      "restricted_api_key",
+      `This API key cannot send from ${email.fromDomain}.`,
+    );
+  }
+  return email;
+}
+
+function enqueueFields(email: PreparedEmail) {
+  return {
+    from: email.from,
+    recipients: email.recipients,
+    data: email.data,
+    smtpUtf8: email.smtpUtf8,
+    requireTls: email.requireTls,
+    priority: email.lane === "bulk" ? 5 : 0,
+    meta: { ...email.meta, lane: email.lane },
+    ...(email.scheduledAt !== undefined ? { scheduledAt: email.scheduledAt } : {}),
+    ...(email.expiresAt !== undefined ? { expiresAt: email.expiresAt } : {}),
+  };
 }
 
 function invalid(error: z.ZodError): ApiError {
@@ -178,51 +226,60 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
         POST: handle(async (req) => {
           const caller = await authenticate(req);
           const text = await req.text();
-          let body: unknown;
-          try {
-            body = JSON.parse(text);
-          } catch {
-            throw new ApiError(422, "validation_error", "The request body must be valid JSON.");
-          }
-          const parsed = sendSchema.safeParse(body);
-          if (!parsed.success) throw invalid(parsed.error);
-          const email = prepareEmail(parsed.data, new Date());
-          if (caller.domains && !caller.domains.includes(email.fromDomain)) {
-            throw new ApiError(
-              403,
-              "restricted_api_key",
-              `This API key cannot send from ${email.fromDomain}.`,
-            );
-          }
-          const idempotencyKey = req.headers.get("idempotency-key");
-          if (
-            idempotencyKey !== null &&
-            (idempotencyKey.length < 1 || idempotencyKey.length > 256)
-          ) {
-            throw new ApiError(
-              400,
-              "invalid_idempotency_key",
-              "The Idempotency-Key must be 1 to 256 characters.",
-            );
-          }
+          const email = toSend(caller, parseJson(text), new Date());
+          const idempotencyKey = idempotencyKeyOf(req);
           const r = await rpc(
             "enqueue",
             {
               tokenHash: caller.hash,
-              from: email.from,
-              recipients: email.recipients,
-              data: email.data,
-              smtpUtf8: email.smtpUtf8,
-              requireTls: email.requireTls,
-              priority: email.lane === "bulk" ? 5 : 0,
-              meta: { ...email.meta, lane: email.lane },
-              ...(email.scheduledAt !== undefined ? { scheduledAt: email.scheduledAt } : {}),
-              ...(email.expiresAt !== undefined ? { expiresAt: email.expiresAt } : {}),
+              ...enqueueFields(email),
               ...(idempotencyKey !== null ? { idempotencyKey, bodyHash: hashToken(text) } : {}),
             },
             z.object({ id: z.string(), existed: z.boolean() }),
           );
           return Response.json({ id: r.id });
+        }),
+      },
+      "/emails/batch": {
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          const text = await req.text();
+          const list = z.array(z.unknown()).min(1).max(100).safeParse(parseJson(text));
+          if (!list.success) {
+            throw new ApiError(
+              422,
+              "validation_error",
+              "The body must be an array of 1 to 100 emails.",
+            );
+          }
+          const idempotencyKey = idempotencyKeyOf(req);
+          const now = new Date();
+          const emails = list.data.map((item, i) => {
+            try {
+              return {
+                ...enqueueFields(toSend(caller, item, now)),
+                ...(idempotencyKey !== null
+                  ? { idempotencyKey: `${idempotencyKey}#${i}`, bodyHash: hashToken(text) }
+                  : {}),
+              };
+            } catch (err) {
+              if (err instanceof ApiError) {
+                throw new ApiError(
+                  err.status,
+                  err.kind,
+                  `emails[${i}]: ${err.message}`,
+                  err.headers,
+                );
+              }
+              throw err;
+            }
+          });
+          const r = await rpc(
+            "enqueueBatch",
+            { tokenHash: caller.hash, emails },
+            z.object({ data: z.array(z.object({ id: z.string() })) }),
+          );
+          return Response.json({ data: r.data.map((x) => ({ id: x.id })) });
         }),
       },
       "/emails/:id": {
