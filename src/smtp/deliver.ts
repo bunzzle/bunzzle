@@ -1,6 +1,7 @@
 import type { Family } from "../dns/ip.ts";
 import { type Destination, lookupDestination } from "../dns/mx.ts";
 import type { Resolver } from "../dns/resolver.ts";
+import type { TlsaData } from "../dns/wire.ts";
 import { type Provider, providerOf } from "../routing/providers.ts";
 import { mxAllowed, type StsPolicy } from "./mta-sts.ts";
 import type { SessionPool } from "./pool.ts";
@@ -38,6 +39,7 @@ export interface DeliveryOptions {
   tlsCa?: string;
   pool?: SessionPool;
   perConnection?: (provider: string | null) => number;
+  dane?: boolean;
 }
 
 export interface DeliveryReport {
@@ -144,12 +146,37 @@ export async function deliverTo(
   let sessions = 0;
 
   for (const target of targets) {
+    let targetPolicy = policy;
+    if (opts.dane && destination.authenticated) {
+      const dane = await daneFor(opts.resolver, target.host);
+      if (dane.kind === "fail") {
+        const now = Date.now();
+        report.sessions.push({
+          host: target.host,
+          address: target.address,
+          startedAt: now,
+          finishedAt: now,
+          tls: { status: "none", rule: "dane", version: null, cipher: null, error: null },
+          extensions: [],
+          phase: "connect",
+          error: `DANE: ${dane.reason}`,
+          tryNext: true,
+          recipients: allRecipients(input, "deferred", "4.7.5", `DANE: ${dane.reason}`, "connect"),
+        });
+        report.recipients = report.sessions.at(-1)?.recipients ?? [];
+        continue;
+      }
+      if (dane.kind === "tlsa") {
+        targetPolicy = { rule: "dane", required: true, tlsa: dane.records };
+        report.policy = targetPolicy;
+      }
+    }
     const session = await runSession({
       host: target.host,
       address: target.address,
       port: opts.port ?? 25,
       ehloName: opts.ehloName,
-      policy,
+      policy: targetPolicy,
       from: input.from,
       recipients: input.recipients,
       data: input.data,
@@ -171,4 +198,23 @@ export async function deliverTo(
     if (session.phase !== "connect" && ++sessions >= maxSessions) break;
   }
   return report;
+}
+
+type DaneLookup =
+  | { kind: "none" }
+  | { kind: "tlsa"; records: TlsaData[] }
+  | { kind: "fail"; reason: string };
+
+async function daneFor(resolver: Resolver, host: string): Promise<DaneLookup> {
+  let answer: Awaited<ReturnType<Resolver["query"]>>;
+  try {
+    answer = await resolver.query(`_25._tcp.${host}`, "TLSA");
+  } catch (err) {
+    return { kind: "fail", reason: `TLSA lookup for ${host} failed: ${(err as Error).message}` };
+  }
+  if (answer.rcode === 2)
+    return { kind: "fail", reason: `TLSA lookup for ${host} failed (SERVFAIL)` };
+  if (!answer.authenticated) return { kind: "none" };
+  const records = answer.records.flatMap((r) => (r.type === "TLSA" ? [r.tlsa] : []));
+  return records.length ? { kind: "tlsa", records } : { kind: "none" };
 }

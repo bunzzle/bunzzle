@@ -8,6 +8,7 @@ export const RRType = {
   TXT: 16,
   AAAA: 28,
   OPT: 41,
+  TLSA: 52,
 } as const;
 
 export type RRTypeName = keyof typeof RRType;
@@ -26,6 +27,13 @@ export interface MxData {
   exchange: string;
 }
 
+export interface TlsaData {
+  usage: number;
+  selector: number;
+  matching: number;
+  data: Uint8Array;
+}
+
 export interface SoaData {
   mname: string;
   minimum: number;
@@ -40,6 +48,7 @@ export type RecordData =
   | { type: "MX"; mx: MxData }
   | { type: "TXT"; strings: string[] }
   | { type: "SOA"; soa: SoaData }
+  | { type: "TLSA"; tlsa: TlsaData }
   | { type: "OTHER"; code: number };
 
 export type ResourceRecord = { name: string; ttl: number } & RecordData;
@@ -248,6 +257,18 @@ function readRecord(r: Reader): ResourceRecord {
       r.name();
       r.bytes(16);
       rec = { ...base, type: "SOA", soa: { mname, minimum: r.u32() } };
+      break;
+    }
+    case RRType.TLSA: {
+      if (len < 3) throw new DnsWireError("bad TLSA record");
+      const usage = r.u8();
+      const selector = r.u8();
+      const matching = r.u8();
+      rec = {
+        ...base,
+        type: "TLSA",
+        tlsa: { usage, selector, matching, data: new Uint8Array(r.bytes(len - 3)) },
+      };
       break;
     }
     default:

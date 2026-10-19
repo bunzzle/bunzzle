@@ -7,6 +7,8 @@ export interface ZoneEntry {
   TXT?: string[];
   CNAME?: string;
   PTR?: string;
+  TLSA?: [number, number, number, string][];
+  secure?: boolean;
   rcode?: number;
   ttl?: number;
   truncate?: boolean;
@@ -91,6 +93,13 @@ function answer(zone: Zone, q: Uint8Array, tcp: boolean): Uint8Array | null {
     if (type === RRType.PTR && current.PTR) {
       records.push(rr(target, type, ttl, encodeName(current.PTR)));
     }
+    if (type === RRType.TLSA) {
+      for (const [usage, selector, matching, hex] of current.TLSA ?? []) {
+        records.push(
+          rr(target, type, ttl, [usage, selector, matching, ...Uint8Array.fromHex(hex)]),
+        );
+      }
+    }
     if (type === RRType.TXT) {
       for (const t of current.TXT ?? []) {
         const b = [...new TextEncoder().encode(t)];
@@ -118,7 +127,8 @@ function answer(zone: Zone, q: Uint8Array, tcp: boolean): Uint8Array | null {
           ]),
         ]
       : [];
-  const flags = 0x8000 | 0x0100 | 0x0080 | (truncated ? 0x0200 : 0) | rcode;
+  const secure = current?.secure ?? entry?.secure ?? false;
+  const flags = 0x8000 | 0x0100 | 0x0080 | (secure ? 0x0020 : 0) | (truncated ? 0x0200 : 0) | rcode;
   const body = truncated ? [] : records.flat();
   return new Uint8Array([
     ...u16(id),

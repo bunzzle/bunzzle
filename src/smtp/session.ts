@@ -1,12 +1,15 @@
+import type { TlsaData } from "../dns/wire.ts";
 import { type Reply, replyText, SmtpConnection, SmtpError } from "./connection.ts";
+import { trustAnchors, usable, verifyDane } from "./dane.ts";
 import { SessionPool } from "./pool.ts";
 
-export type TlsStatus = "none" | "unverified" | "verified";
-export type TlsRule = "requiretls" | "mta-sts" | "provider" | "opportunistic";
+export type TlsStatus = "none" | "unverified" | "verified" | "dane";
+export type TlsRule = "dane" | "requiretls" | "mta-sts" | "provider" | "opportunistic";
 
 export interface TlsPolicy {
   rule: TlsRule;
   required: boolean;
+  tlsa?: TlsaData[];
 }
 
 export interface TlsRecord {
@@ -226,12 +229,31 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
         await conn.write("STARTTLS\r\n", t.starttls);
         const r = await conn.readReply(t.starttls);
         if (r.code === 220) {
-          const info = await conn.startTls(input.host, t.starttls, input.tlsCa);
+          const tlsa = input.policy.tlsa;
+          const anchors = tlsa ? trustAnchors(usable(tlsa)) : null;
+          const info = await conn.startTls(input.host, t.starttls, anchors ?? input.tlsCa);
           tls.version = info.version;
           tls.cipher = info.cipher;
           tls.error = info.error;
           tls.status = info.authorized ? "verified" : "unverified";
-          if (input.policy.required && !info.authorized) {
+          if (tlsa) {
+            const verdict = verifyDane(
+              tlsa,
+              conn.peerCertificate(),
+              anchors !== null && info.authorized,
+            );
+            if (!verdict.ok) {
+              throw new Abort(
+                phase,
+                "deferred",
+                true,
+                `DANE: ${verdict.reason} (${input.host})`,
+                null,
+                "4.7.5",
+              );
+            }
+            if (verdict.how !== "unauthenticated") tls.status = "dane";
+          } else if (input.policy.required && !info.authorized) {
             throw new Abort(
               phase,
               "deferred",

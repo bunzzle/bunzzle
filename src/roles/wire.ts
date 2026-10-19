@@ -86,7 +86,7 @@ const phase = b.enum([
   "data",
   "dot",
 ]);
-const tlsRule = b.enum(["requiretls", "mta-sts", "provider", "opportunistic"]);
+const tlsRule = b.enum(["dane", "requiretls", "mta-sts", "provider", "opportunistic"]);
 const recipient = b.object({
   address: b.string().max(320),
   status: b.enum(["delivered", "deferred", "bounced", "unknown"]),
@@ -114,7 +114,7 @@ export const deliveryReportWire: b.Schema<DeliveryReport> = b.object({
         startedAt: b.number(),
         finishedAt: b.number(),
         tls: b.object({
-          status: b.enum(["none", "unverified", "verified"]),
+          status: b.enum(["none", "unverified", "verified", "dane"]),
           rule: tlsRule,
           version: b.string().max(32).nullable(),
           cipher: b.string().max(128).nullable(),

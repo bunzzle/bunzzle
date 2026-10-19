@@ -40,7 +40,7 @@ const UNTRUSTED = new Set([
 
 export function sessionResult(s: AttemptSession): "success" | ResultType | null {
   const status = s.tls?.status ?? "none";
-  if (status === "verified") return "success";
+  if (status === "verified" || status === "dane") return "success";
   if (status === "unverified") {
     const code = s.tls?.error ?? "";
     if (HOST.has(code)) return "certificate-host-mismatch";

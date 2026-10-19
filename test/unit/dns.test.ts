@@ -278,3 +278,15 @@ describe("reverse DNS (D6)", () => {
     dns.stop();
   });
 });
+
+describe("resolver failures", () => {
+  test("a closed or unreachable server rejects with a DnsError and never crashes", async () => {
+    const { createResolver, DnsError } = await import("../../src/dns/resolver.ts");
+    const r = createResolver({
+      servers: [{ host: "127.0.0.1", port: 9 }],
+      timeoutMs: 300,
+      attempts: 1,
+    });
+    await expect(r.query("example.test", "A")).rejects.toBeInstanceOf(DnsError);
+  });
+});
