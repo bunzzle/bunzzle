@@ -218,6 +218,11 @@ describe("classify", () => {
       classify({ phase, code: null, enhanced, text: "local" });
     expect(local("4.7.5")).toMatchObject({ class: "tls", action: "retry" });
     expect(local("4.7.10")).toMatchObject({ class: "tls-required", action: "retry" });
+    expect(local("5.7.30", "mail")).toMatchObject({
+      class: "requiretls-unsupported",
+      action: "fail-message",
+      suppress: false,
+    });
     expect(local("4.4.1", "connect")).toMatchObject({ class: "no-answer", action: "retry" });
     expect(local("5.3.4", "mail")).toMatchObject({ class: "too-big", action: "fail-message" });
     expect(local("5.1.10", "dns")).toMatchObject({ class: "null-mx", suppress: true });

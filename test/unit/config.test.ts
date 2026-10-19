@@ -29,6 +29,7 @@ describe("loadConfig", () => {
       inboundTlsCertFile: null,
       inboundTlsKeyFile: null,
       dane: "auto",
+      requiretls: "enforce",
       dnsUpdate: null,
       relay: null,
       acme: null,

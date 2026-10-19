@@ -28,6 +28,7 @@ export function startInboundServer(o: InboundOptions): { port: number; stop(): v
     maxRecipients: o.maxRecipients ?? 10,
     idleMs: o.idleMs ?? 60_000,
     maxConnectionsPerIp: 50,
+    requiretls: true,
     blocking: o.blocking === undefined ? DEFAULT_BLOCKING : o.blocking,
     hooks: {
       recipient: async (address) =>

@@ -26,6 +26,7 @@ Bunzzle reads its settings from environment variables. With the systemd install 
 | `BUNZZLE_IPV6` | `false` | Also deliver over IPv6. Only with reverse DNS for the IPv6 address. |
 | `BUNZZLE_DNS_SERVERS` | `/etc/resolv.conf` | DNS resolvers, comma-separated: `1.1.1.1,9.9.9.9`. |
 | `BUNZZLE_DANE` | `auto` | `auto` uses DANE when every DNS resolver is on this machine and validates DNSSEC (for example Unbound on `127.0.0.1`); `off` never does. |
+| `BUNZZLE_REQUIRETLS` | `enforce` | For emails sent with `require_tls`. `enforce` follows RFC 8689: secure MX lookup, verified certificate, and a server that supports REQUIRETLS, or the email bounces. `relaxed` only requires TLS with a verified certificate and sends `REQUIRETLS` where the server supports it. |
 
 ## Keys and retention
 

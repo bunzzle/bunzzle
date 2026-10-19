@@ -4,12 +4,22 @@ import { verifyDane } from "./dane.ts";
 import { SessionPool } from "./pool.ts";
 
 export type TlsStatus = "none" | "unverified" | "verified" | "dane";
-export type TlsRule = "relay" | "dane" | "requiretls" | "mta-sts" | "provider" | "opportunistic";
+export type TlsRule =
+  | "relay"
+  | "dane"
+  | "requiretls"
+  | "mta-sts"
+  | "provider"
+  | "opportunistic"
+  | "tls-optional";
+
+export type RequireTlsMode = "enforce" | "relaxed";
 
 export interface TlsPolicy {
   rule: TlsRule;
   required: boolean;
   tlsa?: TlsaData[];
+  requiretls?: RequireTlsMode;
 }
 
 export interface TlsRecord {
@@ -307,6 +317,30 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
     }
     result.extensions = [...ext.keys()];
 
+    const requiretls = input.policy.requiretls;
+    if (requiretls === "enforce") {
+      if (tls.status !== "verified" && tls.status !== "dane") {
+        throw new Abort(
+          "starttls",
+          "deferred",
+          true,
+          `REQUIRETLS: the certificate of ${input.host} is not verified`,
+          null,
+          "4.7.10",
+        );
+      }
+      if (!ext.has("REQUIRETLS")) {
+        throw new Abort(
+          "mail",
+          "bounced",
+          true,
+          `REQUIRETLS: ${input.host} does not support REQUIRETLS`,
+          null,
+          "5.7.30",
+        );
+      }
+    }
+
     const size = enc.encode(input.data).length;
     const maxSize = Number(ext.get("SIZE") ?? 0);
     if (maxSize > 0 && size > maxSize) {
@@ -364,6 +398,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
     let mail = `MAIL FROM:<${input.from}>`;
     if (ext.has("SIZE")) mail += ` SIZE=${size}`;
     if (input.smtpUtf8) mail += ext.has("8BITMIME") ? " BODY=8BITMIME SMTPUTF8" : " SMTPUTF8";
+    if (requiretls && ext.has("REQUIRETLS") && tls.status !== "none") mail += " REQUIRETLS";
     const rcpts = input.recipients.map((r) => `RCPT TO:<${r}>`);
     const pipelining = ext.has("PIPELINING");
 

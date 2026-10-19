@@ -55,6 +55,7 @@ export class SessionPool {
       input.policy.rule,
       input.policy.required ? "tls" : "",
       input.policy.rule === "dane" ? (input.names ?? []).join(",") : "",
+      input.policy.requiretls ?? "",
     ].join("|");
   }
 
