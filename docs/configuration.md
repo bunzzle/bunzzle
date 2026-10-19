@@ -84,6 +84,19 @@ For apps that can only send through SMTP. Off unless a port is set, and it needs
 
 Give the token only `Zone.DNS: Edit`, and only for the zones you send from. See [security.md](security.md) for what it can reach.
 
+## DNS with RFC 2136 updates
+
+Instead of Cloudflare, Bunzzle can publish and rotate its records on any DNS server that accepts dynamic updates signed with a TSIG key (BIND, Knot, PowerDNS and others). It finds the zone of each record by its SOA and checks the server's signed answer.
+
+| Variable | Default | |
+|---|---|---|
+| `BUNZZLE_DNS_UPDATE_SERVER` | | Primary server for the zones, `host` or `host:port`. |
+| `BUNZZLE_DNS_UPDATE_KEY_NAME` | | Name of the TSIG key. |
+| `BUNZZLE_DNS_UPDATE_KEY_FILE` | | File with the key's base64 secret, readable only by the `bunzzle-dns` user. |
+| `BUNZZLE_DNS_UPDATE_ALGORITHM` | `hmac-sha256` | `hmac-sha256` or `hmac-sha512`. |
+
+Allow the key to update only the names Bunzzle publishes: `*._domainkey`, `bounce` and `_dmarc` under each sending domain.
+
 ## Unsafe
 
 | Variable | Default | |

@@ -38,6 +38,10 @@ const schema = b.object({
   BUNZZLE_INBOUND_TLS_CERT_FILE: optional,
   BUNZZLE_INBOUND_TLS_KEY_FILE: optional,
   BUNZZLE_DANE: b.enum(["auto", "off"]).default("auto"),
+  BUNZZLE_DNS_UPDATE_SERVER: optional,
+  BUNZZLE_DNS_UPDATE_KEY_NAME: optional,
+  BUNZZLE_DNS_UPDATE_KEY_FILE: optional,
+  BUNZZLE_DNS_UPDATE_ALGORITHM: b.enum(["hmac-sha256", "hmac-sha512"]).default("hmac-sha256"),
   BUNZZLE_TLSRPT_FROM: optional,
   BUNZZLE_TLSRPT_ORG: optional,
   BUNZZLE_TLSRPT_CONTACT: optional,
@@ -120,6 +124,12 @@ export interface Config {
   inboundTlsCertFile: string | null;
   inboundTlsKeyFile: string | null;
   dane: "auto" | "off";
+  dnsUpdate: {
+    server: string;
+    keyName: string;
+    keyFile: string;
+    algorithm: "hmac-sha256" | "hmac-sha512";
+  } | null;
   tlsrpt: { from: string | null; org: string; contact: string };
   submission: {
     host: string;
@@ -150,6 +160,24 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
   if (c.BUNZZLE_CLOUDFLARE_API_TOKEN && c.BUNZZLE_CLOUDFLARE_API_TOKEN_FILE) {
     throw new ConfigError(
       "invalid configuration:\n  set BUNZZLE_CLOUDFLARE_API_TOKEN or BUNZZLE_CLOUDFLARE_API_TOKEN_FILE, not both",
+    );
+  }
+  const update = [
+    c.BUNZZLE_DNS_UPDATE_SERVER,
+    c.BUNZZLE_DNS_UPDATE_KEY_NAME,
+    c.BUNZZLE_DNS_UPDATE_KEY_FILE,
+  ];
+  if (update.some(Boolean) && !update.every(Boolean)) {
+    throw new ConfigError(
+      "invalid configuration:\n  DNS updates need BUNZZLE_DNS_UPDATE_SERVER, BUNZZLE_DNS_UPDATE_KEY_NAME and BUNZZLE_DNS_UPDATE_KEY_FILE together",
+    );
+  }
+  if (
+    update.every(Boolean) &&
+    (c.BUNZZLE_CLOUDFLARE_API_TOKEN || c.BUNZZLE_CLOUDFLARE_API_TOKEN_FILE)
+  ) {
+    throw new ConfigError(
+      "invalid configuration:\n  publish DNS records through Cloudflare or through DNS updates, not both",
     );
   }
   const wantsSubmission =
@@ -190,6 +218,15 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     inboundTlsCertFile: c.BUNZZLE_INBOUND_TLS_CERT_FILE,
     inboundTlsKeyFile: c.BUNZZLE_INBOUND_TLS_KEY_FILE,
     dane: c.BUNZZLE_DANE,
+    dnsUpdate:
+      c.BUNZZLE_DNS_UPDATE_SERVER && c.BUNZZLE_DNS_UPDATE_KEY_NAME && c.BUNZZLE_DNS_UPDATE_KEY_FILE
+        ? {
+            server: c.BUNZZLE_DNS_UPDATE_SERVER,
+            keyName: c.BUNZZLE_DNS_UPDATE_KEY_NAME,
+            keyFile: c.BUNZZLE_DNS_UPDATE_KEY_FILE,
+            algorithm: c.BUNZZLE_DNS_UPDATE_ALGORITHM,
+          }
+        : null,
     tlsrpt: {
       from: c.BUNZZLE_TLSRPT_FROM,
       org: c.BUNZZLE_TLSRPT_ORG ?? c.BUNZZLE_EHLO_NAME ?? "bunzzle",

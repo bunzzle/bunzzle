@@ -5,6 +5,7 @@ import { createResolver, parseServer, systemServers } from "../dns/resolver.ts";
 import { method, serveRpc } from "../ipc/rpc.ts";
 import { Cloudflare } from "../net/cloudflare.ts";
 import { guardedRequest } from "../net/request.ts";
+import { DnsUpdater } from "../net/rfc2136.ts";
 import { b } from "../validate/schema.ts";
 import { onStop, ready } from "./runtime.ts";
 import { sockets } from "./wire.ts";
@@ -28,6 +29,20 @@ export async function runDns(config: Config, log: Logger) {
         }),
       )
     : null;
+  const u = config.dnsUpdate;
+  const updater = u
+    ? new DnsUpdater(
+        parseServer(u.server),
+        {
+          name: u.keyName,
+          algorithm: u.algorithm,
+          secret: Uint8Array.fromBase64((await Bun.file(u.keyFile).text()).trim()),
+        },
+        createResolver({ servers }),
+      )
+    : null;
+  const provider = cloudflare ?? updater;
+  const providerName = cloudflare ? "cloudflare" : updater ? "dns-update" : null;
 
   const server = await serveRpc(sockets(config.runDir).dns, {
     publish: method(
@@ -43,14 +58,13 @@ export async function runDns(config: Config, log: Logger) {
           .optional(),
       }),
       async ({ op, record }) => {
-        if (!cloudflare) return { enabled: false };
-        if (op === "status" || !record) return { enabled: true };
-        const r =
-          op === "upsert" ? await cloudflare.upsert(record) : await cloudflare.remove(record);
-        return { enabled: true, ...r };
+        if (!provider) return { enabled: false };
+        if (op === "status" || !record) return { enabled: true, provider: providerName };
+        const r = op === "upsert" ? await provider.upsert(record) : await provider.remove(record);
+        return { enabled: true, provider: providerName, ...r };
       },
     ),
   });
   onStop(log, () => server.stop());
-  ready({ provider: cloudflare ? "cloudflare" : null });
+  ready({ provider: providerName });
 }

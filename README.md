@@ -18,7 +18,7 @@ It is for sending transactional and bulk email from your apps. It does not host 
 ## What you need
 
 - A Linux server with outbound port 25 open and a static IP whose reverse DNS (PTR) you can set. Many providers block port 25 until you ask.
-- A domain whose DNS you control, to publish the DKIM, SPF and bounce records Bunzzle prints (or let it publish them on Cloudflare).
+- A domain whose DNS you control, to publish the DKIM, SPF and bounce records Bunzzle prints (or let it publish them on Cloudflare or any DNS server that accepts RFC 2136 updates).
 
 ## Install
 
