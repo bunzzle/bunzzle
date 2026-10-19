@@ -95,7 +95,7 @@ describe("DNSSEC records from real answers", () => {
       const m = await fixture(file);
       const sig = m.answers.find((r) => r.type === "RRSIG");
       expect(sig?.type === "RRSIG" && sig.rrsig).toMatchObject({ typeCovered, algorithm });
-      expect(sig?.type === "RRSIG" && sig.rrsig.signer).toBe(sig?.name);
+      expect(sig?.type === "RRSIG" && sig.rrsig.signer).toBe(sig?.name ?? "");
       expect(sig?.type === "RRSIG" && sig.rrsig.signature.length).toBe(length);
     }
   });
