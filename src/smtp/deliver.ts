@@ -9,6 +9,7 @@ import {
   type Phase,
   type RecipientResult,
   type RecipientStatus,
+  type RequireTlsMode,
   runSession,
   type SessionResult,
   type Timeouts,
@@ -41,6 +42,7 @@ export interface DeliveryOptions {
   perConnection?: (provider: string | null) => number;
   dane?: boolean;
   relay?: Relay | null;
+  requiretls?: RequireTlsMode;
 }
 
 export interface Relay {
@@ -60,6 +62,12 @@ export interface DeliveryReport {
   recipients: RecipientResult[];
   mtaSts?: { mode: string; id: string; mx: string[]; maxAge: number } | null | undefined;
   recalled?: boolean | undefined;
+}
+
+export function tlsOptional(data: string): boolean {
+  const end = data.indexOf("\r\n\r\n");
+  const head = end === -1 ? data : data.slice(0, end);
+  return /(?:^|\r\n)TLS-Required:[ \t]*No[ \t]*(?:\r\n|$)/i.test(head);
 }
 
 export function tlsPolicy(
@@ -171,11 +179,28 @@ export async function deliverTo(
 
   report.provider = providerOf(destination.mxHosts[0] ?? "");
   const relay = opts.relay ?? null;
-  const sts = relay ? null : (input.sts ?? null);
-  const policy: TlsPolicy = relay
+  const requireTls = input.requireTls ?? false;
+  const optional = !requireTls && tlsOptional(input.data);
+  const sts = relay || optional ? null : (input.sts ?? null);
+  const base: TlsPolicy = relay
     ? { rule: "relay", required: true }
-    : tlsPolicy(input.requireTls ?? false, report.provider, sts);
+    : optional
+      ? { rule: "tls-optional", required: false }
+      : tlsPolicy(requireTls, report.provider, sts);
+  const mode = opts.requiretls ?? "enforce";
+  const policy: TlsPolicy = requireTls ? { ...base, requiretls: mode } : base;
   report.policy = policy;
+  const secureLookup = (opts.dane === true && destination.authenticated) || sts?.mode === "enforce";
+  if (requireTls && mode === "enforce" && !relay && !secureLookup) {
+    report.recipients = allRecipients(
+      input,
+      "bounced",
+      "5.7.30",
+      `REQUIRETLS: the MX hosts of ${destination.domain} are protected by neither DNSSEC nor an enforced MTA-STS policy`,
+      "mail",
+    );
+    return report;
+  }
   report.mtaSts =
     sts && sts.mode !== "none"
       ? { mode: sts.mode, id: sts.id, mx: sts.mx, maxAge: sts.maxAge }
@@ -199,7 +224,7 @@ export async function deliverTo(
 
   for (const target of targets) {
     let targetPolicy = policy;
-    if (!relay && opts.dane && destination.authenticated) {
+    if (!relay && !optional && opts.dane && destination.authenticated) {
       const dane = await daneFor(opts.resolver, target.host);
       if (dane.kind === "fail") {
         const now = Date.now();
@@ -219,7 +244,12 @@ export async function deliverTo(
         continue;
       }
       if (dane.kind === "tlsa") {
-        targetPolicy = { rule: "dane", required: true, tlsa: dane.records };
+        targetPolicy = {
+          rule: "dane",
+          required: true,
+          tlsa: dane.records,
+          ...(policy.requiretls ? { requiretls: policy.requiretls } : {}),
+        };
         report.policy = targetPolicy;
       }
     }

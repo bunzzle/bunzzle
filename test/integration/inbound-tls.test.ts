@@ -66,6 +66,28 @@ describe("inbound STARTTLS", () => {
     expect((await conn.readReply(2000)).code).toBe(503);
   });
 
+  test("REQUIRETLS is offered and accepted only over TLS", async () => {
+    const { port, received } = start(TLS);
+    const plain = await connect(port);
+    expect(await ehlo(plain)).not.toContain("REQUIRETLS");
+    await plain.write(`MAIL FROM:<x@sender.test> REQUIRETLS\r\n`, 2000);
+    expect((await plain.readReply(2000)).code).toBe(530);
+
+    const conn = await connect(port);
+    await ehlo(conn);
+    await conn.write("STARTTLS\r\n", 2000);
+    await conn.readReply(2000);
+    await conn.startTls("mx.example.test", 2000, TEST_CA);
+    expect(await ehlo(conn)).toContain("REQUIRETLS");
+    for (const line of [`MAIL FROM:<x@sender.test> REQUIRETLS`, `RCPT TO:<${BOUNCE}>`, "DATA"]) {
+      await conn.write(`${line}\r\n`, 2000);
+      expect((await conn.readReply(2000)).code).toBeLessThan(400);
+    }
+    await conn.write("Subject: x\r\n\r\nx\r\n.\r\n", 2000);
+    expect((await conn.readReply(2000)).code).toBe(250);
+    expect(received).toHaveLength(1);
+  });
+
   test("delivers a bounce over TLS with Bunzzle's own SMTP client", async () => {
     const { port, received } = start(TLS);
     const result = await runSession({

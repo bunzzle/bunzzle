@@ -38,6 +38,7 @@ const schema = b.object({
   BUNZZLE_INBOUND_TLS_CERT_FILE: optional,
   BUNZZLE_INBOUND_TLS_KEY_FILE: optional,
   BUNZZLE_DANE: b.enum(["auto", "off"]).default("auto"),
+  BUNZZLE_REQUIRETLS: b.enum(["enforce", "relaxed"]).default("enforce"),
   BUNZZLE_DNS_UPDATE_SERVER: optional,
   BUNZZLE_DNS_UPDATE_KEY_NAME: optional,
   BUNZZLE_DNS_UPDATE_KEY_FILE: optional,
@@ -133,6 +134,7 @@ export interface Config {
   inboundTlsCertFile: string | null;
   inboundTlsKeyFile: string | null;
   dane: "auto" | "off";
+  requiretls: "enforce" | "relaxed";
   dnsUpdate: {
     server: string;
     keyName: string;
@@ -275,6 +277,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     inboundTlsKeyFile: c.BUNZZLE_INBOUND_TLS_KEY_FILE ?? (acme ? `${certsDir}/key.pem` : null),
     acme,
     dane: c.BUNZZLE_DANE,
+    requiretls: c.BUNZZLE_REQUIRETLS,
     dnsUpdate:
       c.BUNZZLE_DNS_UPDATE_SERVER && c.BUNZZLE_DNS_UPDATE_KEY_NAME && c.BUNZZLE_DNS_UPDATE_KEY_FILE
         ? {

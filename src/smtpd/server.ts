@@ -11,6 +11,7 @@ export interface SmtpSession {
   tls: boolean;
   user: unknown;
   utf8: boolean;
+  requiretls: boolean;
 }
 
 export interface SmtpHooks {
@@ -38,6 +39,7 @@ export interface SmtpServerOptions {
   authFailures?: { max: number; windowMs: number };
   blocking?: { maxStrikes: number; windowMs: number; banMs: number } | null;
   utf8?: boolean;
+  requiretls?: boolean;
 }
 
 interface Conn {
@@ -131,6 +133,7 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
     if (o.utf8) lines.push("SMTPUTF8");
     if (o.tls && !c.session.tls) lines.push("STARTTLS");
     if (o.hooks.auth && c.session.tls) lines.push("AUTH PLAIN LOGIN");
+    if (o.requiretls && c.session.tls) lines.push("REQUIRETLS");
     s.write(lines.map((l, i) => `250${i === lines.length - 1 ? " " : "-"}${l}\r\n`).join(""));
   };
 
@@ -227,7 +230,13 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
       if (size !== undefined && Number(size) > maxSize) {
         return reply(s, `552 5.3.4 Message larger than ${maxSize} bytes`);
       }
+      const requiretls = /\sREQUIRETLS(?:\s|$)/i.test(line);
+      if (requiretls && !o.requiretls) return reply(s, "555 5.5.4 REQUIRETLS not supported");
+      if (requiretls && !c.session.tls) {
+        return reply(s, "530 5.7.10 REQUIRETLS needs a TLS connection");
+      }
       c.session.utf8 = /\sSMTPUTF8\b/i.test(line);
+      c.session.requiretls = requiretls;
       const refused = o.hooks.sender ? await o.hooks.sender(from, c.session) : null;
       if (refused) return reply(s, say(refused));
       c.from = from;
@@ -347,7 +356,7 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
         chain: Promise.resolve(),
         idle: null,
         upgrading: false,
-        session: { remote: ip, tls: !!o.implicitTls, user: null, utf8: false },
+        session: { remote: ip, tls: !!o.implicitTls, user: null, utf8: false, requiretls: false },
         messages: 0,
         authStep: null,
       };

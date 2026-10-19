@@ -112,7 +112,7 @@ export const ENHANCED: Record<string, CodeRule> = {
   "7.27": sender("sender-null-mx"),
   "7.28": { class: "flood", scope: "rate" },
   "7.29": sender("arc"),
-  "7.30": infra("tls-required"),
+  "7.30": message("requiretls-unsupported"),
 };
 
 export const PROVIDER_RULES: TextRule[] = [

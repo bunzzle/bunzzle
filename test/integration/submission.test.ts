@@ -94,6 +94,7 @@ describe("SMTP submission", () => {
     const ehlo = await say("EHLO app.test");
     expect(ehlo).toContain("STARTTLS");
     expect(ehlo).not.toContain("AUTH");
+    expect(ehlo).not.toContain("REQUIRETLS");
     expect(await say(`AUTH PLAIN ${plain(key)}`)).toStartWith("530 5.7.0");
     expect(await say("MAIL FROM:<hello@acme.test>")).toStartWith("530 5.7.0");
     c.close();
@@ -144,6 +145,37 @@ describe("SMTP submission", () => {
     expect(received).toContain("Subject: Sent over SMTP");
     expect(received).toContain("Message-ID: <");
     expect(received).not.toContain("Bcc:");
+    expect(await say("QUIT")).toStartWith("221");
+  });
+
+  test("REQUIRETLS on MAIL FROM travels with the email and is enforced", async () => {
+    const [port] = served.submissionPorts;
+    const { c, say } = await session(port as number);
+    await say("EHLO app.test");
+    await say("STARTTLS");
+    await c.startTls("mx.example.test", 5_000, ca);
+    expect(await say("EHLO app.test")).toContain("REQUIRETLS");
+    expect(await say(`AUTH PLAIN ${plain(key)}`)).toStartWith("235");
+    expect(await say("MAIL FROM:<hello@acme.test> REQUIRETLS")).toStartWith("250");
+    expect(await say("RCPT TO:<user@example.test>")).toStartWith("250");
+    expect(await say("DATA")).toStartWith("354");
+    const accepted = await say(
+      ["From: hello@acme.test", "To: user@example.test", "Subject: Secret", "", "x", "."].join(
+        "\r\n",
+      ),
+    );
+    const id = accepted.split(" ").at(-1) as string;
+    let body: { last_event: string } = { last_event: "" };
+    for (let i = 0; i < 100 && body.last_event !== "bounced"; i++) {
+      const r = await fetch(`${served.url}/emails/${id}`, {
+        headers: { authorization: `Bearer ${await newKey("read")}` },
+      });
+      body = (await r.json()) as { last_event: string };
+      if (body.last_event !== "bounced") await Bun.sleep(100);
+    }
+    expect(body.last_event).toBe("bounced");
+    expect(JSON.stringify(body)).toContain('"class":"requiretls-unsupported"');
+    expect(JSON.stringify(body)).toContain('"suppression_candidate":false');
     expect(await say("QUIT")).toStartWith("221");
   });
 

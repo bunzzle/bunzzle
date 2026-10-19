@@ -87,7 +87,15 @@ const phase = b.enum([
   "data",
   "dot",
 ]);
-const tlsRule = b.enum(["relay", "dane", "requiretls", "mta-sts", "provider", "opportunistic"]);
+const tlsRule = b.enum([
+  "relay",
+  "dane",
+  "requiretls",
+  "mta-sts",
+  "provider",
+  "opportunistic",
+  "tls-optional",
+]);
 const recipient = b.object({
   address: b.string().max(320),
   status: b.enum(["delivered", "deferred", "bounced", "unknown"]),
