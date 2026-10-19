@@ -29,6 +29,7 @@ describe("loadConfig", () => {
       inboundTlsCertFile: null,
       inboundTlsKeyFile: null,
       dane: "auto",
+      dnsUpdate: null,
       tlsrpt: { from: null, org: "bunzzle", contact: "bunzzle" },
       submission: null,
       sourceIps: [],
@@ -109,5 +110,21 @@ describe("loadConfig", () => {
     expect(() =>
       loadConfig({ BUNZZLE_CLOUDFLARE_API_TOKEN: "t", BUNZZLE_CLOUDFLARE_API_TOKEN_FILE: "/f" }),
     ).toThrow(ConfigError);
+  });
+
+  test("DNS updates need all three settings and exclude Cloudflare", () => {
+    const update = {
+      BUNZZLE_DNS_UPDATE_SERVER: "ns1.acme.test",
+      BUNZZLE_DNS_UPDATE_KEY_NAME: "bunzzle",
+      BUNZZLE_DNS_UPDATE_KEY_FILE: "/run/credentials/tsig",
+    };
+    expect(loadConfig(update).dnsUpdate).toEqual({
+      server: "ns1.acme.test",
+      keyName: "bunzzle",
+      keyFile: "/run/credentials/tsig",
+      algorithm: "hmac-sha256",
+    });
+    expect(() => loadConfig({ BUNZZLE_DNS_UPDATE_SERVER: "ns1.acme.test" })).toThrow(ConfigError);
+    expect(() => loadConfig({ ...update, BUNZZLE_CLOUDFLARE_API_TOKEN: "t" })).toThrow(ConfigError);
   });
 });

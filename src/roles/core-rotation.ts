@@ -107,10 +107,9 @@ export function rotation(deps: RotationDeps) {
           ok: false,
           error: err.message,
         }));
-      if (result.ok)
-        log.info("DNS record published via Cloudflare", { name: r.name, action: result.action });
+      if (result.ok) log.info("DNS record published", { name: r.name, action: result.action });
       else
-        log.warn("could not publish a DNS record via Cloudflare", {
+        log.warn("could not publish a DNS record", {
           name: r.name,
           error: result.error,
         });
