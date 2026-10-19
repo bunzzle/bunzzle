@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { classifyReport, LIMITS, ParseError, parseMessage } from "../../src/inbound/parse.ts";
+import { classifyReport } from "../../src/inbound/parse.ts";
+import { MIME_LIMITS, MimeParseError, parseMime } from "../../src/mime/parse.ts";
 
 const REF = "bae2kmxj4wl5wq3ru6gkfyzcjauwrwfqgbydiyc7zt";
 const crlf = (s: string) => s.replace(/\r?\n/g, "\r\n");
@@ -154,9 +155,9 @@ describe("limits on untrusted input", () => {
     for (let i = 0; i < 10; i++) {
       nested = `Content-Type: multipart/mixed; boundary="b${i}"\r\n\r\n--b${i}\r\n${nested}\r\n--b${i}--\r\n`;
     }
-    expect(() => parseMessage(nested)).toThrow(ParseError);
-    const flood = `${"X-A: 1\r\n".repeat(LIMITS.maxHeaders + 1)}\r\nbody`;
-    expect(() => parseMessage(flood)).toThrow("too many headers");
+    expect(() => parseMime(nested)).toThrow(MimeParseError);
+    const flood = `${"X-A: 1\r\n".repeat(MIME_LIMITS.maxHeaders + 1)}\r\nbody`;
+    expect(() => parseMime(flood)).toThrow("too many headers");
   });
 
   test("base64 and quoted-printable parts are decoded", () => {
@@ -175,10 +176,58 @@ caf=C3=A9 =
 ok
 --x--
 `);
-    const p = parseMessage(m);
+    const p = parseMime(m);
     expect(p.parts.map((x) => x.body.trim())).toEqual([
       "Remote host said: 550 5.1.1 no",
       "café ok",
     ]);
+  });
+});
+
+describe("inbound parsing details", () => {
+  const crlf = (s: string) => s.replace(/\r?\n/g, "\r\n");
+
+  test("a report without its closing delimiter keeps its last part", () => {
+    const raw = crlf(`From: MAILER-DAEMON@mx.example.test
+Content-Type: multipart/report; report-type=delivery-status; boundary="B"
+
+--B
+Content-Type: text/plain
+
+failed
+--B
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; mx.example.test
+
+Final-Recipient: rfc822; gone@example.test
+Action: failed
+Status: 5.1.1
+--B
+Content-Type: text/rfc822-headers
+
+X-Bunzzle-Ref: abcdefghijklmnopqrstuvwxyz234567
+`);
+    const r = classifyReport(raw);
+    expect(r.kind).toBe("dsn");
+    expect(r.ref).toBe("abcdefghijklmnopqrstuvwxyz234567");
+    if (r.kind === "dsn") expect(r.recipients.map((x) => x.address)).toEqual(["gone@example.test"]);
+  });
+
+  test("an encoded subject is decoded before it is matched", () => {
+    const raw =
+      "From: x@example.test\r\nSubject: =?UTF-8?Q?Undelivered_Mail_Returned?=\r\n\r\n550 5.1.1 no such user <gone@example.test>\r\n";
+    const r = classifyReport(raw);
+    expect(r.kind).toBe("bounce");
+    if (r.kind === "bounce") expect(r.status).toBe("5.1.1");
+  });
+
+  test("8-bit text in a bounce keeps its charset", () => {
+    const head =
+      "From: MAILER-DAEMON@example.test\r\nSubject: failure notice\r\nContent-Type: text/plain; charset=windows-1251\r\n\r\n";
+    const body = Uint8Array.from([0xcf, 0xf0, 0xe8, 0x20, 0x35, 0x35, 0x30]);
+    const r = classifyReport(Uint8Array.from([...new TextEncoder().encode(head), ...body]));
+    expect(r.kind).toBe("bounce");
+    if (r.kind === "bounce") expect(r.diagnostic).toBe("При 550");
   });
 });

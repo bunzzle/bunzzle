@@ -4,12 +4,13 @@ import { keyFromTxt, selectorsOf } from "../../src/dkim/verify.ts";
 import { DnsWireError, decodeMessage, encodeQuery, RRType } from "../../src/dns/wire.ts";
 import { ApiError } from "../../src/http/errors.ts";
 import { prepareEmail, sendSchema } from "../../src/http/send.ts";
-import { classifyReport, LIMITS, ParseError, parseHeaders } from "../../src/inbound/parse.ts";
+import { classifyReport } from "../../src/inbound/parse.ts";
 import { AddressError, normalizeAddress, parseAddress } from "../../src/mime/address.ts";
 import {
   decodeWords,
   MIME_LIMITS,
   MimeParseError,
+  parseHeaderBlock,
   parseMime,
   parseParams,
   walkParts,
@@ -204,10 +205,11 @@ describe("fuzz: parsers that see outside data", () => {
         dictionary: MIME_WORDS,
         maxLength: 128 * 1024,
         iterations: 3,
-        expected: (e) => e instanceof ParseError,
+        expected: (e) => e instanceof MimeParseError,
         run(input) {
           const r = classifyReport(latin1.decode(input));
-          if (r.kind === "dsn") expect(r.recipients.length).toBeLessThanOrEqual(LIMITS.maxHeaders);
+          if (r.kind === "dsn")
+            expect(r.recipients.length).toBeLessThanOrEqual(MIME_LIMITS.maxHeaders);
           if (r.kind === "bounce") expect(r.addresses.length).toBeLessThanOrEqual(input.length);
         },
       });
@@ -230,7 +232,7 @@ describe("fuzz: parsers that see outside data", () => {
         try {
           classifyReport(raw);
         } catch (e) {
-          expect(e).toBeInstanceOf(ParseError);
+          expect(e).toBeInstanceOf(MimeParseError);
         }
         expect(performance.now() - started).toBeLessThan(1_000);
       }
@@ -290,10 +292,10 @@ describe("fuzz: parsers that see outside data", () => {
         seeds: [DSN.slice(0, DSN.indexOf("\r\n\r\n")), "A: b\r\n c\r\nD:\r\n"],
         dictionary: MIME_WORDS,
         maxLength: 32 * 1024,
-        expected: (e) => e instanceof ParseError,
+        expected: (e) => e instanceof MimeParseError,
         run(input) {
-          const h = parseHeaders(latin1.decode(input));
-          expect(h.size).toBeLessThanOrEqual(LIMITS.maxHeaders);
+          const h = parseHeaderBlock(latin1.decode(input));
+          expect(h.size).toBeLessThanOrEqual(MIME_LIMITS.maxHeaders);
         },
       });
       expect(report(findings)).toBe("");

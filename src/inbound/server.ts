@@ -1,4 +1,5 @@
 import type { Socket, TCPSocketListener } from "bun";
+import { toBinary } from "../mime/parse.ts";
 
 export interface InboundHandlers {
   recipient(address: string): Promise<boolean>;
@@ -30,7 +31,6 @@ interface Conn {
 }
 
 const MAX_LINE = 4096;
-const dec = new TextDecoder("latin1");
 
 export function startInboundServer(o: InboundOptions): { port: number; stop(): void } {
   const maxSize = o.maxSize ?? 1024 * 1024;
@@ -179,7 +179,7 @@ export function startInboundServer(o: InboundOptions): { port: number; stop(): v
       const c = conns.get(s);
       if (!c || c.upgrading) return;
       touch(s, c);
-      c.buffer += dec.decode(chunk);
+      c.buffer += toBinary(chunk);
       let i = c.buffer.indexOf("\r\n");
       while (i >= 0) {
         const text = c.buffer.slice(0, i);
