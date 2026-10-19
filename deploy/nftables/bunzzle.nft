@@ -7,5 +7,8 @@ table inet bunzzle {
     meta skuid "bunzzle-delivery" udp dport 53 accept
     meta skuid "bunzzle-delivery" tcp dport { 25, 53, 443 } accept
     meta skuid "bunzzle-delivery" counter drop
+    meta skuid "bunzzle-dns" udp dport 53 accept
+    meta skuid "bunzzle-dns" tcp dport { 53, 443 } accept
+    meta skuid "bunzzle-dns" counter drop
   }
 }

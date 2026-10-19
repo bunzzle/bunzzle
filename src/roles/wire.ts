@@ -4,7 +4,7 @@ import type { Destination } from "../dns/mx.ts";
 import type { DeliveryReport } from "../smtp/deliver.ts";
 import { b } from "../validate/schema.ts";
 
-export const ROLES = ["signer", "core", "delivery", "api", "inbound"] as const;
+export const ROLES = ["signer", "dns", "core", "delivery", "api", "inbound"] as const;
 export type Role = (typeof ROLES)[number];
 
 export function sockets(runDir: string) {
@@ -12,6 +12,7 @@ export function sockets(runDir: string) {
     core: `${runDir}/core.sock`,
     signer: `${runDir}/signer.sock`,
     delivery: `${runDir}/delivery.sock`,
+    dns: `${runDir}/dns.sock`,
   };
 }
 

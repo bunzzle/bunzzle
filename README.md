@@ -11,7 +11,7 @@ Self-hosted email delivery engine for apps. Delivers straight to your recipients
 - A small HTTP API on your own server. `POST /emails` takes plain JSON, and webhooks are signed in the Standard Webhooks format.
 - No relay in between. Bunzzle talks SMTP to Gmail, Outlook and every other receiver itself, so there is no sending service to pay per email.
 - New IPs warm up on their own, each destination gets a sending speed that follows its replies, bounces and complaints are suppressed, and bulk mail is held before it can delay your password resets.
-- Five processes, each with only the access it needs. Every email body is encrypted with its own key, and DKIM keys never leave the signer.
+- Six processes, each with only the access it needs. Every email body is encrypted with its own key, and DKIM keys never leave the signer.
 
 It is for sending transactional and bulk email from your apps. It does not host mailboxes (no IMAP) and has no campaign editor.
 
@@ -29,7 +29,7 @@ curl -fsSLO https://github.com/bunzzle/bunzzle/releases/latest/download/install.
 sudo sh install.sh
 ```
 
-Each of the five roles runs as its own user in its own systemd sandbox. Docker (one container or five) is covered in [docs/install.md](docs/install.md). Releases are signed; see [docs/verify.md](docs/verify.md). Security design: [docs/security.md](docs/security.md). Reporting a vulnerability: [SECURITY.md](SECURITY.md).
+Each of the six roles runs as its own user in its own systemd sandbox. Docker (one container or six) is covered in [docs/install.md](docs/install.md). Releases are signed; see [docs/verify.md](docs/verify.md). Security design: [docs/security.md](docs/security.md). Reporting a vulnerability: [SECURITY.md](SECURITY.md).
 
 ### First email
 
@@ -113,7 +113,7 @@ When a recipient is refused, `send` says what the reply means: who it is about (
 
 ## How it's built
 
-Bunzzle runs as five separate processes, each holding only what it needs:
+Bunzzle runs as six separate processes, each holding only what it needs:
 
 | Role | Does | Cannot |
 |---|---|---|
@@ -122,6 +122,7 @@ Bunzzle runs as five separate processes, each holding only what it needs:
 | delivery | DNS and SMTP to recipients' servers | read the database or any key |
 | signer | DKIM signing, body decryption | reach the network or the database |
 | inbound | bounces and complaints | read the database or keys |
+| dns | publishes DNS records through the provider's API | read email, the database or any key |
 
 Every email body is encrypted with its own key, and those keys are destroyed when retention ends, so old backups stay unreadable. A role that crashes is restarted; email in flight is reconciled, never silently sent twice.
 
@@ -135,7 +136,7 @@ On a 2-CPU, 2 GB Linux machine (the load generator and test mail servers on the 
 | Emails delivered end to end, STARTTLS and two DKIM signatures each | 1,480 per second |
 | CPU per delivered email | 1.2 ms, two thirds of it the RSA signature |
 
-Memory for all five roles stays around 285 MB during sustained sending (measured separately, 60,000 emails). In practice receivers set the pace long before the CPU does. Method and more numbers: [bench/README.md](bench/README.md).
+Memory for all roles stays around 285 MB during sustained sending (measured separately, 60,000 emails). In practice receivers set the pace long before the CPU does. Method and more numbers: [bench/README.md](bench/README.md).
 
 ## Develop
 

@@ -45,7 +45,7 @@ We won't take legal action against research done in good faith: test only agains
 
 ## How Bunzzle is built to limit damage
 
-- Five roles, five users. `api`, `core`, `delivery`, `signer` and `inbound` run as separate processes. With the shipped systemd units (or the five-container compose file) each is a separate user in its own sandbox: `signer` and `core` have no network at all, only `signer` can read DKIM keys, only `core` can open the database. See [docs/security.md](docs/security.md).
+- Six roles, six users. `api`, `core`, `delivery`, `dns`, `signer` and `inbound` run as separate processes. With the shipped systemd units (or the six-container compose file) each is a separate user in its own sandbox: `signer` and `core` have no network at all, only `signer` can read DKIM keys, only `core` can open the database. See [docs/security.md](docs/security.md).
 - Encrypted at rest. DKIM keys are encrypted with a master key that never enters the database. Every email body has its own key; when retention ends the key is destroyed and the body is unreadable everywhere, backups included.
 - API keys are hashed, scoped (`send`, `read`, `full`), optionally limited to domains, rate limited.
 - Strict limits on outside input, and fuzz tests for every parser that reads it (DNS answers, SMTP replies, bounces and complaints, inbound SMTP, IPC frames, the HTTP API). Fuzzing runs on every push and nightly in CI.

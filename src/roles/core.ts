@@ -56,6 +56,7 @@ export async function runCore(config: Config, log: Logger) {
   const sock = sockets(config.runDir);
   const signer = new RpcClient(sock.signer);
   const delivery = new RpcClient(sock.delivery);
+  const dns = new RpcClient(sock.dns);
 
   let settled: string[] = [];
   const takeSettled = () => settled.splice(0, 5000);
@@ -189,6 +190,7 @@ export async function runCore(config: Config, log: Logger) {
     log,
     signer,
     delivery,
+    dns,
     sourceIp: config.sourceIps.map((x) => x.ip),
     inboundHost: config.inboundHostname,
     rotateDays: config.dkimRotateDays,

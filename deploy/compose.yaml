@@ -49,11 +49,26 @@ services:
     depends_on:
       init: { condition: service_completed_successfully }
 
+  dns:
+    <<: *role
+    command: ["role", "dns"]
+    user: "10016:10016"
+    group_add: ["10010"]
+    environment:
+      BUNZZLE_RUN_DIR: /run/bunzzle
+      BUNZZLE_CLOUDFLARE_API_TOKEN_FILE: /run/secrets/cloudflare_token
+    secrets: [cloudflare_token]
+    volumes:
+      - run:/run/bunzzle
+    healthcheck:
+      <<: *socket
+      test: ["CMD", "/bin/sh", "-c", "test -S /run/bunzzle/dns.sock"]
+
   core:
     <<: *role
     command: ["role", "core"]
     user: "10012:10012"
-    group_add: ["10010", "10011", "10013"]
+    group_add: ["10010", "10011", "10013", "10016"]
     network_mode: none
     environment:
       BUNZZLE_RUN_DIR: /run/bunzzle
@@ -66,6 +81,7 @@ services:
       test: ["CMD", "/bin/sh", "-c", "test -S /run/bunzzle/core.sock"]
     depends_on:
       signer: { condition: service_healthy }
+      dns: { condition: service_healthy }
 
   delivery:
     <<: *role
@@ -75,8 +91,6 @@ services:
     network_mode: host
     environment:
       BUNZZLE_RUN_DIR: /run/bunzzle
-      BUNZZLE_CLOUDFLARE_API_TOKEN_FILE: /run/secrets/cloudflare_token
-    secrets: [cloudflare_token]
     volumes:
       - run:/run/bunzzle
     healthcheck:

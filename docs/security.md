@@ -2,13 +2,14 @@
 
 How Bunzzle limits what an attacker gets. To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 
-## Five roles
+## Six roles
 
 | Role | Holds | Talks to | Outside input |
 |---|---|---|---|
 | api | nothing secret | core | HTTP requests |
-| core | the database (bodies encrypted) | signer, delivery | none |
-| delivery | one email at a time while sending | signer | DNS answers, SMTP replies, HTTPS (webhooks, MTA-STS, Cloudflare) |
+| core | the database (bodies encrypted) | signer, delivery, dns | none |
+| delivery | one email at a time while sending | signer | DNS answers, SMTP replies, HTTPS (webhooks, MTA-STS) |
+| dns | the DNS provider token, if one is set | the DNS provider's API | its API replies |
 | signer | DKIM keys, master key | nobody | none |
 | inbound | its TLS key, if STARTTLS is on | core | SMTP from the internet |
 
@@ -17,7 +18,7 @@ How Bunzzle limits what an attacker gets. To report a vulnerability, see [SECURI
 - Only `core` opens the database, and `core` has no network. To reach stored data, an attacker has to break two roles.
 - A broken `delivery` or `core` can still ask the signer for signatures, but can never read a key. Key rotation and the volume guards limit the rest.
 
-With the systemd units or the five-container compose file, each role is a separate user in its own sandbox (see [install.md](install.md)). With `bunzzle serve` (one container, or a laptop) the roles are separate processes of one user: the boundaries in the code still hold, but the OS doesn't enforce them.
+With the systemd units or the six-container compose file, each role is a separate user in its own sandbox (see [install.md](install.md)). With `bunzzle serve` (one container, or a laptop) the roles are separate processes of one user: the boundaries in the code still hold, but the OS doesn't enforce them.
 
 ## Data
 
@@ -27,7 +28,7 @@ With the systemd units or the five-container compose file, each role is a separa
 - **API keys** are stored as SHA-256 hashes and shown once.
 - **Webhook secrets** are derived from the master key in the signer and never stored.
 - **Logs** never contain bodies.
-- **Cloudflare API token** (optional, for publishing DNS records and rotating DKIM keys without manual steps) is held by `delivery`, the only role with outbound network. Someone who takes over `delivery` can use it to change the records of the zones it covers. Create it with only `Zone.DNS: Edit`, limited to the zones Bunzzle sends for. Without a token, Bunzzle prints the records and waits for you to publish them; rotation then pauses at that step and keeps signing with the current keys.
+- **Cloudflare API token** (optional, for publishing DNS records and rotating DKIM keys without manual steps) is held only by `dns`, a role that sees no email, no keys and no database, and whose only network access is the provider's API. Someone who takes over `delivery` cannot use it. Create it with only `Zone.DNS: Edit`, limited to the zones Bunzzle sends for. Without a token, Bunzzle prints the records and waits for you to publish them; rotation then pauses at that step and keeps signing with the current keys.
 
 ## Outside input
 
