@@ -482,6 +482,21 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           );
         }),
       },
+      "/metrics": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const r = await rpc(
+            "metrics",
+            { tokenHash: caller.hash },
+            z.object({ text: z.string() }),
+          );
+          return new Response(r.text, {
+            headers: {
+              "content-type": "application/openmetrics-text; version=1.0.0; charset=utf-8",
+            },
+          });
+        }),
+      },
       "/paths": {
         GET: handle(async (req) => {
           const caller = await authenticate(req);
