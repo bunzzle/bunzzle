@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { spkiOf } from "../../src/asn1/der.ts";
 import { localTransport } from "../../src/delivery/transport.ts";
 import { localValidatingResolver } from "../../src/dns/dnssec.ts";
 import { createResolver } from "../../src/dns/resolver.ts";
-import { matches, spkiOf, verifyDane } from "../../src/smtp/dane.ts";
+import { matches, verifyDane } from "../../src/smtp/dane.ts";
 import { type FakeDns, startFakeDns, type Zone } from "../support/fake-dns.ts";
 import { type FakeMx, startFakeMx, TEST_CA } from "../support/fake-mx.ts";
 

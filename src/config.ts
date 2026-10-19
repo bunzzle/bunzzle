@@ -45,6 +45,12 @@ const schema = b.object({
   BUNZZLE_RELAY_HOST: optional,
   BUNZZLE_RELAY_USERNAME: optional,
   BUNZZLE_RELAY_PASSWORD_FILE: optional,
+  BUNZZLE_ACME_EMAIL: optional,
+  BUNZZLE_ACME_DIRECTORY: b
+    .string()
+    .url()
+    .default("https://acme-v02.api.letsencrypt.org/directory"),
+  BUNZZLE_CERTS_DIR: b.string().min(1).default("./certs"),
   BUNZZLE_TLSRPT_FROM: optional,
   BUNZZLE_TLSRPT_ORG: optional,
   BUNZZLE_TLSRPT_CONTACT: optional,
@@ -139,6 +145,7 @@ export interface Config {
     username: string | null;
     passwordFile: string | null;
   } | null;
+  acme: { email: string; directory: string; dir: string; hosts: string[] } | null;
   tlsrpt: { from: string | null; org: string; contact: string };
   submission: {
     host: string;
@@ -205,10 +212,34 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
   if (c.BUNZZLE_RELAY_HOST && !relayMatch) {
     throw new ConfigError("invalid configuration:\n  BUNZZLE_RELAY_HOST must be host or host:port");
   }
+  const certsDir = c.BUNZZLE_CERTS_DIR.replace(/\/+$/, "");
+  const acmeHosts = [
+    ...(c.BUNZZLE_INBOUND_PORT !== undefined
+      ? [c.BUNZZLE_INBOUND_HOSTNAME ?? c.BUNZZLE_EHLO_NAME]
+      : []),
+    ...(c.BUNZZLE_SUBMISSION_PORT !== undefined || c.BUNZZLE_SUBMISSION_TLS_PORT !== undefined
+      ? [c.BUNZZLE_SUBMISSION_HOSTNAME ?? c.BUNZZLE_INBOUND_HOSTNAME ?? c.BUNZZLE_EHLO_NAME]
+      : []),
+  ].filter((h): h is string => !!h);
+  const acme = c.BUNZZLE_ACME_EMAIL
+    ? {
+        email: c.BUNZZLE_ACME_EMAIL,
+        directory: c.BUNZZLE_ACME_DIRECTORY,
+        dir: certsDir,
+        hosts: [...new Set(acmeHosts.map((h) => h.toLowerCase()))],
+      }
+    : null;
+  if (acme) {
+    if (acme.hosts.length === 0) {
+      throw new ConfigError(
+        "invalid configuration:\n  BUNZZLE_ACME_EMAIL needs the inbound or submission port and a hostname",
+      );
+    }
+  }
   const wantsSubmission =
     c.BUNZZLE_SUBMISSION_PORT !== undefined || c.BUNZZLE_SUBMISSION_TLS_PORT !== undefined;
-  const certFile = c.BUNZZLE_SUBMISSION_TLS_CERT_FILE;
-  const keyFile = c.BUNZZLE_SUBMISSION_TLS_KEY_FILE;
+  const certFile = c.BUNZZLE_SUBMISSION_TLS_CERT_FILE ?? (acme ? `${certsDir}/cert.pem` : null);
+  const keyFile = c.BUNZZLE_SUBMISSION_TLS_KEY_FILE ?? (acme ? `${certsDir}/key.pem` : null);
   if (wantsSubmission && (!certFile || !keyFile)) {
     throw new ConfigError(
       "invalid configuration:\n  SMTP submission needs a certificate: set BUNZZLE_SUBMISSION_TLS_CERT_FILE and BUNZZLE_SUBMISSION_TLS_KEY_FILE",
@@ -240,8 +271,9 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     retryScale: c.BUNZZLE_RETRY_SCALE,
     publicUrl: c.BUNZZLE_PUBLIC_URL?.replace(/\/+$/, "") ?? null,
     inboundHostname: c.BUNZZLE_INBOUND_HOSTNAME ?? c.BUNZZLE_EHLO_NAME,
-    inboundTlsCertFile: c.BUNZZLE_INBOUND_TLS_CERT_FILE,
-    inboundTlsKeyFile: c.BUNZZLE_INBOUND_TLS_KEY_FILE,
+    inboundTlsCertFile: c.BUNZZLE_INBOUND_TLS_CERT_FILE ?? (acme ? `${certsDir}/cert.pem` : null),
+    inboundTlsKeyFile: c.BUNZZLE_INBOUND_TLS_KEY_FILE ?? (acme ? `${certsDir}/key.pem` : null),
+    acme,
     dane: c.BUNZZLE_DANE,
     dnsUpdate:
       c.BUNZZLE_DNS_UPDATE_SERVER && c.BUNZZLE_DNS_UPDATE_KEY_NAME && c.BUNZZLE_DNS_UPDATE_KEY_FILE

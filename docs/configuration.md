@@ -85,6 +85,18 @@ For apps that can only send through SMTP. Off unless a port is set, and it needs
 | `BUNZZLE_SUBMISSION_TLS_CERT_FILE` | | Certificate for the submission ports. Required when a port is set. |
 | `BUNZZLE_SUBMISSION_TLS_KEY_FILE` | | Private key for that certificate. Readable by the `bunzzle-api` user. |
 
+## Certificates
+
+With an ACME email address, Bunzzle gets and renews a certificate for the inbound and submission hostnames by itself (Let's Encrypt by default), using DNS-01 challenges through the DNS provider below. Certificate files you set yourself always win.
+
+| Variable | Default | |
+|---|---|---|
+| `BUNZZLE_ACME_EMAIL` | | Contact address for the certificate authority. Turns automatic certificates on; needs Cloudflare or DNS updates. |
+| `BUNZZLE_ACME_DIRECTORY` | Let's Encrypt | ACME directory URL of another certificate authority. |
+| `BUNZZLE_CERTS_DIR` | `./certs` | Where the certificate and its key are kept. `/var/lib/bunzzle/certs` with the shipped units. |
+
+The certificate is renewed 30 days before it expires. The inbound listener and the submission ports notice the new file within 10 minutes and restart to use it.
+
 ## DNS on Cloudflare
 
 | Variable | Default | |

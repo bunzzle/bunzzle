@@ -5,7 +5,7 @@ import { classifyReport, type Report } from "../inbound/parse.ts";
 import { startInboundServer } from "../inbound/server.ts";
 import { RpcClient, RpcError } from "../ipc/rpc.ts";
 import { b } from "../validate/schema.ts";
-import { onStop, ready } from "./runtime.ts";
+import { onStop, ready, watchFile } from "./runtime.ts";
 import { sockets } from "./wire.ts";
 
 async function loadTls(config: Config): Promise<{ cert: string; key: string } | null> {
@@ -16,6 +16,7 @@ async function loadTls(config: Config): Promise<{ cert: string; key: string } | 
       "set both BUNZZLE_INBOUND_TLS_CERT_FILE and BUNZZLE_INBOUND_TLS_KEY_FILE, or neither",
     );
   }
+  if (config.acme && !(await Bun.file(certFile).exists())) return null;
   const cert = await Bun.file(certFile).text();
   const key = await Bun.file(keyFile).text();
   if (!cert.includes("-----BEGIN CERTIFICATE-----")) {
@@ -92,11 +93,17 @@ export async function runInbound(config: Config, log: Logger) {
           },
         });
   const idle = server ? null : setInterval(() => {}, 1 << 30);
-  onStop(log, () => {
+  const restart = onStop(log, () => {
     server?.stop();
     if (idle) clearInterval(idle);
     core.close();
   });
+  if (server && config.acme && config.inboundTlsCertFile) {
+    await watchFile(config.inboundTlsCertFile, 10 * 60_000, () => {
+      log.info("new TLS certificate: restarting to load it");
+      void restart("new certificate");
+    });
+  }
   if (server) log.info("inbound listening", { port: server.port, starttls: tls !== null });
   ready(server ? { port: server.port } : {});
 }

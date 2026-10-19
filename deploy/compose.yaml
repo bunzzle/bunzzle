@@ -21,11 +21,13 @@ services:
       - >-
         chown 0:10010 /run/bunzzle && chmod 1770 /run/bunzzle &&
         chown 10011:10011 /var/lib/bunzzle/keys && chmod 0700 /var/lib/bunzzle/keys &&
-        chown 10012:10012 /var/lib/bunzzle/data && chmod 0700 /var/lib/bunzzle/data
+        chown 10012:10012 /var/lib/bunzzle/data && chmod 0700 /var/lib/bunzzle/data &&
+        chown 10016:10017 /var/lib/bunzzle/certs && chmod 2750 /var/lib/bunzzle/certs
     volumes:
       - run:/run/bunzzle
       - keys:/var/lib/bunzzle/keys
       - data:/var/lib/bunzzle/data
+      - certs:/var/lib/bunzzle/certs
 
   signer:
     <<: *role
@@ -60,6 +62,7 @@ services:
     secrets: [cloudflare_token]
     volumes:
       - run:/run/bunzzle
+      - certs:/var/lib/bunzzle/certs
     healthcheck:
       <<: *socket
       test: ["CMD", "/bin/sh", "-c", "test -S /run/bunzzle/dns.sock"]
@@ -103,7 +106,7 @@ services:
     <<: *role
     command: ["role", "api"]
     user: "10014:10014"
-    group_add: ["10010", "10012"]
+    group_add: ["10010", "10012", "10017"]
     environment:
       BUNZZLE_RUN_DIR: /run/bunzzle
       BUNZZLE_HOST: 0.0.0.0
@@ -111,6 +114,7 @@ services:
     ports: ["127.0.0.1:3000:3000"]
     volumes:
       - run:/run/bunzzle
+      - certs:/var/lib/bunzzle/certs:ro
     depends_on:
       delivery: { condition: service_healthy }
 
@@ -118,7 +122,7 @@ services:
     <<: *role
     command: ["role", "inbound"]
     user: "10015:10015"
-    group_add: ["10010", "10012"]
+    group_add: ["10010", "10012", "10017"]
     environment:
       BUNZZLE_RUN_DIR: /run/bunzzle
       BUNZZLE_INBOUND_HOST: 0.0.0.0
@@ -126,6 +130,7 @@ services:
     ports: ["${BUNZZLE_INBOUND_PUBLISH:-25}:2525"]
     volumes:
       - run:/run/bunzzle
+      - certs:/var/lib/bunzzle/certs:ro
     depends_on:
       core: { condition: service_healthy }
 
@@ -139,3 +144,4 @@ volumes:
   run:
   keys:
   data:
+  certs:

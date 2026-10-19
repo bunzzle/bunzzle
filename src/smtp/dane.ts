@@ -1,47 +1,5 @@
+import { spkiOf } from "../asn1/der.ts";
 import type { TlsaData } from "../dns/wire.ts";
-
-export class DerError extends Error {}
-
-interface Tlv {
-  tag: number;
-  start: number;
-  body: number;
-  end: number;
-}
-
-function tlv(der: Uint8Array, at: number): Tlv {
-  if (at + 2 > der.length) throw new DerError("truncated DER");
-  const tag = der[at] as number;
-  let len = der[at + 1] as number;
-  let body = at + 2;
-  if (len & 0x80) {
-    const n = len & 0x7f;
-    if (n === 0 || n > 4 || body + n > der.length) throw new DerError("bad DER length");
-    len = 0;
-    for (let i = 0; i < n; i++) len = len * 256 + (der[body + i] as number);
-    body += n;
-  }
-  const end = body + len;
-  if (end > der.length) throw new DerError("DER value overflows");
-  return { tag, start: at, body, end };
-}
-
-export function spkiOf(cert: Uint8Array): Uint8Array {
-  const certificate = tlv(cert, 0);
-  const tbs = tlv(cert, certificate.body);
-  let at = tbs.body;
-  let field = tlv(cert, at);
-  if (field.tag === 0xa0) {
-    at = field.end;
-    field = tlv(cert, at);
-  }
-  for (let i = 0; i < 5; i++) {
-    at = field.end;
-    field = tlv(cert, at);
-  }
-  if (field.tag !== 0x30) throw new DerError("no subjectPublicKeyInfo");
-  return cert.slice(field.start, field.end);
-}
 
 export function usable(records: TlsaData[]): TlsaData[] {
   return records.filter(

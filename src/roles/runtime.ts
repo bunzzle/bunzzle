@@ -4,7 +4,10 @@ export function ready(info: Record<string, unknown> = {}) {
   process.send?.({ type: "ready", ...info });
 }
 
-export function onStop(log: Logger, stop: () => Promise<void> | void) {
+export function onStop(
+  log: Logger,
+  stop: () => Promise<void> | void,
+): (reason: string) => Promise<void> {
   let stopping = false;
   const handler = async (signal: string) => {
     if (stopping) return;
@@ -18,6 +21,28 @@ export function onStop(log: Logger, stop: () => Promise<void> | void) {
   };
   process.on("SIGTERM", () => void handler("SIGTERM"));
   process.on("SIGINT", () => void handler("SIGINT"));
+  return handler;
+}
+
+async function fingerprint(path: string): Promise<string | null> {
+  const f = Bun.file(path);
+  if (!(await f.exists())) return null;
+  const h = new Bun.CryptoHasher("sha256");
+  h.update(await f.bytes());
+  return h.digest("hex");
+}
+
+export async function watchFile(
+  path: string,
+  everyMs: number,
+  changed: () => void,
+): Promise<() => void> {
+  let last = await fingerprint(path);
+  return every(everyMs, async () => {
+    const now = await fingerprint(path);
+    if (now !== null && now !== last) changed();
+    last = now;
+  });
 }
 
 export async function privateDir(path: string, mode = "700") {
