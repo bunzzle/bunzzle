@@ -6,6 +6,7 @@ import { createResolver } from "../../src/dns/resolver.ts";
 import { matches, verifyDane } from "../../src/smtp/dane.ts";
 import { type FakeDns, startFakeDns, type Zone } from "../support/fake-dns.ts";
 import { type FakeMx, startFakeMx, TEST_CA } from "../support/fake-mx.ts";
+import { type Issued, issue, privateKeyPem, sha256 } from "../support/x509.ts";
 
 const TLS = `${import.meta.dir}/../fixtures/tls`;
 const SPKI_SHA256 = "795a214456820593df29ed92563495d5d5d8fad1a050502e4f2488c3a5dc55fd";
@@ -45,12 +46,12 @@ afterAll(() => {
 
 const resolver = () => createResolver({ servers: [{ host: "127.0.0.1", port: dns.port }] });
 
-async function deliver(domain: string, dane = true) {
+async function deliver(domain: string, dane = true, port = mx.port) {
   const t = localTransport(
     {
       resolver: resolver(),
       ehloName: "out.bunzzle.test",
-      port: mx.port,
+      port,
       allowPrivate: true,
       tlsCa: TEST_CA,
       timeouts: { greeting: 2_000, quit: 200 },
@@ -92,8 +93,8 @@ describe("DANE", () => {
     expect(matches(rec(0, 1, CERT_SHA256), der)).toBe(true);
     expect(matches(rec(0, 0, der.toHex()), der)).toBe(true);
     expect(matches(rec(1, 1, WRONG), der)).toBe(false);
-    expect(verifyDane([rec(1, 1, WRONG)], der, false)).toMatchObject({ ok: false });
-    expect(verifyDane([{ ...rec(1, 1, WRONG), usage: 1 }], der, false)).toEqual({
+    expect(await verifyDane([rec(1, 1, WRONG)], [der], [])).toMatchObject({ ok: false });
+    expect(await verifyDane([{ ...rec(1, 1, WRONG), usage: 1 }], [der], [])).toEqual({
       ok: true,
       how: "unauthenticated",
     });
@@ -142,5 +143,75 @@ describe("DANE", () => {
   test("with DANE off, TLSA records are not looked up", async () => {
     const r = await deliver("bad.test", false);
     expect(r.recipients[0]?.status).toBe("delivered");
+  });
+});
+
+describe("DANE-TA", () => {
+  let taMx: FakeMx;
+  let namedMx: FakeMx;
+  let root: Issued;
+  let int: Issued;
+
+  const serve = async (names: string[]) => {
+    const leaf = await issue({ name: names[0] as string, issuer: int, dns: names });
+    return startFakeMx({
+      tls: { key: await privateKeyPem(leaf), cert: leaf.pem + int.pem + root.pem },
+    });
+  };
+
+  beforeAll(async () => {
+    root = await issue({ name: "Test Root", ca: true, keyUsage: "sign-certs" });
+    int = await issue({
+      name: "Test Intermediate",
+      issuer: root,
+      ca: true,
+      keyUsage: "sign-certs",
+    });
+    taMx = await serve(["mx.ta.test", "mx.spki.test"]);
+    namedMx = await serve(["named.test"]);
+    const host = (name: string, tlsa: [number, number, number, string]) => ({
+      [name]: { A: ["127.0.0.1"], secure: true },
+      [`_25._tcp.${name}`]: { TLSA: [tlsa], secure: true },
+    });
+    Object.assign(zone, {
+      "ta.test": { MX: [[10, "mx.ta.test"]], secure: true },
+      ...host("mx.ta.test", [2, 0, 1, sha256(root.der).toHex()]),
+      "spki.test": { MX: [[10, "mx.spki.test"]], secure: true },
+      ...host("mx.spki.test", [2, 1, 1, sha256(int.spki).toHex()]),
+      "named.test": { MX: [[10, "mx.named.test"]], secure: true },
+      ...host("mx.named.test", [2, 0, 1, sha256(root.der).toHex()]),
+      "stranger.test": { MX: [[10, "mx.stranger.test"]], secure: true },
+      ...host("mx.stranger.test", [2, 0, 1, sha256(root.der).toHex()]),
+    });
+  });
+
+  afterAll(() => {
+    taMx.stop();
+    namedMx.stop();
+  });
+
+  test("a hash of the root authenticates the chain the server sends", async () => {
+    const r = await deliver("ta.test", true, taMx.port);
+    expect(r.recipients[0]?.status).toBe("delivered");
+    expect(r.sessions[0]?.tls.status).toBe("dane");
+  });
+
+  test("a hash of the intermediate key works too", async () => {
+    const r = await deliver("spki.test", true, taMx.port);
+    expect(r.recipients[0]?.status).toBe("delivered");
+    expect(r.sessions[0]?.tls.status).toBe("dane");
+  });
+
+  test("the recipient domain is an accepted name", async () => {
+    const r = await deliver("named.test", true, namedMx.port);
+    expect(r.recipients[0]?.status).toBe("delivered");
+    expect(r.sessions[0]?.tls.status).toBe("dane");
+  });
+
+  test("a certificate for another name is never used", async () => {
+    const r = await deliver("stranger.test", true, taMx.port);
+    expect(r.recipients[0]?.status).toBe("deferred");
+    expect(r.recipients[0]?.enhanced).toBe("4.7.5");
+    expect(r.sessions[0]?.error).toContain("match none of mx.stranger.test, stranger.test");
   });
 });

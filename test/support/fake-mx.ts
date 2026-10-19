@@ -18,6 +18,7 @@ export interface MxScenario {
   finalDelayMs?: number;
   closeAfterMessage?: boolean;
   maxConcurrent?: number;
+  tls?: { key: string; cert: string };
 }
 
 export interface MxSession {
@@ -80,7 +81,7 @@ export function startFakeMx(scenario: MxScenario = {}, port = 0): FakeMx {
       s.write(scenario.injectAfterStarttls ? `${reply}250 injected\r\n` : reply);
       if (!reply.startsWith("220")) return;
       const [, tls] = s.upgradeTLS({
-        tls: { key: KEY, cert: CERT },
+        tls: scenario.tls ?? { key: KEY, cert: CERT },
         socket: tlsHandlers,
       });
       states.delete(s);

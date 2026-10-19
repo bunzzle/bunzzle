@@ -111,8 +111,11 @@ export function ecdsaSignatureDer(raw: Uint8Array): number[] {
 }
 
 export function pem(label: string, der: Uint8Array | number[]): string {
-  const b64 = Uint8Array.from(der).toBase64().replace(/.{64}/g, "$&\n");
-  return `-----BEGIN ${label}-----\n${b64}\n-----END ${label}-----\n`;
+  const lines =
+    Uint8Array.from(der)
+      .toBase64()
+      .match(/.{1,64}/g) ?? [];
+  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----\n`;
 }
 
 export function fromPem(text: string): Uint8Array[] {

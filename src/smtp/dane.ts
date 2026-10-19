@@ -1,11 +1,11 @@
 import { spkiOf } from "../asn1/der.ts";
 import type { TlsaData } from "../dns/wire.ts";
+import { type Certificate, parseCertificate } from "../x509/cert.ts";
+import { type TrustAnchor, verifyChain } from "../x509/verify.ts";
 
 export function usable(records: TlsaData[]): TlsaData[] {
   return records.filter(
-    (r) =>
-      (r.usage === 3 && r.selector <= 1 && r.matching <= 2) ||
-      (r.usage === 2 && r.selector === 0 && r.matching === 0),
+    (r) => (r.usage === 3 || r.usage === 2) && r.selector <= 1 && r.matching <= 2,
   );
 }
 
@@ -33,32 +33,58 @@ export function matches(record: TlsaData, cert: Uint8Array): boolean {
   return equal(digest(record.matching, subject), record.data);
 }
 
-export function trustAnchors(records: TlsaData[]): string | null {
-  const full = records.filter((r) => r.usage === 2 && r.selector === 0 && r.matching === 0);
-  if (full.length === 0) return null;
-  return full
-    .map((r) => {
-      const b64 = r.data.toBase64().replace(/.{64}/g, "$&\n");
-      return `-----BEGIN CERTIFICATE-----\n${b64}\n-----END CERTIFICATE-----\n`;
-    })
-    .join("");
+function parsed(der: Uint8Array): Certificate | null {
+  try {
+    return parseCertificate(der);
+  } catch {
+    return null;
+  }
+}
+
+function anchorsFor(records: TlsaData[], chain: Certificate[]): TrustAnchor[] {
+  const out: TrustAnchor[] = [];
+  for (const r of records) {
+    for (const c of chain) {
+      if (matches(r, c.der)) out.push({ spki: c.spki, subject: c.subject });
+    }
+    if (r.matching !== 0) continue;
+    if (r.selector === 0) {
+      const c = parsed(r.data);
+      if (c) out.push({ spki: c.spki, subject: c.subject });
+    } else {
+      out.push({ spki: r.data, subject: null });
+    }
+  }
+  return out;
 }
 
 export type DaneVerdict =
   | { ok: true; how: "dane-ee" | "dane-ta" | "unauthenticated" }
   | { ok: false; reason: string };
 
-export function verifyDane(
+export async function verifyDane(
   records: TlsaData[],
-  leaf: Uint8Array | null,
-  anchoredAndAuthorized: boolean,
-): DaneVerdict {
+  chain: Uint8Array[],
+  names: string[],
+  now = Date.now(),
+): Promise<DaneVerdict> {
   const list = usable(records);
   if (list.length === 0) return { ok: true, how: "unauthenticated" };
-  if (leaf && list.some((r) => r.usage === 3 && matches(r, leaf)))
-    return { ok: true, how: "dane-ee" };
-  if (anchoredAndAuthorized) return { ok: true, how: "dane-ta" };
-  return { ok: false, reason: "the certificate matches none of its TLSA records" };
+  const leaf = chain[0];
+  if (!leaf) return { ok: false, reason: "the server sent no certificate" };
+  if (list.some((r) => r.usage === 3 && matches(r, leaf))) return { ok: true, how: "dane-ee" };
+
+  const ta = list.filter((r) => r.usage === 2);
+  if (ta.length === 0)
+    return { ok: false, reason: "the certificate matches none of its TLSA records" };
+  const certs = chain.map(parsed);
+  if (certs[0] === null) return { ok: false, reason: "the server certificate cannot be read" };
+  const readable = certs.filter((c): c is Certificate => c !== null);
+  const anchors = anchorsFor(ta, readable);
+  if (anchors.length === 0)
+    return { ok: false, reason: "no certificate in the chain matches its DANE-TA records" };
+  const verdict = await verifyChain(readable, anchors, names, now);
+  return verdict.ok ? { ok: true, how: "dane-ta" } : verdict;
 }
 
 export function presentation(r: TlsaData): string {
