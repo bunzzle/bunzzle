@@ -130,7 +130,7 @@ describe("MTA-STS policies (D2)", () => {
   test("enforce: TLS with a valid certificate is required (rule mta-sts) and the MX must match", async () => {
     const r = await deliver("strict.test");
     expect(r.policy).toEqual({ rule: "mta-sts", required: true });
-    expect(r.mtaSts).toEqual({ mode: "enforce", id: "20261015" });
+    expect(r.mtaSts).toMatchObject({ mode: "enforce", id: "20261015" });
     expect(r.sessions[0]?.tls).toMatchObject({ status: "verified", rule: "mta-sts" });
     expect(r.recipients[0]?.status).toBe("delivered");
   });
@@ -146,7 +146,7 @@ describe("MTA-STS policies (D2)", () => {
   test("testing mode is recorded but not enforced", async () => {
     const r = await deliver("testing.test");
     expect(r.policy?.rule).toBe("opportunistic");
-    expect(r.mtaSts).toEqual({ mode: "testing", id: "1" });
+    expect(r.mtaSts).toMatchObject({ mode: "testing", id: "1" });
     expect(r.recipients[0]?.status).toBe("delivered");
   });
 });

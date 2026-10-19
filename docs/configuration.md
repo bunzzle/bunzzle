@@ -51,6 +51,16 @@ Bounces, complaints and unsubscribe replies. Off unless a port is set.
 | `BUNZZLE_INBOUND_TLS_CERT_FILE` | | Certificate for STARTTLS on the inbound port. |
 | `BUNZZLE_INBOUND_TLS_KEY_FILE` | | Private key for that certificate. |
 
+## TLS reports
+
+Receiving domains that publish an `_smtp._tls` record get a daily report about yesterday's TLS sessions with their mail servers (RFC 8460). Reports to an `https` address are always sent; reports to a `mailto` address need a sender.
+
+| Variable | Default | |
+|---|---|---|
+| `BUNZZLE_TLSRPT_FROM` | | Sender for emailed reports, on a verified domain. Without it, only HTTPS reports are sent. |
+| `BUNZZLE_TLSRPT_ORG` | `BUNZZLE_EHLO_NAME` | Organization name in the reports. |
+| `BUNZZLE_TLSRPT_CONTACT` | `mailto:` + the sender | Contact in the reports. |
+
 ## SMTP submission
 
 For apps that can only send through SMTP. Off unless a port is set, and it needs a certificate: nothing is accepted before TLS.

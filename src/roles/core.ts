@@ -18,6 +18,7 @@ import { expireSuspensions } from "../queue/control.ts";
 import { Scheduler } from "../scheduler/scheduler.ts";
 import { type ControlState, DEFAULT_TUNING } from "../shaping/control.ts";
 import { Shaper } from "../shaping/shaper.ts";
+import { sendTlsReports } from "../tlsrpt/job.ts";
 import { coreMethods } from "./core-api.ts";
 import { doctorMethods } from "./core-doctor.ts";
 import { feedbackMethods } from "./core-feedback.ts";
@@ -221,6 +222,18 @@ export async function runCore(config: Config, log: Logger) {
       pruneDmarc(d, Date.now());
     }),
   );
+  const stopTlsReports = every(Math.max(1_000, scaled(HOUR)), () =>
+    sendTlsReports({
+      db,
+      writer,
+      log,
+      delivery,
+      org: config.tlsrpt.org,
+      contact: config.tlsrpt.contact,
+      from: config.tlsrpt.from,
+      enqueue: api.enqueueInternal,
+    }).catch((err: Error) => log.warn("TLS reports failed", { error: err.message })),
+  );
   const stopSuspensions = every(Math.max(1_000, scaled(MIN)), () =>
     writer.run((d) => expireSuspensions(d, Date.now())),
   );
@@ -253,6 +266,7 @@ export async function runCore(config: Config, log: Logger) {
     stopShred();
     stopPrune();
     stopSuspensions();
+    stopTlsReports();
     stopVerify();
     stopProject();
     stopGuards();

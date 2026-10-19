@@ -122,7 +122,11 @@ function selectorBase(now: number): string {
 const TOUCH_MS = 60_000;
 const SIGNER_DOMAINS_MS = 60_000;
 
-export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending(): Promise<void> } {
+export function coreMethods(deps: CoreDeps): {
+  methods: Methods;
+  verifyPending(): Promise<void>;
+  enqueueInternal(from: string, to: string, data: string): Promise<string>;
+} {
   const { db, writer, log, signer, delivery } = deps;
   const now = deps.now ?? Date.now;
   const startedAt = now();
@@ -746,5 +750,21 @@ export function coreMethods(deps: CoreDeps): { methods: Methods; verifyPending()
       }));
     }),
   };
-  return { methods, verifyPending };
+  const enqueueInternal = async (from: string, to: string, data: string): Promise<string> => {
+    const r = await prepareEnqueue(
+      {
+        from,
+        recipients: [to],
+        data,
+        smtpUtf8: false,
+        requireTls: false,
+        meta: { from, to: [to], cc: [], bcc: [], replyTo: [], tags: [], lane: "transactional" },
+      },
+      OPERATOR,
+    );
+    if (r.existed) return r.id;
+    return (await writer.run((d) => r.persist(d))).id;
+  };
+
+  return { methods, verifyPending, enqueueInternal };
 }
