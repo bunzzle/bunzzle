@@ -423,3 +423,131 @@ export async function keysCommand(argv: string[], config: Config) {
       throw new UsageError("usage: bunzzle keys create|list|revoke");
   }
 }
+
+interface QueueRowView {
+  destination: string;
+  waiting: number;
+  sending: number;
+  retrying: number;
+  scheduled: number;
+  suspended: number;
+  oldest_age_s: number;
+}
+
+interface SuspensionView {
+  target: string;
+  reason: string;
+  until: string | null;
+  since: string;
+}
+
+function duration(text: string | undefined, flag: string): number | undefined {
+  if (text === undefined) return undefined;
+  const m = /^(\d+)(s|m|h|d)$/.exec(text);
+  if (!m) throw new UsageError(`--${flag} takes a duration like 30m, 6h or 2d`);
+  const unit = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "s" | "m" | "h" | "d"];
+  return Number(m[1]) * unit;
+}
+
+function age(seconds: number): string {
+  if (seconds < 120) return `${seconds}s`;
+  if (seconds < 7_200) return `${Math.round(seconds / 60)}m`;
+  if (seconds < 172_800) return `${Math.round(seconds / 3_600)}h`;
+  return `${Math.round(seconds / 86_400)}d`;
+}
+
+function printRows(title: string, rows: QueueRowView[]) {
+  if (rows.length === 0) return;
+  console.log(title);
+  for (const r of rows) {
+    console.log(
+      `  ${r.destination.padEnd(40)} ${r.waiting} waiting, ${r.retrying} retrying, ${r.sending} sending, ${r.scheduled} scheduled, ${r.suspended} suspended, oldest ${age(r.oldest_age_s)}`,
+    );
+  }
+}
+
+export async function queueCommand(argv: string[], config: Config) {
+  const [sub = "show", ...rest] = argv;
+  switch (sub) {
+    case "show": {
+      const q = await call<{
+        domains: QueueRowView[];
+        routes: QueueRowView[];
+        suspensions: SuspensionView[];
+      }>(config, "queue", {});
+      if (q.domains.length === 0) console.log("The queue is empty.");
+      printRows("By recipient domain:", q.domains);
+      printRows("By route:", q.routes);
+      for (const s of q.suspensions) {
+        console.log(
+          `SUSPENDED ${s.target} since ${s.since}${s.until ? ` until ${s.until}` : ""}: ${s.reason}`,
+        );
+      }
+      return;
+    }
+    case "suspend": {
+      const args = parseArgs(rest, { strings: ["domain", "provider", "reason", "for"] });
+      const domain = args.strings.get("domain");
+      const provider = args.strings.get("provider");
+      const reason = args.strings.get("reason");
+      if ((domain === undefined) === (provider === undefined) || !reason) {
+        throw new UsageError(
+          "usage: bunzzle queue suspend --domain NAME | --provider ID --reason TEXT [--for 6h]",
+        );
+      }
+      const ms = duration(args.strings.get("for"), "for");
+      const s = await call<SuspensionView>(config, "suspend", {
+        target: domain ? `domain:${domain.toLowerCase()}` : `provider:${provider?.toLowerCase()}`,
+        reason,
+        until: ms === undefined ? null : Date.now() + ms,
+      });
+      console.log(
+        `Suspended ${s.target}${s.until ? ` until ${s.until}` : " until you resume it"}. Emails stay queued.`,
+      );
+      return;
+    }
+    case "resume": {
+      const [target] = rest;
+      if (!target) throw new UsageError("usage: bunzzle queue resume domain:NAME|provider:ID");
+      const r = await call<{ woken: number }>(config, "resume", { target });
+      console.log(`Resumed ${target}; ${r.woken} waiting jobs released.`);
+      return;
+    }
+    case "fail":
+    case "cancel": {
+      const args = parseArgs(rest, {
+        strings: ["domain", "sender-domain", "older-than", "reason"],
+        flags: ["dry-run"],
+      });
+      const reason = args.strings.get("reason");
+      if (!reason) {
+        throw new UsageError(
+          `usage: bunzzle queue ${sub} [--domain NAME] [--sender-domain NAME] [--older-than 6h] --reason TEXT [--dry-run]`,
+        );
+      }
+      const olderThanMs = duration(args.strings.get("older-than"), "older-than");
+      const domain = args.strings.get("domain");
+      const senderDomain = args.strings.get("sender-domain");
+      const dryRun = args.flags.has("dry-run");
+      const r = await call<{ emails: number; recipients: number; skipped_sending: number }>(
+        config,
+        "removeQueued",
+        {
+          action: sub,
+          reason,
+          dryRun,
+          ...(domain ? { domain: domain.toLowerCase() } : {}),
+          ...(senderDomain ? { senderDomain: senderDomain.toLowerCase() } : {}),
+          ...(olderThanMs !== undefined ? { olderThanMs } : {}),
+        },
+      );
+      const verb = sub === "cancel" ? "canceled" : "failed";
+      console.log(
+        `${dryRun ? "Would have" : "Have"} ${verb} ${r.emails} emails (${r.recipients} recipients).${r.skipped_sending ? ` ${r.skipped_sending} are being sent right now and were left alone.` : ""}`,
+      );
+      return;
+    }
+    default:
+      throw new UsageError("usage: bunzzle queue [show|suspend|resume|fail|cancel]");
+  }
+}

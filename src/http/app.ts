@@ -92,6 +92,20 @@ function enqueueFields(email: PreparedEmail) {
   };
 }
 
+const suspendSchema = b.object({
+  target: b.string().max(300),
+  reason: b.string().min(1).max(500),
+  until: b.string().max(64).optional(),
+});
+
+const removeSchema = b.object({
+  reason: b.string().min(1).max(500),
+  domain: b.string().max(253).optional(),
+  sender_domain: b.string().max(253).optional(),
+  older_than_seconds: b.number().int().nonnegative().optional(),
+  dry_run: b.boolean().default(false),
+});
+
 function invalid(error: b.ValidationError): ApiError {
   const issue = error.issues[0];
   const field = issue?.path.join(".") || "body";
@@ -190,6 +204,24 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
     } catch (err) {
       throw fromRpc(err);
     }
+  };
+
+  const removeQueued = async (req: Request, action: "fail" | "cancel") => {
+    const caller = await authenticate(req);
+    const parsed = removeSchema.safeParse(await json(req));
+    if (!parsed.success) throw invalid(parsed.error);
+    const p = parsed.data;
+    return Response.json(
+      await rpc("removeQueued", {
+        tokenHash: caller.hash,
+        action,
+        reason: p.reason,
+        dryRun: p.dry_run,
+        ...(p.domain !== undefined ? { domain: p.domain } : {}),
+        ...(p.sender_domain !== undefined ? { senderDomain: p.sender_domain } : {}),
+        ...(p.older_than_seconds !== undefined ? { olderThanMs: p.older_than_seconds * 1000 } : {}),
+      }),
+    );
   };
 
   return Bun.serve({
@@ -481,6 +513,41 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
             await rpc("releaseHold", { tokenHash: caller.hash, id: req.params["id"] }),
           );
         }),
+      },
+      "/queue": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(await rpc("queue", { tokenHash: caller.hash }));
+        }),
+      },
+      "/queue/suspensions": {
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          const parsed = suspendSchema.safeParse(await json(req));
+          if (!parsed.success) throw invalid(parsed.error);
+          const until = parsed.data.until === undefined ? null : Date.parse(parsed.data.until);
+          if (until !== null && Number.isNaN(until)) {
+            throw new ApiError(422, "validation_error", "`until` must be an ISO 8601 date");
+          }
+          const { target, reason } = parsed.data;
+          return Response.json(
+            await rpc("suspend", { tokenHash: caller.hash, target, reason, until }),
+          );
+        }),
+      },
+      "/queue/suspensions/:target": {
+        DELETE: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(
+            await rpc("resume", { tokenHash: caller.hash, target: req.params["target"] }),
+          );
+        }),
+      },
+      "/queue/fail": {
+        POST: handle(async (req) => removeQueued(req, "fail")),
+      },
+      "/queue/cancel": {
+        POST: handle(async (req) => removeQueued(req, "cancel")),
       },
       "/metrics": {
         GET: handle(async (req) => {

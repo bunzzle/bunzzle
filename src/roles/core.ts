@@ -14,6 +14,7 @@ import { pruneIdempotency } from "../emails/idempotency.ts";
 import { reputationGuard } from "../guards/guards.ts";
 import { RpcClient, serveRpc } from "../ipc/rpc.ts";
 import { rollover } from "../ips/warmup.ts";
+import { expireSuspensions } from "../queue/control.ts";
 import { Scheduler } from "../scheduler/scheduler.ts";
 import { type ControlState, DEFAULT_TUNING } from "../shaping/control.ts";
 import { Shaper } from "../shaping/shaper.ts";
@@ -123,6 +124,7 @@ export async function runCore(config: Config, log: Logger) {
     busyRetryMs: scaled(MIN),
     ips: config.sourceIps,
     holdRetryMs: scaled(15 * MIN),
+    suspendRetryMs: scaled(5 * MIN),
     maxWaitMs: Math.max(1_000, Math.floor(Math.max(2_000, scaled(45 * MIN)) / 3)),
     bounceDomainFor: (d) => (returnPathReady(getDomain(db, d)) ? bounceDomain(d) : null),
   });
@@ -217,6 +219,9 @@ export async function runCore(config: Config, log: Logger) {
       pruneDmarc(d, Date.now());
     }),
   );
+  const stopSuspensions = every(Math.max(1_000, scaled(MIN)), () =>
+    writer.run((d) => expireSuspensions(d, Date.now())),
+  );
   const stopVerify = every(Math.max(1_000, scaled(5 * MIN)), () => api.verifyPending());
   const stopGuards = every(Math.max(1_000, scaled(MIN)), () =>
     writer
@@ -245,6 +250,7 @@ export async function runCore(config: Config, log: Logger) {
     stopSettled();
     stopShred();
     stopPrune();
+    stopSuspensions();
     stopVerify();
     stopProject();
     stopGuards();

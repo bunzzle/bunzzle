@@ -376,6 +376,73 @@ describe("GET /metrics", () => {
   });
 });
 
+describe("queue control", () => {
+  let key = "";
+  beforeAll(async () => {
+    key = await newKey("--scope", "full", "--rate-limit", "1000");
+  });
+  const call = (path: string, init: RequestInit = {}) => api(path, { token: key, ...init });
+  const post = (path: string, body: unknown) =>
+    call(path, { method: "POST", body: JSON.stringify(body) });
+  const sendTo = async (to: string) =>
+    ((await (await send(email({ to: [to] }), { token: key })).json()) as { id: string }).id;
+  const statusOf = async (id: string) =>
+    ((await (await call(`/emails/${id}`)).json()) as { last_event: string }).last_event;
+  const until = async (id: string, want: string) => {
+    for (let i = 0; i < 100 && (await statusOf(id)) !== want; i++) await Bun.sleep(50);
+    return statusOf(id);
+  };
+
+  test("a suspended domain keeps its email queued until it is resumed", async () => {
+    const s = await post("/queue/suspensions", {
+      target: "domain:example.test",
+      reason: "receiver asked us to slow down",
+    });
+    expect(s.status).toBe(200);
+    const id = await sendTo("paused@example.test");
+    expect(await until(id, "delivery_delayed")).toBe("delivery_delayed");
+    const q = (await (await call("/queue")).json()) as {
+      domains: { destination: string; suspended: number }[];
+      suspensions: { target: string }[];
+    };
+    expect(q.domains.find((d) => d.destination === "example.test")?.suspended).toBe(1);
+    expect(q.suspensions.map((x) => x.target)).toContain("domain:example.test");
+    const resumed = await call("/queue/suspensions/domain:example.test", { method: "DELETE" });
+    expect(((await resumed.json()) as { woken: number }).woken).toBe(1);
+    expect(await until(id, "delivered")).toBe("delivered");
+    expect(
+      (await call("/queue/suspensions/domain:example.test", { method: "DELETE" })).status,
+    ).toBe(404);
+  });
+
+  test("queued email can be failed or canceled by filter, with a dry run first", async () => {
+    await post("/queue/suspensions", { target: "domain:held.test", reason: "testing" });
+    const a = await sendTo("one@held.test");
+    const c = await sendTo("two@held.test");
+    await until(a, "delivery_delayed");
+    await until(c, "delivery_delayed");
+    const dry = (await (
+      await post("/queue/cancel", { domain: "held.test", reason: "bad list", dry_run: true })
+    ).json()) as { emails: number; dry_run: boolean };
+    expect(dry).toMatchObject({ emails: 2, dry_run: true });
+    expect(await statusOf(a)).toBe("delivery_delayed");
+    const done = (await (
+      await post("/queue/cancel", { domain: "held.test", reason: "bad list" })
+    ).json()) as { emails: number };
+    expect(done.emails).toBe(2);
+    expect(await statusOf(a)).toBe("canceled");
+    expect(await statusOf(c)).toBe("canceled");
+    const f = await sendTo("three@held.test");
+    await until(f, "delivery_delayed");
+    await post("/queue/fail", { domain: "held.test", reason: "domain gone" });
+    expect(await statusOf(f)).toBe("failed");
+    expect((await post("/queue/fail", { reason: "everything" })).status).toBe(422);
+    expect((await post("/queue/suspensions", { target: "everything", reason: "x" })).status).toBe(
+      422,
+    );
+  });
+});
+
 describe("scopes, domain limits, rate limits, revocation", () => {
   test("a send-only key cannot read, a read-only key cannot send", async () => {
     const sendOnly = await newKey("--scope", "send");

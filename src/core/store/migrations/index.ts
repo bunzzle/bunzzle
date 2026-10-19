@@ -7,6 +7,7 @@ import shaping from "./0006_shaping.sql" with { type: "text" };
 import feedback from "./0007_feedback.sql" with { type: "text" };
 import reputation from "./0008_reputation.sql" with { type: "text" };
 import dmarc from "./0009_dmarc.sql" with { type: "text" };
+import queueControl from "./0010_queue_control.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -24,4 +25,5 @@ export const migrations: readonly Migration[] = [
   { version: 7, name: "feedback", sql: feedback },
   { version: 8, name: "reputation", sql: reputation },
   { version: 9, name: "dmarc", sql: dmarc },
+  { version: 10, name: "queue control", sql: queueControl },
 ];

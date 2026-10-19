@@ -10,6 +10,7 @@ import type { Destination } from "../dns/mx.ts";
 import { activeHold, countSender } from "../guards/guards.ts";
 import { bucketOf, choose, countWarmup } from "../ips/warmup.ts";
 import { domainOf } from "../mime/address.ts";
+import { SUSPENDED_PREFIX, suspensionFor } from "../queue/control.ts";
 import { type Classification, classify } from "../replies/classify.ts";
 import { providerOf, siteOf } from "../routing/providers.ts";
 import type { JobContext } from "../scheduler/scheduler.ts";
@@ -32,6 +33,7 @@ export interface DeliveryHandlerOptions {
   bounceDomainFor?: (senderDomain: string) => string | null;
   ips?: SourceIp[];
   holdRetryMs?: number;
+  suspendRetryMs?: number;
 }
 
 interface Update {
@@ -72,6 +74,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
   const clock = o.clock ?? systemClock;
   const fixedSource = o.source ?? "default";
   const holdRetryMs = o.holdRetryMs ?? 15 * 60_000;
+  const suspendRetryMs = o.suspendRetryMs ?? 5 * 60_000;
   const busyRetryMs = o.busyRetryMs ?? 60_000;
 
   const record =
@@ -190,6 +193,25 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       };
     }
 
+    const suspended = (provider: string | null): Outcome | null => {
+      const s = suspensionFor(db, job.target, provider, now);
+      if (!s) return null;
+      let delay = s.until === null ? suspendRetryMs : Math.min(suspendRetryMs, s.until - now);
+      if (job.expiresAt !== null) delay = Math.min(delay, job.expiresAt - now);
+      return {
+        ...requeue(`suspended by an operator: ${s.reason}`, Math.max(1_000, delay)),
+        apply: (d, settled, at) => {
+          if (settled !== "requeued") return;
+          d.query<unknown, [string, number, string]>(
+            `UPDATE recipients SET status = 'deferred', reply = ?, updated_at = ?
+             WHERE job_id = ? AND status IN ('queued', 'deferred')`,
+          ).run(`${SUSPENDED_PREFIX}: ${s.reason}`, at, job.id);
+        },
+      };
+    };
+    const byDomain = suspended(null);
+    if (byDomain) return byDomain;
+
     let destination: Destination;
     try {
       destination = await o.transport.lookup(job.target);
@@ -204,6 +226,8 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       destination.kind === "targets"
         ? (providerOf(destination.mxHosts[0] ?? "")?.id ?? null)
         : null;
+    const byProvider = provider ? suspended(provider) : null;
+    if (byProvider) return byProvider;
     const lane = job.priority > 0 ? "bulk" : "transactional";
     const senderDomain = domainOf(email.from);
     const apiKeyId = (job.metadata["apiKeyId"] as string | null | undefined) ?? null;
