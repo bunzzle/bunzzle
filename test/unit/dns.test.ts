@@ -103,6 +103,20 @@ describe("resolver", () => {
   test("times out with a DnsError", async () => {
     await expect(resolver.query("slow.test", "A")).rejects.toBeInstanceOf(DnsError);
   });
+
+  test("reports the socket error when the server port is closed", async () => {
+    const probe = await Bun.udpSocket({});
+    const port = probe.port;
+    probe.close();
+    const closed = createResolver({
+      servers: [{ host: "127.0.0.1", port }],
+      timeoutMs: 200,
+      attempts: 1,
+    });
+    const err = await closed.query("example.test", "A").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DnsError);
+    expect((err as DnsError).message).toMatch(/ECONNREFUSED|no answer from/);
+  });
 });
 
 describe("cache", () => {
