@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fromPem, pem } from "../../src/asn1/der.ts";
 import type { TlsaData } from "../../src/dns/wire.ts";
 import { verifyDane } from "../../src/smtp/dane.ts";
 import { parseCertificate } from "../../src/x509/cert.ts";
@@ -53,6 +54,17 @@ describe("certificate parsing", () => {
     expect(() => parseCertificate(leaf.der.subarray(0, 40))).toThrow();
     expect(() => parseCertificate(new Uint8Array([...leaf.der, 0]))).toThrow();
     expect(() => parseCertificate(new Uint8Array([0x30, 0x82, 0xff]))).toThrow();
+  });
+});
+
+describe("PEM", () => {
+  test("no blank line at any length, and it reads back", () => {
+    for (const n of [1, 47, 48, 49, 96, 138]) {
+      const der = crypto.getRandomValues(new Uint8Array(n));
+      const text = pem("CERTIFICATE", der);
+      expect(text).not.toContain("\n\n");
+      expect(fromPem(text)).toEqual([der]);
+    }
   });
 });
 
