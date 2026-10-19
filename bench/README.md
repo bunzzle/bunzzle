@@ -1,11 +1,16 @@
 # Benchmarks
 
 ```sh
-bun bench/intake.ts [emails] [clients]                   # POST /emails into the queue, nothing sent
-bun bench/delivery.ts [emails] [destinations] [clients]  # API to a local SMTP sink, STARTTLS + DKIM
-bun bench/queue.ts [messages] [producers]                # the queue alone
-bun bench/crash.ts [messages] [kills]                    # SIGKILLs during work: lost, duplicates
+bun bench/intake.ts [emails] [clients]
+bun bench/delivery.ts [emails] [destinations] [clients]
+bun bench/queue.ts [messages] [producers]
+bun bench/crash.ts [messages] [kills]
 ```
+
+- `intake`: `POST /emails` into the queue, nothing sent.
+- `delivery`: API to a local SMTP sink, with STARTTLS and DKIM.
+- `queue`: the queue alone.
+- `crash`: kills roles with SIGKILL during work and counts lost and duplicate emails.
 
 The intake and delivery benchmarks start a full `bunzzle serve` (five roles), a fake DNS server and a fake MX, and print throughput, latency, CPU per email by role and memory. The load generator runs on the same machine, so the numbers are a lower bound.
 
