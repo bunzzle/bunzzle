@@ -1,4 +1,5 @@
 g bunzzle          -
+g bunzzle-certs    -
 u bunzzle-signer   - "Bunzzle signer"   - -
 u bunzzle-core     - "Bunzzle core"     - -
 u bunzzle-delivery - "Bunzzle delivery" - -
@@ -17,3 +18,5 @@ m bunzzle-core     bunzzle-dns
 m bunzzle-delivery bunzzle-signer
 m bunzzle-api      bunzzle-core
 m bunzzle-inbound  bunzzle-core
+m bunzzle-api      bunzzle-certs
+m bunzzle-inbound  bunzzle-certs

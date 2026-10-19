@@ -31,6 +31,7 @@ describe("loadConfig", () => {
       dane: "auto",
       dnsUpdate: null,
       relay: null,
+      acme: null,
       tlsrpt: { from: null, org: "bunzzle", contact: "bunzzle" },
       submission: null,
       sourceIps: [],

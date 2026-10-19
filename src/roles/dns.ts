@@ -1,3 +1,4 @@
+import { ensureCertificate } from "../acme/manager.ts";
 import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { cachingResolver } from "../dns/cache.ts";
@@ -7,8 +8,10 @@ import { Cloudflare } from "../net/cloudflare.ts";
 import { guardedRequest } from "../net/request.ts";
 import { DnsUpdater } from "../net/rfc2136.ts";
 import { b } from "../validate/schema.ts";
-import { onStop, ready } from "./runtime.ts";
+import { every, onStop, ready } from "./runtime.ts";
 import { sockets } from "./wire.ts";
+
+const HOUR = 3_600_000;
 
 export async function runDns(config: Config, log: Logger) {
   const servers = config.dnsServers.length
@@ -65,6 +68,43 @@ export async function runDns(config: Config, log: Logger) {
       },
     ),
   });
-  onStop(log, () => server.stop());
+  let stopAcme = () => {};
+  const acme = config.acme;
+  if (acme && provider) {
+    const request = (r: Parameters<typeof guardedRequest>[0]) =>
+      guardedRequest(r, {
+        resolver,
+        allowPrivate: config.allowPrivateDestinations,
+        timeoutMs: 30_000,
+      });
+    let nextAt = Date.now() + 5_000;
+    const tick = async () => {
+      if (Date.now() < nextAt) return;
+      try {
+        await ensureCertificate({
+          directory: acme.directory,
+          email: acme.email,
+          hosts: acme.hosts,
+          dir: acme.dir,
+          dns: provider,
+          request,
+          log,
+        });
+        nextAt = Date.now() + 12 * HOUR;
+      } catch (err) {
+        nextAt = Date.now() + HOUR;
+        log.error("could not get a TLS certificate", {
+          hosts: acme.hosts,
+          error: (err as Error).message,
+        });
+      }
+    };
+    stopAcme = every(60_000, tick);
+    setTimeout(() => void tick(), 5_000);
+  }
+  onStop(log, () => {
+    stopAcme();
+    server.stop();
+  });
   ready({ provider: providerName });
 }

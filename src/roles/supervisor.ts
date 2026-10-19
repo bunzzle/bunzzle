@@ -35,6 +35,11 @@ export async function runSupervisor(
     );
   }
   await masterKeyFrom(masterText);
+  if (config.acme && !config.cloudflareToken && !config.cloudflareTokenFile && !config.dnsUpdate) {
+    throw new ConfigError(
+      "BUNZZLE_ACME_EMAIL needs a DNS provider (Cloudflare or DNS updates) for the DNS-01 challenge",
+    );
+  }
   await privateDir(config.runDir, "750");
   await privateDir(config.dataDir);
   await privateDir(config.keysDir);
