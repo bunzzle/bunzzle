@@ -15,6 +15,7 @@ export interface InboundInput {
   messageId: string | null;
   report: Report;
   raw: SealedBody | null;
+  simulated?: boolean;
 }
 
 export interface Applied {
@@ -108,7 +109,7 @@ export function applyInbound(db: Database, input: InboundInput, now: number): Ap
 
   const who = attributionOf(db, messageId);
   const attribute = (delta: { hardBounced?: number; complained?: number }) => {
-    if (!who) return;
+    if (!who || input.simulated) return;
     countSender(db, who.domain, who.lane, delta, now);
     if (who.source) {
       countWarmup(

@@ -8,6 +8,7 @@ import { type Apply, defer, fail, type Outcome, ok, requeue, unknown } from "../
 import { clampHint } from "../core/retry.ts";
 import type { Destination } from "../dns/mx.ts";
 import { activeHold, countSender } from "../guards/guards.ts";
+import { applyInbound } from "../inbound/apply.ts";
 import { bucketOf, choose, countWarmup } from "../ips/warmup.ts";
 import { domainOf } from "../mime/address.ts";
 import { SUSPENDED_PREFIX, suspensionFor } from "../queue/control.ts";
@@ -19,6 +20,13 @@ import type { DeliveryReport } from "../smtp/deliver.ts";
 import type { RecipientResult } from "../smtp/session.ts";
 import { suppress, suppressionForClass } from "../suppressions/store.ts";
 import { bodyOf, type EmailPayload, pendingRecipients, type RecipientState } from "./queue.ts";
+import {
+  complains,
+  SIMULATOR_DOMAIN,
+  SIMULATOR_SOURCE,
+  simulate,
+  simulatorDestination,
+} from "./simulator.ts";
 import type { DeliveryTransport } from "./transport.ts";
 
 export interface DeliveryHandlerOptions {
@@ -216,9 +224,12 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
     const byDomain = suspended(null);
     if (byDomain) return byDomain;
 
+    const simulated = job.metadata["test"] === true || job.target === SIMULATOR_DOMAIN;
     let destination: Destination;
     try {
-      destination = await o.transport.lookup(job.target);
+      destination = simulated
+        ? simulatorDestination(job.target)
+        : await o.transport.lookup(job.target);
     } catch (err) {
       return {
         ...defer(`delivery unavailable: ${(err as Error).message}`, busyRetryMs),
@@ -264,7 +275,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       if (hold) return waitFor(`bulk mail on hold: ${hold.reason}`, holdRetryMs, true, null);
     }
 
-    const routes = destination.kind === "targets" ? (o.relayRoutes ?? null) : null;
+    const routes = destination.kind === "targets" && !simulated ? (o.relayRoutes ?? null) : null;
     const canFallback = routes?.blocked === true && !email.requireTls;
     let via: typeof RELAY | null =
       routes &&
@@ -272,8 +283,8 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         (provider !== null && routes.targets.includes(provider)))
         ? RELAY
         : null;
-    let source: string = RELAY;
-    if (!via) {
+    let source: string = simulated ? SIMULATOR_SOURCE : RELAY;
+    if (!via && !simulated) {
       const choice = o.ips?.length
         ? choose(
             db,
@@ -301,7 +312,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         .run(pathKey, job.id);
 
     let admission: Admission =
-      destination.kind === "targets"
+      destination.kind === "targets" && !simulated
         ? await o.shaper.admit(source, target, provider, lane, o.maxWaitMs)
         : { kind: "go", connections: 1, release: () => {} };
     if (admission.kind === "requeue" && admission.blocked && !via && canFallback) {
@@ -330,23 +341,25 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
     const recallKey = job.unresolvedAttempt !== null ? `${job.id}#${job.unresolvedAttempt}` : null;
     let report: DeliveryReport;
     try {
-      report = await o.transport.deliver({
-        key: attemptKey,
-        recall: recallKey,
-        messageId: job.messageId,
-        domain: job.target,
-        destination,
-        from: email.from,
-        recipients: pending,
-        smtpUtf8: email.smtpUtf8,
-        requireTls: email.requireTls,
-        body,
-        ...(destination.kind === "targets" ? { connections: ticket.connections } : {}),
-        lane,
-        bounceDomain: o.bounceDomainFor?.(domainOf(email.from)) ?? null,
-        source: via ? fixedSource : source,
-        ...(via ? { via } : {}),
-      });
+      report = simulated
+        ? simulate(job.target, pending, job.attempt)
+        : await o.transport.deliver({
+            key: attemptKey,
+            recall: recallKey,
+            messageId: job.messageId,
+            domain: job.target,
+            destination,
+            from: email.from,
+            recipients: pending,
+            smtpUtf8: email.smtpUtf8,
+            requireTls: email.requireTls,
+            body,
+            ...(destination.kind === "targets" ? { connections: ticket.connections } : {}),
+            lane,
+            bounceDomain: o.bounceDomainFor?.(domainOf(email.from)) ?? null,
+            source: via ? fixedSource : source,
+            ...(via ? { via } : {}),
+          });
     } catch (err) {
       ticket.release("neutral", "delivery role unreachable");
       const code = (err as { code?: unknown })?.code;
@@ -397,14 +410,37 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         (u) => u.result && (u.result.phase === "rcpt" || u.result.phase === "dot"),
       );
       const hard = updates.filter((u) => u.status === "bounced" && u.verdict?.suppress).length;
-      countSender(
-        d,
-        senderDomain,
-        lane,
-        { delivered: updates.filter((u) => u.status === "delivered").length, hardBounced: hard },
-        at,
-      );
-      if (!via && source !== "default" && !o.ips?.find((x) => x.ip === source)?.established) {
+      if (simulated) {
+        for (const u of updates) {
+          if (u.status !== "delivered" || !complains(u.address)) continue;
+          applyInbound(
+            d,
+            {
+              id: Bun.randomUUIDv7(),
+              via: "feedback",
+              messageId: job.messageId,
+              report: { kind: "arf", ref: null, feedbackType: "abuse", originalRcpt: u.address },
+              raw: null,
+              simulated: true,
+            },
+            at,
+          );
+        }
+      } else {
+        countSender(
+          d,
+          senderDomain,
+          lane,
+          { delivered: updates.filter((u) => u.status === "delivered").length, hardBounced: hard },
+          at,
+        );
+      }
+      if (
+        !via &&
+        !simulated &&
+        source !== "default" &&
+        !o.ips?.find((x) => x.ip === source)?.established
+      ) {
         countWarmup(
           d,
           source,
@@ -428,6 +464,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         path: pathKey,
         source,
         ...(via ? { via } : {}),
+        ...(simulated ? { simulated: true } : {}),
         sts: report.mtaSts ?? null,
         recalled: report.recalled ?? false,
         provider,
