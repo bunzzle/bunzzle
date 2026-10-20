@@ -2,7 +2,7 @@
   "name": "@bunzzle/sdk",
   "version": "0.1.0",
   "description": "Client for the Bunzzle API",
-  "license": "AGPL-3.0-only",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "exports": {
@@ -14,7 +14,8 @@
   "files": [
     "index.js",
     "index.d.ts",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "repository": {
     "type": "git",

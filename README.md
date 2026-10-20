@@ -240,4 +240,4 @@ Configuration is read from environment variables. Every setting is listed in [do
 
 ## License
 
-[AGPL-3.0](LICENSE).
+[AGPL-3.0](LICENSE). The SDK in [sdk/typescript](sdk/typescript) is [MIT](sdk/typescript/LICENSE).

@@ -43,3 +43,7 @@ try {
 ```
 
 Pass `fetch` in the options to use your own (for retries, proxies or tests).
+
+## License
+
+[MIT](LICENSE).
