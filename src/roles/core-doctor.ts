@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { allows, keyForHash } from "../accounts/api-keys.ts";
 import type { Config } from "../config.ts";
+import type { StorageState } from "../core/storage.ts";
 import { listDomains } from "../domains/domains.ts";
 import { listHolds } from "../guards/guards.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
@@ -24,6 +25,7 @@ export interface DoctorDeps {
   delivery: RpcClient;
   rotation: ReturnType<typeof rotation>;
   paths: () => PathView[];
+  storage?: () => StorageState;
   now?: () => number;
 }
 
@@ -91,6 +93,19 @@ export function doctorMethods(deps: DoctorDeps): Methods {
         ? `listening on port ${config.inboundPort}`
         : "BUNZZLE_INBOUND_PORT is not set: late bounces and complaints are not received",
     );
+    const disk = deps.storage?.();
+    if (disk && disk.minFreeMb > 0) {
+      add(
+        "config",
+        "disk space",
+        disk.freeMb === null ? "warn" : disk.low ? "fail" : "ok",
+        disk.freeMb === null
+          ? "could not read the free space of the data directory"
+          : disk.low
+            ? `${disk.freeMb} MB free, below BUNZZLE_MIN_FREE_MB (${disk.minFreeMb}): new email is refused`
+            : `${disk.freeMb} MB free (new email is refused below ${disk.minFreeMb} MB)`,
+      );
+    }
 
     const dnssec = await delivery
       .call("dnssec", {}, { result: dnssecInfo, timeoutMs: 10_000 })

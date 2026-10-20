@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { countByState } from "../core/jobs.ts";
+import type { StorageState } from "../core/storage.ts";
 import type { PathView } from "../shaping/shaper.ts";
 import { VERSION } from "../version.ts";
 
@@ -37,7 +38,13 @@ export function render(families: Family[]): string {
   return `${lines.join("\n")}\n`;
 }
 
-export function collect(db: Database, paths: PathView[], now: number, startedAt: number): Family[] {
+export function collect(
+  db: Database,
+  paths: PathView[],
+  now: number,
+  startedAt: number,
+  storage?: StorageState,
+): Family[] {
   const jobs = countByState(db);
   const recipients = db
     .query<{ status: string; target: string; n: number }, []>(
@@ -73,6 +80,22 @@ export function collect(db: Database, paths: PathView[], now: number, startedAt:
       help: "Seconds since the core role started.",
       samples: [{ labels: {}, value: Math.round((now - startedAt) / 1000) }],
     },
+    ...(storage && storage.freeMb !== null
+      ? [
+          {
+            name: "bunzzle_disk_free_bytes",
+            type: "gauge" as const,
+            help: "Free space for the data directory.",
+            samples: [{ labels: {}, value: storage.freeMb * 1024 * 1024 }],
+          },
+          {
+            name: "bunzzle_disk_low",
+            type: "gauge" as const,
+            help: "1 while new email is refused because free space is below BUNZZLE_MIN_FREE_MB.",
+            samples: [{ labels: {}, value: storage.low ? 1 : 0 }],
+          },
+        ]
+      : []),
     {
       name: "bunzzle_jobs",
       type: "gauge",

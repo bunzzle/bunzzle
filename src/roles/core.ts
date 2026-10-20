@@ -2,6 +2,7 @@ import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { fail, type Outcome } from "../core/outcome.ts";
 import { defaultRetryPolicy, type RetryPolicy } from "../core/retry.ts";
+import { StorageWatch } from "../core/storage.ts";
 import { openDatabase } from "../core/store/db.ts";
 import { Writer } from "../core/store/writer.ts";
 import { type EpochPublicKey, epochOf } from "../crypto/envelope.ts";
@@ -138,6 +139,8 @@ export async function runCore(config: Config, log: Logger) {
         }
       })
       .catch(() => {});
+  const storage = new StorageWatch(config.dataDir, config.minFreeMb, log);
+  await storage.check();
   const handleEmail = deliveryHandler({
     db,
     log,
@@ -198,6 +201,7 @@ export async function runCore(config: Config, log: Logger) {
     anomalyFloor: config.anomalyFloor,
     ips: config.sourceIps,
     paths: () => shaper.views(),
+    storage: () => storage.state(),
     publish: (records) => rotate.publish(records),
   });
   const feedback = feedbackMethods({
@@ -227,6 +231,7 @@ export async function runCore(config: Config, log: Logger) {
     delivery,
     rotation: rotate,
     paths: () => shaper.views(),
+    storage: () => storage.state(),
   });
   const server = await serveRpc(sock.core, {
     ...api.methods,
@@ -273,6 +278,7 @@ export async function runCore(config: Config, log: Logger) {
       .catch((err: Error) => log.error("guard check failed", { error: err.message })),
   );
   const stopRotation = every(Math.max(1_000, scaled(HOUR)), () => rotate.tick());
+  const stopStorage = every(30_000, () => storage.check());
   const stopListed = config.sourceIps.length
     ? every(Math.max(1_000, scaled(10 * MIN)), refreshListed)
     : () => {};
@@ -309,6 +315,7 @@ export async function runCore(config: Config, log: Logger) {
     stopProject();
     stopGuards();
     stopRotation();
+    stopStorage();
     stopListed();
     stopDispatch();
     stopEventLog();

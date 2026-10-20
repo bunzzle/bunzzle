@@ -12,6 +12,7 @@ import {
 import type { SourceIp } from "../config.ts";
 import { countByState } from "../core/jobs.ts";
 import type { Logger } from "../core/log.ts";
+import type { StorageState } from "../core/storage.ts";
 import type { Writer } from "../core/store/writer.ts";
 import { type EpochPublicKey, sealBody } from "../crypto/envelope.ts";
 import {
@@ -81,6 +82,7 @@ export interface CoreDeps {
   ips?: SourceIp[];
   publish?: (records: DomainRecord[]) => Promise<boolean>;
   paths?: () => PathView[];
+  storage?: () => StorageState;
   now?: () => number;
 }
 
@@ -176,6 +178,13 @@ export function coreMethods(deps: CoreDeps): {
   };
 
   const prepareEnqueue = async (p: EnqueueInput, key: ApiKey) => {
+    const storage = deps.storage?.();
+    if (storage?.low) {
+      throw new RpcError(
+        "storage-low",
+        `free disk space is below ${storage.minFreeMb} MB; new email is accepted again once space is freed`,
+      );
+    }
     const id = p.id ?? Bun.randomUUIDv7();
     if (p.id !== undefined && emailExists(db, id)) return { id, existed: true as const };
     let headerDomain: string;
@@ -728,7 +737,9 @@ export function coreMethods(deps: CoreDeps): {
 
     metrics: method(b.object({ tokenHash }), (p) => {
       caller(p.tokenHash, "read");
-      return { text: render(collect(db, deps.paths?.() ?? [], now(), startedAt)) };
+      return {
+        text: render(collect(db, deps.paths?.() ?? [], now(), startedAt, deps.storage?.())),
+      };
     }),
 
     paths: method(b.object({ tokenHash }), (p) => {

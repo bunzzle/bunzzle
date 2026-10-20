@@ -44,6 +44,8 @@ function fromRpc(err: unknown): SmtpReply {
         return { code: 530, text: "5.7.0 The API key is no longer valid" };
       case "held":
         return { code: 450, text: `4.7.1 ${err.message}` };
+      case "storage-low":
+        return { code: 452, text: `4.3.1 ${err.message}` };
     }
   }
   return { code: 451, text: "4.3.0 Bunzzle is busy, try again later" };
