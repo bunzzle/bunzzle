@@ -1,0 +1,4526 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Bunzzle",
+    "version": "0.1.0",
+    "license": {
+      "name": "AGPL-3.0-only",
+      "identifier": "AGPL-3.0-only"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:3000"
+    }
+  ],
+  "security": [
+    {
+      "apiKey": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Emails"
+    },
+    {
+      "name": "Domains"
+    },
+    {
+      "name": "Webhooks"
+    },
+    {
+      "name": "Inbound routes"
+    },
+    {
+      "name": "Templates"
+    },
+    {
+      "name": "Suppressions"
+    },
+    {
+      "name": "Operations"
+    },
+    {
+      "name": "Public links"
+    }
+  ],
+  "paths": {
+    "/emails": {
+      "post": {
+        "operationId": "sendEmail",
+        "tags": [
+          "Emails"
+        ],
+        "summary": "Send an email",
+        "description": "API key scope: send (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Sending again with the same key within 24 hours returns the first email.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendEmail"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SentEmail"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listEmails",
+        "tags": [
+          "Emails"
+        ],
+        "summary": "Search emails, newest first",
+        "description": "API key scope: read (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "delivery_delayed",
+                "sending",
+                "delivered",
+                "bounced",
+                "failed"
+              ]
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "name:value"
+            }
+          },
+          {
+            "name": "domain",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailList"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/emails/batch": {
+      "post": {
+        "operationId": "sendBatch",
+        "tags": [
+          "Emails"
+        ],
+        "summary": "Send up to 100 emails; if one is invalid, none is queued",
+        "description": "API key scope: send (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Sending again with the same key within 24 hours returns the first emails.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendBatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SentBatch"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/emails/{id}": {
+      "get": {
+        "operationId": "getEmail",
+        "tags": [
+          "Emails"
+        ],
+        "summary": "Status per recipient and every delivery attempt",
+        "description": "API key scope: read (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Email"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "rescheduleEmail",
+        "tags": [
+          "Emails"
+        ],
+        "summary": "Move a scheduled email",
+        "description": "API key scope: send (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RescheduleEmail"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailRef"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/emails/{id}/cancel": {
+      "post": {
+        "operationId": "cancelEmail",
+        "tags": [
+          "Emails"
+        ],
+        "summary": "Cancel a scheduled email",
+        "description": "API key scope: send (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailRef"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/stats": {
+      "get": {
+        "operationId": "getStats",
+        "tags": [
+          "Emails"
+        ],
+        "summary": "Counts per day",
+        "description": "API key scope: read (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "domain",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "name:value"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stats"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/domains": {
+      "get": {
+        "operationId": "listDomains",
+        "tags": [
+          "Domains"
+        ],
+        "summary": "List domains",
+        "description": "API key scope: read (full keys can do everything).",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainList"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createDomain",
+        "tags": [
+          "Domains"
+        ],
+        "summary": "Add a domain and create its DKIM keys",
+        "description": "API key scope: full (full keys can do everything).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDomain"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Domain"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/domains/{name}": {
+      "get": {
+        "operationId": "getDomain",
+        "tags": [
+          "Domains"
+        ],
+        "summary": "A domain with its records, IP pool, tracking and Gmail data",
+        "description": "API key scope: read (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainDetail"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateDomain",
+        "tags": [
+          "Domains"
+        ],
+        "summary": "Set the IP pool or the tracking host",
+        "description": "API key scope: full (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateDomain"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainUpdate"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/domains/{name}/verify": {
+      "post": {
+        "operationId": "verifyDomain",
+        "tags": [
+          "Domains"
+        ],
+        "summary": "Check the DNS records now",
+        "description": "API key scope: full (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Domain"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/domains/{name}/dmarc": {
+      "get": {
+        "operationId": "getDmarcReports",
+        "tags": [
+          "Domains"
+        ],
+        "summary": "DMARC aggregate reports per day",
+        "description": "API key scope: read (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 90,
+              "default": 7
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DmarcReports"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/domains/{name}/rotate": {
+      "post": {
+        "operationId": "rotateDomainKeys",
+        "tags": [
+          "Domains"
+        ],
+        "summary": "Start or continue DKIM key rotation",
+        "description": "API key scope: full (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Rotation"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/webhooks": {
+      "get": {
+        "operationId": "listWebhooks",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "List webhooks",
+        "description": "API key scope: read (full keys can do everything).",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookList"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createWebhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Add a webhook; the response has its signing secret",
+        "description": "API key scope: full (full keys can do everything).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWebhook"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Webhook"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/webhooks/{id}": {
+      "delete": {
+        "operationId": "deleteWebhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Remove a webhook",
+        "description": "API key scope: full (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deleted"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routes": {
+      "get": {
+        "operationId": "listRoutes",
+        "tags": [
+          "Inbound routes"
+        ],
+        "summary": "List inbound routes",
+        "description": "API key scope: read (full keys can do everything).",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteList"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createRoute",
+        "tags": [
+          "Inbound routes"
+        ],
+        "summary": "Post mail for an address to a URL; the response has its signing secret",
+        "description": "API key scope: full (full keys can do everything).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRoute"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Route"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routes/{id}": {
+      "delete": {
+        "operationId": "deleteRoute",
+        "tags": [
+          "Inbound routes"
+        ],
+        "summary": "Remove a route",
+        "description": "API key scope: full (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deleted"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routes/{id}/retry": {
+      "post": {
+        "operationId": "retryRoute",
+        "tags": [
+          "Inbound routes"
+        ],
+        "summary": "Post failed mail for a route again",
+        "description": "API key scope: full (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteRetry"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/templates": {
+      "get": {
+        "operationId": "listTemplates",
+        "tags": [
+          "Templates"
+        ],
+        "summary": "List templates",
+        "description": "API key scope: read (full keys can do everything).",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateList"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createTemplate",
+        "tags": [
+          "Templates"
+        ],
+        "summary": "Create a template",
+        "description": "API key scope: full (full keys can do everything).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTemplate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Template"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/templates/{id}": {
+      "get": {
+        "operationId": "getTemplate",
+        "tags": [
+          "Templates"
+        ],
+        "summary": "A template by id or name",
+        "description": "API key scope: read or send (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Template"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateTemplate",
+        "tags": [
+          "Templates"
+        ],
+        "summary": "Save a new version; fields left out are kept",
+        "description": "API key scope: full (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTemplate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Template"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteTemplate",
+        "tags": [
+          "Templates"
+        ],
+        "summary": "Remove a template",
+        "description": "API key scope: full (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deleted"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/templates/{id}/preview": {
+      "post": {
+        "operationId": "previewTemplate",
+        "tags": [
+          "Templates"
+        ],
+        "summary": "Fill a template without sending",
+        "description": "API key scope: read or send (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewTemplate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preview"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/suppressions": {
+      "get": {
+        "operationId": "listSuppressions",
+        "tags": [
+          "Suppressions"
+        ],
+        "summary": "List suppressed addresses",
+        "description": "API key scope: read (full keys can do everything).",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuppressionList"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSuppression",
+        "tags": [
+          "Suppressions"
+        ],
+        "summary": "Suppress an address",
+        "description": "API key scope: full (full keys can do everything).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSuppression"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuppressionAdded"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/suppressions/{email}": {
+      "delete": {
+        "operationId": "deleteSuppression",
+        "tags": [
+          "Suppressions"
+        ],
+        "summary": "Remove an address from the suppression list",
+        "description": "API key scope: full (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "email",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "bulk"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuppressionRemoved"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/doctor": {
+      "get": {
+        "operationId": "runDoctor",
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Check the configuration, DNS and domains",
+        "description": "API key scope: full (full keys can do everything).",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Doctor"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ips": {
+      "get": {
+        "operationId": "listIps",
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Source IPs with their pool and reverse DNS",
+        "description": "API key scope: read (full keys can do everything).",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorList"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/holds": {
+      "get": {
+        "operationId": "listHolds",
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Bulk mail on hold and sender rates",
+        "description": "API key scope: read (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "all",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorView"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/holds/{id}": {
+      "delete": {
+        "operationId": "releaseHold",
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Release a hold",
+        "description": "API key scope: full (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorView"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/queue": {
+      "get": {
+        "operationId": "getQueue",
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Queued mail per destination and suspensions",
+        "description": "API key scope: read (full keys can do everything).",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorView"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/queue/suspensions": {
+      "post": {
+        "operationId": "suspendDelivery",
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Pause delivery to a domain or provider",
+        "description": "API key scope: full (full keys can do everything).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Suspend"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorView"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/queue/suspensions/{target}": {
+      "delete": {
+        "operationId": "resumeDelivery",
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Resume delivery",
+        "description": "API key scope: full (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "target",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorView"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/queue/fail": {
+      "post": {
+        "operationId": "failQueued",
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Fail queued mail that matches the filters (bounces are sent)",
+        "description": "API key scope: full (full keys can do everything).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveQueued"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorView"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/queue/cancel": {
+      "post": {
+        "operationId": "cancelQueued",
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Cancel queued mail that matches the filters",
+        "description": "API key scope: full (full keys can do everything).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveQueued"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorView"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/paths": {
+      "get": {
+        "operationId": "listPaths",
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Sending speed per destination, limits and recent changes",
+        "description": "API key scope: read (full keys can do everything).",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorList"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "operationId": "getMetrics",
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Metrics in the OpenMetrics text format",
+        "description": "API key scope: read (full keys can do everything).",
+        "responses": {
+          "200": {
+            "description": "Metrics",
+            "content": {
+              "application/openmetrics-text": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Whether the server is up",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/u/{token}": {
+      "get": {
+        "operationId": "unsubscribePage",
+        "tags": [
+          "Public links"
+        ],
+        "summary": "Unsubscribe page of a bulk email",
+        "security": [],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HTML page",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not a valid link"
+          }
+        }
+      },
+      "post": {
+        "operationId": "unsubscribe",
+        "tags": [
+          "Public links"
+        ],
+        "summary": "One-click unsubscribe",
+        "security": [],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HTML page",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not a valid link"
+          }
+        }
+      }
+    },
+    "/o/{token}": {
+      "get": {
+        "operationId": "trackOpen",
+        "tags": [
+          "Public links"
+        ],
+        "summary": "Open tracking image",
+        "security": [],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "1×1 GIF",
+            "content": {
+              "image/gif": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not a valid link"
+          }
+        }
+      }
+    },
+    "/c/{token}/{url}": {
+      "get": {
+        "operationId": "trackClick",
+        "tags": [
+          "Public links"
+        ],
+        "summary": "Click tracking redirect",
+        "security": [],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "url",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to the link in the email"
+          },
+          "404": {
+            "description": "Not a valid link"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "statusCode": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "statusCode",
+          "name",
+          "message"
+        ]
+      },
+      "SendEmail": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 1000
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1,
+                "maxItems": 50
+              }
+            ]
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 998
+          },
+          "template": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "variables": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "id"
+            ]
+          },
+          "cc": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1,
+                "maxItems": 50
+              }
+            ]
+          },
+          "bcc": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1,
+                "maxItems": 50
+              }
+            ]
+          },
+          "reply_to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1,
+                "maxItems": 50
+              }
+            ]
+          },
+          "html": {
+            "type": "string",
+            "maxLength": 41943040
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 41943040
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 998
+            }
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "filename": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 255
+                },
+                "content": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 255
+                      }
+                    }
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "content_type": {
+                  "type": "string",
+                  "maxLength": 255
+                },
+                "content_id": {
+                  "type": "string",
+                  "maxLength": 255
+                }
+              },
+              "required": [
+                "filename"
+              ]
+            },
+            "maxItems": 100
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,256}$"
+                },
+                "value": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,256}$"
+                }
+              },
+              "required": [
+                "name",
+                "value"
+              ]
+            },
+            "maxItems": 50
+          },
+          "scheduled_at": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "expires_at": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "require_tls": {
+            "type": "boolean"
+          },
+          "lane": {
+            "type": "string",
+            "enum": [
+              "transactional",
+              "bulk"
+            ]
+          },
+          "tracking": {
+            "type": "object",
+            "properties": {
+              "opens": {
+                "type": "boolean"
+              },
+              "clicks": {
+                "type": "boolean"
+              }
+            },
+            "required": []
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ]
+      },
+      "SentEmail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "EmailList": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "list"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "object": {
+                  "const": "email"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "from": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "to": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "value"
+                    ]
+                  }
+                },
+                "lane": {
+                  "type": "string",
+                  "enum": [
+                    "transactional",
+                    "bulk"
+                  ]
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "last_event": {
+                  "type": "string",
+                  "enum": [
+                    "scheduled",
+                    "queued",
+                    "sending",
+                    "delivery_delayed",
+                    "delivered",
+                    "bounced",
+                    "failed",
+                    "expired",
+                    "suppressed",
+                    "canceled"
+                  ]
+                },
+                "recipients": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "email": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "scheduled",
+                          "queued",
+                          "sending",
+                          "delivery_delayed",
+                          "delivered",
+                          "bounced",
+                          "failed",
+                          "expired",
+                          "suppressed",
+                          "canceled"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "email",
+                      "status"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "object",
+                "id",
+                "from",
+                "to",
+                "tags",
+                "lane",
+                "created_at",
+                "last_event",
+                "recipients"
+              ]
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "object",
+          "data",
+          "next_cursor"
+        ]
+      },
+      "SendBatch": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 1000
+            },
+            "to": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1,
+                  "maxItems": 50
+                }
+              ]
+            },
+            "subject": {
+              "type": "string",
+              "maxLength": 998
+            },
+            "template": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "variables": {
+                  "type": "object",
+                  "additionalProperties": {}
+                }
+              },
+              "required": [
+                "id"
+              ]
+            },
+            "cc": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1,
+                  "maxItems": 50
+                }
+              ]
+            },
+            "bcc": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1,
+                  "maxItems": 50
+                }
+              ]
+            },
+            "reply_to": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1,
+                  "maxItems": 50
+                }
+              ]
+            },
+            "html": {
+              "type": "string",
+              "maxLength": 41943040
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 41943040
+            },
+            "headers": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 998
+              }
+            },
+            "attachments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "filename": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255
+                  },
+                  "content": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 255
+                        }
+                      }
+                    ]
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "content_type": {
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  "content_id": {
+                    "type": "string",
+                    "maxLength": 255
+                  }
+                },
+                "required": [
+                  "filename"
+                ]
+              },
+              "maxItems": 100
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,256}$"
+                  },
+                  "value": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,256}$"
+                  }
+                },
+                "required": [
+                  "name",
+                  "value"
+                ]
+              },
+              "maxItems": 50
+            },
+            "scheduled_at": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "expires_at": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "require_tls": {
+              "type": "boolean"
+            },
+            "lane": {
+              "type": "string",
+              "enum": [
+                "transactional",
+                "bulk"
+              ]
+            },
+            "tracking": {
+              "type": "object",
+              "properties": {
+                "opens": {
+                  "type": "boolean"
+                },
+                "clicks": {
+                  "type": "boolean"
+                }
+              },
+              "required": []
+            }
+          },
+          "required": [
+            "from",
+            "to"
+          ]
+        },
+        "minItems": 1,
+        "maxItems": 100
+      },
+      "SentBatch": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id"
+              ]
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "Email": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "email"
+          },
+          "id": {
+            "type": "string"
+          },
+          "from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "bcc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reply_to": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "subject": {
+            "const": null
+          },
+          "html": {
+            "const": null
+          },
+          "text": {
+            "const": null
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "value"
+              ]
+            }
+          },
+          "lane": {
+            "type": "string",
+            "enum": [
+              "transactional",
+              "bulk"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "scheduled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_event": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "queued",
+              "sending",
+              "delivery_delayed",
+              "delivered",
+              "bounced",
+              "failed",
+              "expired",
+              "suppressed",
+              "canceled"
+            ]
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "email": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "scheduled",
+                    "queued",
+                    "sending",
+                    "delivery_delayed",
+                    "delivered",
+                    "bounced",
+                    "failed",
+                    "expired",
+                    "suppressed",
+                    "canceled"
+                  ]
+                },
+                "attempts": {
+                  "type": "integer"
+                },
+                "last_reply": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "class": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "about": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "suppression_candidate": {
+                  "type": "boolean"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "required": [
+                "email",
+                "status",
+                "attempts",
+                "last_reply",
+                "class",
+                "about",
+                "suppression_candidate",
+                "updated_at"
+              ]
+            }
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "domain": {
+                  "type": "string"
+                },
+                "mx": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "provider": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "via": {
+                  "type": "string",
+                  "enum": [
+                    "direct",
+                    "relay"
+                  ]
+                },
+                "tls_policy": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "reconciled": {
+                  "type": "boolean"
+                },
+                "sessions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "host": {
+                        "type": "string"
+                      },
+                      "ip": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "reused_connection": {
+                        "type": "boolean"
+                      },
+                      "tls": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          },
+                          "version": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "cipher": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "rule": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "error": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "version",
+                          "cipher",
+                          "rule",
+                          "error"
+                        ]
+                      },
+                      "stopped_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "error": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "conversation": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "at_ms": {
+                              "type": "number"
+                            },
+                            "from": {
+                              "type": "string",
+                              "enum": [
+                                "client",
+                                "server",
+                                "note"
+                              ]
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "at_ms",
+                            "from",
+                            "text"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "host",
+                      "ip",
+                      "reused_connection",
+                      "tls",
+                      "stopped_at",
+                      "error",
+                      "conversation"
+                    ]
+                  }
+                },
+                "results": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "email": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "reply": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "class": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "action": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "email",
+                      "status"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "at",
+                "domain",
+                "mx",
+                "provider",
+                "via",
+                "tls_policy",
+                "reconciled",
+                "sessions",
+                "results"
+              ]
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": {},
+              "description": "`type` and `at`, and fields that depend on the type"
+            }
+          }
+        },
+        "required": [
+          "object",
+          "id",
+          "from",
+          "to",
+          "cc",
+          "bcc",
+          "reply_to",
+          "subject",
+          "html",
+          "text",
+          "tags",
+          "lane",
+          "created_at",
+          "scheduled_at",
+          "last_event",
+          "recipients",
+          "attempts",
+          "events"
+        ]
+      },
+      "RescheduleEmail": {
+        "type": "object",
+        "properties": {
+          "scheduled_at": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "scheduled_at"
+        ]
+      },
+      "EmailRef": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "email"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "object",
+          "id"
+        ]
+      },
+      "Stats": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "stats"
+          },
+          "since": {
+            "type": "string",
+            "format": "date"
+          },
+          "until": {
+            "type": "string",
+            "format": "date"
+          },
+          "totals": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "object",
+          "since",
+          "until",
+          "totals",
+          "data"
+        ]
+      },
+      "DomainList": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "list"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "object": {
+                  "const": "domain"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "verified"
+                  ]
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "checked_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "records": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "record": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "TXT",
+                          "MX"
+                        ]
+                      },
+                      "value": {
+                        "type": "string"
+                      },
+                      "required": {
+                        "type": "boolean"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "not_started",
+                          "verified",
+                          "missing",
+                          "mismatch"
+                        ]
+                      },
+                      "found": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "record",
+                      "name",
+                      "type",
+                      "value",
+                      "required",
+                      "status",
+                      "found"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "object",
+                "name",
+                "status",
+                "created_at",
+                "checked_at",
+                "records"
+              ]
+            }
+          }
+        },
+        "required": [
+          "object",
+          "data"
+        ]
+      },
+      "CreateDomain": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 253
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "Domain": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "domain"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "verified"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "checked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "record": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "TXT",
+                    "MX"
+                  ]
+                },
+                "value": {
+                  "type": "string"
+                },
+                "required": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "not_started",
+                    "verified",
+                    "missing",
+                    "mismatch"
+                  ]
+                },
+                "found": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "record",
+                "name",
+                "type",
+                "value",
+                "required",
+                "status",
+                "found"
+              ]
+            }
+          }
+        },
+        "required": [
+          "object",
+          "name",
+          "status",
+          "created_at",
+          "checked_at",
+          "records"
+        ]
+      },
+      "DomainDetail": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "domain"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "verified"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "checked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "record": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "TXT",
+                    "MX"
+                  ]
+                },
+                "value": {
+                  "type": "string"
+                },
+                "required": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "not_started",
+                    "verified",
+                    "missing",
+                    "mismatch"
+                  ]
+                },
+                "found": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "record",
+                "name",
+                "type",
+                "value",
+                "required",
+                "status",
+                "found"
+              ]
+            }
+          },
+          "ip_pool": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tracking": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "opens": {
+                "type": "boolean"
+              },
+              "clicks": {
+                "type": "boolean"
+              },
+              "record": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "CNAME"
+                  },
+                  "value": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "verified",
+                      "missing",
+                      "mismatch"
+                    ]
+                  },
+                  "found": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "type",
+                  "value",
+                  "status",
+                  "found"
+                ]
+              },
+              "checked_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "host",
+              "opens",
+              "clicks",
+              "record",
+              "checked_at"
+            ]
+          },
+          "gmail": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "day": {
+                "type": "string"
+              },
+              "spam_rate": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "reputation": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "spf_pass_rate": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "dkim_pass_rate": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "dmarc_pass_rate": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "tls_rate": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "day",
+              "spam_rate",
+              "reputation",
+              "spf_pass_rate",
+              "dkim_pass_rate",
+              "dmarc_pass_rate",
+              "tls_rate"
+            ]
+          }
+        },
+        "required": [
+          "object",
+          "name",
+          "status",
+          "created_at",
+          "checked_at",
+          "records",
+          "ip_pool",
+          "tracking",
+          "gmail"
+        ]
+      },
+      "UpdateDomain": {
+        "type": "object",
+        "properties": {
+          "ip_pool": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-z0-9-]{1,32}$"
+          },
+          "tracking": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "host": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 253
+              },
+              "opens": {
+                "type": "boolean"
+              },
+              "clicks": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "host"
+            ]
+          }
+        },
+        "required": []
+      },
+      "DomainUpdate": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "ip_pool": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tracking": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "opens": {
+                "type": "boolean"
+              },
+              "clicks": {
+                "type": "boolean"
+              },
+              "record": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "CNAME"
+                  },
+                  "value": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "verified",
+                      "missing",
+                      "mismatch"
+                    ]
+                  },
+                  "found": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "type",
+                  "value",
+                  "status",
+                  "found"
+                ]
+              },
+              "checked_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "host",
+              "opens",
+              "clicks",
+              "record",
+              "checked_at"
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "DmarcReports": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "list"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "day": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "messages": {
+                  "type": "integer"
+                },
+                "dmarc_pass": {
+                  "type": "integer"
+                },
+                "reporters": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "source_ip": {
+                        "type": "string"
+                      },
+                      "messages": {
+                        "type": "integer"
+                      },
+                      "dmarc_pass": {
+                        "type": "integer"
+                      },
+                      "dkim_pass": {
+                        "type": "integer"
+                      },
+                      "spf_pass": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "source_ip",
+                      "messages",
+                      "dmarc_pass",
+                      "dkim_pass",
+                      "spf_pass"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "day",
+                "messages",
+                "dmarc_pass",
+                "reporters",
+                "sources"
+              ]
+            }
+          }
+        },
+        "required": [
+          "object",
+          "domain",
+          "data"
+        ]
+      },
+      "Rotation": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ]
+      },
+      "WebhookList": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "list"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "object": {
+                  "const": "webhook"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "endpoint": {
+                  "type": "string"
+                },
+                "events": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "email.delivered",
+                      "email.delivery_delayed",
+                      "email.bounced",
+                      "email.complained",
+                      "email.unsubscribed",
+                      "email.suppressed",
+                      "email.failed",
+                      "email.canceled",
+                      "email.opened",
+                      "email.clicked"
+                    ]
+                  }
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "signing_secret": {
+                  "type": "string",
+                  "description": "Only in the response that creates the webhook"
+                }
+              },
+              "required": [
+                "object",
+                "id",
+                "endpoint",
+                "events",
+                "created_at"
+              ]
+            }
+          }
+        },
+        "required": [
+          "object",
+          "data"
+        ]
+      },
+      "CreateWebhook": {
+        "type": "object",
+        "properties": {
+          "endpoint": {
+            "type": "string",
+            "maxLength": 2048
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "email.delivered",
+                "email.delivery_delayed",
+                "email.bounced",
+                "email.complained",
+                "email.unsubscribed",
+                "email.suppressed",
+                "email.failed",
+                "email.canceled",
+                "email.opened",
+                "email.clicked"
+              ]
+            }
+          }
+        },
+        "required": [
+          "endpoint"
+        ]
+      },
+      "Webhook": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "webhook"
+          },
+          "id": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "email.delivered",
+                "email.delivery_delayed",
+                "email.bounced",
+                "email.complained",
+                "email.unsubscribed",
+                "email.suppressed",
+                "email.failed",
+                "email.canceled",
+                "email.opened",
+                "email.clicked"
+              ]
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "signing_secret": {
+            "type": "string",
+            "description": "Only in the response that creates the webhook"
+          }
+        },
+        "required": [
+          "object",
+          "id",
+          "endpoint",
+          "events",
+          "created_at"
+        ]
+      },
+      "Deleted": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "deleted"
+        ]
+      },
+      "RouteList": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "list"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "object": {
+                  "const": "route"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "address": {
+                  "type": "string"
+                },
+                "endpoint": {
+                  "type": "string"
+                },
+                "format": {
+                  "type": "string",
+                  "enum": [
+                    "parsed",
+                    "raw"
+                  ]
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "signing_secret": {
+                  "type": "string",
+                  "description": "Only in the response that creates the route"
+                }
+              },
+              "required": [
+                "object",
+                "id",
+                "address",
+                "endpoint",
+                "format",
+                "created_at"
+              ]
+            }
+          }
+        },
+        "required": [
+          "object",
+          "data"
+        ]
+      },
+      "CreateRoute": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string",
+            "maxLength": 320
+          },
+          "endpoint": {
+            "type": "string",
+            "maxLength": 2048
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "parsed",
+              "raw"
+            ]
+          }
+        },
+        "required": [
+          "address",
+          "endpoint"
+        ]
+      },
+      "Route": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "route"
+          },
+          "id": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "parsed",
+              "raw"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "signing_secret": {
+            "type": "string",
+            "description": "Only in the response that creates the route"
+          }
+        },
+        "required": [
+          "object",
+          "id",
+          "address",
+          "endpoint",
+          "format",
+          "created_at"
+        ]
+      },
+      "RouteRetry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "requeued": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "requeued"
+        ]
+      },
+      "TemplateList": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "list"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "object": {
+                  "const": "template"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "integer"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "required": [
+                "object",
+                "id",
+                "name",
+                "version",
+                "created_at",
+                "updated_at"
+              ]
+            }
+          }
+        },
+        "required": [
+          "object",
+          "data"
+        ]
+      },
+      "CreateTemplate": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 998
+          },
+          "html": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2097152
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2097152
+          }
+        },
+        "required": [
+          "name",
+          "subject"
+        ]
+      },
+      "Template": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "template"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "html": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          }
+        },
+        "required": [
+          "object",
+          "id",
+          "name",
+          "version",
+          "created_at",
+          "updated_at",
+          "subject",
+          "html",
+          "text",
+          "versions"
+        ]
+      },
+      "UpdateTemplate": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "maxLength": 998
+          },
+          "html": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2097152
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2097152
+          }
+        },
+        "required": []
+      },
+      "PreviewTemplate": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "variables": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        },
+        "required": []
+      },
+      "Preview": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "preview"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "html": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "object",
+          "id",
+          "name",
+          "version",
+          "subject",
+          "html",
+          "text"
+        ]
+      },
+      "SuppressionList": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "list"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "object": {
+                  "const": "suppression"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string",
+                  "enum": [
+                    "all",
+                    "bulk"
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "email_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "expires_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                }
+              },
+              "required": [
+                "object",
+                "email",
+                "scope",
+                "reason",
+                "detail",
+                "email_id",
+                "created_at",
+                "expires_at"
+              ]
+            }
+          }
+        },
+        "required": [
+          "object",
+          "data"
+        ]
+      },
+      "CreateSuppression": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 320
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "all",
+              "bulk"
+            ]
+          }
+        },
+        "required": [
+          "email"
+        ]
+      },
+      "SuppressionAdded": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "all",
+              "bulk"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "scope",
+          "reason"
+        ]
+      },
+      "SuppressionRemoved": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "removed": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "email",
+          "removed"
+        ]
+      },
+      "Doctor": {
+        "type": "object",
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "area": {
+                  "type": "string"
+                },
+                "item": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ok",
+                    "warn",
+                    "fail"
+                  ]
+                },
+                "detail": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "area",
+                "item",
+                "status",
+                "detail"
+              ]
+            }
+          },
+          "summary": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "integer"
+              },
+              "warn": {
+                "type": "integer"
+              },
+              "fail": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "ok",
+              "warn",
+              "fail"
+            ]
+          }
+        },
+        "required": [
+          "checks",
+          "summary"
+        ]
+      },
+      "OperatorList": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "list"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": {}
+            }
+          }
+        },
+        "required": [
+          "object",
+          "data"
+        ]
+      },
+      "OperatorView": {
+        "type": "object",
+        "additionalProperties": {}
+      },
+      "Suspend": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "until": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "target",
+          "reason"
+        ]
+      },
+      "RemoveQueued": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "domain": {
+            "type": "string",
+            "maxLength": 253
+          },
+          "sender_domain": {
+            "type": "string",
+            "maxLength": 253
+          },
+          "older_than_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string"
+          },
+          "uptime_s": {
+            "type": "integer"
+          },
+          "core": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "unavailable"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "version",
+          "uptime_s",
+          "core"
+        ]
+      }
+    }
+  }
+}

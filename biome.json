@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/dist", "!**/data", "!LICENSE"]
+    "includes": ["**", "!**/dist", "!**/data", "!LICENSE", "!openapi.json"]
   },
   "formatter": {
     "enabled": true,
