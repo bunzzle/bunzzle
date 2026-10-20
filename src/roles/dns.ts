@@ -5,6 +5,7 @@ import { cachingResolver } from "../dns/cache.ts";
 import { createResolver, parseServer, systemServers } from "../dns/resolver.ts";
 import { method, serveRpc } from "../ipc/rpc.ts";
 import { Cloudflare } from "../net/cloudflare.ts";
+import { Desec } from "../net/desec.ts";
 import { guardedRequest } from "../net/request.ts";
 import { DnsUpdater } from "../net/rfc2136.ts";
 import { Route53 } from "../net/route53.ts";
@@ -42,6 +43,9 @@ export async function runDns(config: Config, log: Logger) {
         api,
       )
     : null;
+  const desec = config.desec
+    ? new Desec((await Bun.file(config.desec.tokenFile).text()).trim(), config.desec.url, api)
+    : null;
   const u = config.dnsUpdate;
   const updater = u
     ? new DnsUpdater(
@@ -54,14 +58,16 @@ export async function runDns(config: Config, log: Logger) {
         createResolver({ servers }),
       )
     : null;
-  const provider = cloudflare ?? updater ?? route53;
+  const provider = cloudflare ?? updater ?? route53 ?? desec;
   const providerName = cloudflare
     ? "cloudflare"
     : updater
       ? "dns-update"
       : route53
         ? "route53"
-        : null;
+        : desec
+          ? "desec"
+          : null;
 
   const server = await serveRpc(sockets(config.runDir).dns, {
     publish: method(

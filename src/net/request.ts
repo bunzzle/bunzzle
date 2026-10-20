@@ -3,7 +3,7 @@ import { familyOf, forbiddenReason, sameAddress } from "../dns/ip.ts";
 import type { PostOptions } from "./post.ts";
 
 export interface RequestInput {
-  method: "GET" | "POST" | "PUT" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   url: string;
   headers?: Record<string, string>;
   body?: string;
@@ -102,7 +102,9 @@ export async function guardedRequest(req: RequestInput, o: PostOptions): Promise
     `Host: ${u.host}`,
     "User-Agent: Bunzzle/1",
     "Connection: close",
-    ...(req.method === "POST" || req.method === "PUT" ? [`Content-Length: ${payload.length}`] : []),
+    ...(req.method === "POST" || req.method === "PUT" || req.method === "PATCH"
+      ? [`Content-Length: ${payload.length}`]
+      : []),
     ...Object.entries(req.headers ?? {}).map(([k, v]) => `${k}: ${v}`),
   ];
   const request = concat([enc.encode(`${lines.join("\r\n")}\r\n\r\n`), payload]);
