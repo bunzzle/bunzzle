@@ -37,6 +37,7 @@ Every parser has limits:
 - SMTP replies: line and reply length caps.
 - DNS: name length, pointer loops.
 - Inbound mail: 10 MB (`BUNZZLE_INBOUND_MAX_SIZE`), 10 recipients; bounces and reports 2 MB, 500 headers, 50 parts, depth 5; mail for routes 1,000 headers, 200 parts, depth 10.
+- Templates: 998 characters of subject, 2 MB of HTML and of text, blocks nested 10 deep, 40 MB of output per part. Variables are filled in HTML-escaped unless `{{{ }}}` asks otherwise; a line break in a filled subject is refused.
 - IPC frames: size cap.
 
 Every one of these is fuzzed (`test/fuzz`): a few thousand inputs per target in every test run, 200,000 per target nightly in CI. Reproduce a failure with `BUNZZLE_FUZZ_SEED=<seed> bun test test/fuzz`.

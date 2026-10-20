@@ -31,6 +31,7 @@ import { doctorMethods, ipInfo } from "./core-doctor.ts";
 import { feedbackMethods } from "./core-feedback.ts";
 import { rotation } from "./core-rotation.ts";
 import { routeMethods } from "./core-routes.ts";
+import { templateMethods } from "./core-templates.ts";
 import { every, onStop, privateDir, ready } from "./runtime.ts";
 import {
   deliveryReportWire,
@@ -253,6 +254,7 @@ export async function runCore(config: Config, log: Logger) {
     ...api.methods,
     ...feedback.methods,
     ...routes.methods,
+    ...templateMethods({ db, writer }),
     ...doctor,
   });
 

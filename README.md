@@ -57,11 +57,27 @@ curl -X POST http://127.0.0.1:3000/emails \
 curl http://127.0.0.1:3000/emails/<id> -H "Authorization: Bearer bz_…"
 ```
 
-`POST /emails` takes `from`, `to`, `cc`, `bcc`, `reply_to`, `subject`, `html`, `text`, `headers`, `attachments`, `tags`, `scheduled_at`, `expires_at` and `require_tls`. `GET /emails/:id` shows each recipient's status and every attempt: the MX host, TLS version, whether the certificate was verified, the rule that applied, the server's reply and the whole SMTP conversation with timings (without the message content or passwords, kept for `BUNZZLE_RETENTION_DAYS`). Bodies are never returned: once accepted, only the signer can decrypt them. `POST /emails/batch` takes an array of up to 100 such emails and returns their ids in order; if one of them is invalid, none is queued. Until a scheduled email starts sending, `PATCH /emails/:id` with a new `scheduled_at` moves it and `POST /emails/:id/cancel` cancels it.
+`POST /emails` takes `from`, `to`, `cc`, `bcc`, `reply_to`, `subject`, `html`, `text`, `template`, `headers`, `attachments`, `tags`, `scheduled_at`, `expires_at` and `require_tls`. `GET /emails/:id` shows each recipient's status and every attempt: the MX host, TLS version, whether the certificate was verified, the rule that applied, the server's reply and the whole SMTP conversation with timings (without the message content or passwords, kept for `BUNZZLE_RETENTION_DAYS`). Bodies are never returned: once accepted, only the signer can decrypt them. `POST /emails/batch` takes an array of up to 100 such emails and returns their ids in order; if one of them is invalid, none is queued. Until a scheduled email starts sending, `PATCH /emails/:id` with a new `scheduled_at` moves it and `POST /emails/:id/cancel` cancels it.
 
 `GET /emails` searches by recipient (`to`), status, tag (`tag=name:value`), sender domain and time (`since`, `until`), newest first, with `limit` and `cursor`. `GET /stats` counts sent, delivered, deferred, bounced, failed, suppressed, complained and unsubscribed per day, for all mail or one `domain` or `tag` (`since` and `until` as `YYYY-MM-DD`, the last 7 days by default). `bunzzle emails list` and `bunzzle stats` show the same from the server. Email sent with a test key is left out of the stats.
 
 API keys are shown once and stored only as a hash. They have a scope (`send`, `read`, `full`), can be limited to some domains (`--domain`) and have a per-second rate limit.
+
+### Templates
+
+```sh
+curl -X POST http://127.0.0.1:3000/templates \
+  -H "Authorization: Bearer bz_…" -H "Content-Type: application/json" \
+  -d '{"name":"welcome","subject":"Welcome, {{name}}","html":"<p>Hi {{name}}</p>{{#if trial}}<p>Your trial ends {{trial.ends}}</p>{{/if}}","text":"Hi {{name}}"}'
+
+curl -X POST http://127.0.0.1:3000/emails \
+  -H "Authorization: Bearer bz_…" -H "Content-Type: application/json" \
+  -d '{"from":"You <hello@your.domain>","to":"someone@example.com","template":{"id":"welcome","variables":{"name":"Ayşe"}}}'
+```
+
+A template has a `subject` and `html`, `text` or both. `{{name}}` inserts a variable and `{{order.id}}` a nested one. In HTML, values are escaped; `{{{name}}}` inserts one as it is. `{{#if name}}…{{else}}…{{/if}}` shows a part only when the value is set and not empty, and `{{#each items}}…{{/each}}` repeats a part for each entry of a list, with `{{this}}` or `{{this.field}}` for the entry. A missing variable refuses the email with the names of all missing variables, so nothing goes out half filled. Syntax errors are refused when the template is saved, with the line.
+
+Send with `template` instead of `subject`, `html` and `text`; each email in `POST /emails/batch` has its own `variables`. `PATCH /templates/:id` saves a new version (fields left out are kept) and email uses the newest one unless `template.version` asks for another. `GET /templates/:id?version=N` shows a version, `POST /templates/:id/preview` with `variables` (and `version`) returns the filled subject, HTML and text without sending, and `GET /templates` and `DELETE /templates/:id` list and remove. `:id` is the template's id or name. Keys with the send scope can send with templates and preview them; changing them needs the full scope.
 
 ### Test mode
 
