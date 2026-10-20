@@ -4,11 +4,8 @@ import type { Logger } from "../core/log.ts";
 import { cachingResolver } from "../dns/cache.ts";
 import { createResolver, parseServer, systemServers } from "../dns/resolver.ts";
 import { method, serveRpc } from "../ipc/rpc.ts";
-import { Cloudflare } from "../net/cloudflare.ts";
-import { Desec } from "../net/desec.ts";
+import { openDnsProvider } from "../net/providers.ts";
 import { guardedRequest } from "../net/request.ts";
-import { DnsUpdater } from "../net/rfc2136.ts";
-import { Route53 } from "../net/route53.ts";
 import { b } from "../validate/schema.ts";
 import { every, onStop, ready } from "./runtime.ts";
 import { sockets } from "./wire.ts";
@@ -20,54 +17,15 @@ export async function runDns(config: Config, log: Logger) {
     ? config.dnsServers.map(parseServer)
     : await systemServers();
   const resolver = cachingResolver(createResolver({ servers }));
-  const token =
-    config.cloudflareToken ??
-    (config.cloudflareTokenFile
-      ? (await Bun.file(config.cloudflareTokenFile).text()).trim()
-      : null);
   const api = (r: Parameters<typeof guardedRequest>[0]) =>
     guardedRequest(r, {
       resolver,
       allowPrivate: config.allowPrivateDestinations,
       timeoutMs: 15_000,
     });
-  const cloudflare = token ? new Cloudflare(token, config.cloudflareUrl, api) : null;
-  const r53 = config.route53;
-  const route53 = r53
-    ? new Route53(
-        {
-          accessKeyId: r53.accessKeyId,
-          secretAccessKey: (await Bun.file(r53.secretKeyFile).text()).trim(),
-        },
-        r53.url,
-        api,
-      )
-    : null;
-  const desec = config.desec
-    ? new Desec((await Bun.file(config.desec.tokenFile).text()).trim(), config.desec.url, api)
-    : null;
-  const u = config.dnsUpdate;
-  const updater = u
-    ? new DnsUpdater(
-        parseServer(u.server),
-        {
-          name: u.keyName,
-          algorithm: u.algorithm,
-          secret: Uint8Array.fromBase64((await Bun.file(u.keyFile).text()).trim()),
-        },
-        createResolver({ servers }),
-      )
-    : null;
-  const provider = cloudflare ?? updater ?? route53 ?? desec;
-  const providerName = cloudflare
-    ? "cloudflare"
-    : updater
-      ? "dns-update"
-      : route53
-        ? "route53"
-        : desec
-          ? "desec"
-          : null;
+  const opened = await openDnsProvider(config, servers, api);
+  const provider = opened?.provider ?? null;
+  const providerName = opened?.name ?? null;
 
   const server = await serveRpc(sockets(config.runDir).dns, {
     publish: method(
