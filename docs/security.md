@@ -53,6 +53,7 @@ One private-network filter covers SMTP, webhooks, inbound routes, MTA-STS and DN
 - Only verified domains can send.
 - Inbound accepts only signed bounce and unsubscribe addresses and addresses with a route, and never sends mail on, so it is never an open relay.
 - Mail for a route is stored encrypted until the app accepts it. Core cannot read it; only the signer opens it, for the delivery role to post.
+- Hooks before sending are set only by the operator (`bunzzle hooks`), never with an API key, because they may reach the local network. The delivery role makes the requests, like every other outbound request.
 - Tracking links are signed with the email id and the address they lead to, so a tracking host only redirects to addresses that were in an email.
 - Bulk mail is held at a 0.3% complaint rate or 5% hard bounces.
 - Bulk mail from an API key is held when it sends ten times its normal hourly volume, as a leaked key would.

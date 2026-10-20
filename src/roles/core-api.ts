@@ -85,6 +85,8 @@ export interface CoreDeps {
   anomalyFloor?: () => number;
   ips?: SourceIp[];
   tracking?: (domain: string) => unknown;
+  scan?: (data: string, from: string, recipients: string[]) => Promise<void>;
+  hasCheckHooks?: () => boolean;
   publish?: (records: DomainRecord[]) => Promise<boolean>;
   paths?: () => PathView[];
   storage?: () => StorageState;
@@ -297,6 +299,7 @@ export function coreMethods(deps: CoreDeps): {
         : suppressionFor(db, address, lane, t);
       if (s) suppressed.set(address, { reason: s.reason, scope: s.scope });
     }
+    await deps.scan?.(p.data, envelopeFrom, p.recipients);
     const body = await sealBody(await deps.currentKey(), id, p.data);
     return {
       id,
@@ -411,7 +414,13 @@ export function coreMethods(deps: CoreDeps): {
     authenticate: method(b.object({ tokenHash: b.string() }), ({ tokenHash: hash }) => {
       const key = keyForHash(db, hash);
       if (!key) throw new RpcError("unauthenticated", "API key is invalid");
-      return { id: key.id, scope: key.scope, domains: key.domains, rateLimit: key.rateLimit };
+      return {
+        id: key.id,
+        scope: key.scope,
+        domains: key.domains,
+        rateLimit: key.rateLimit,
+        hooks: deps.hasCheckHooks?.() ?? false,
+      };
     }),
 
     enqueue: method(enqueueParams, async (p) => {

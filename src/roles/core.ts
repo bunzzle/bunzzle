@@ -29,6 +29,7 @@ import { b } from "../validate/schema.ts";
 import { coreMethods } from "./core-api.ts";
 import { doctorMethods, ipInfo } from "./core-doctor.ts";
 import { feedbackMethods } from "./core-feedback.ts";
+import { hookMethods } from "./core-hooks.ts";
 import { rotation } from "./core-rotation.ts";
 import { routeMethods } from "./core-routes.ts";
 import { templateMethods } from "./core-templates.ts";
@@ -195,6 +196,7 @@ export async function runCore(config: Config, log: Logger) {
     return fetching;
   };
 
+  const hooks = hookMethods({ db, writer, log, delivery });
   const api = coreMethods({
     db,
     writer,
@@ -210,6 +212,8 @@ export async function runCore(config: Config, log: Logger) {
     storage: () => storage.state(),
     publish: (records) => rotate.publish(records),
     tracking: (domain) => tracking.view(domain),
+    scan: hooks.scan,
+    hasCheckHooks: hooks.hasCheckHooks,
   });
   const feedback = feedbackMethods({
     db,
@@ -267,6 +271,7 @@ export async function runCore(config: Config, log: Logger) {
     ...routes.methods,
     ...templateMethods({ db, writer }),
     ...tracking.methods,
+    ...hooks.methods,
     ...doctor,
   });
 

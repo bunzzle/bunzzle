@@ -17,6 +17,7 @@ import ipPools from "./0016_ip_pools.sql" with { type: "text" };
 import routes from "./0017_routes.sql" with { type: "text" };
 import templates from "./0018_templates.sql" with { type: "text" };
 import tracking from "./0019_tracking.sql" with { type: "text" };
+import hooks from "./0020_hooks.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -44,4 +45,5 @@ export const migrations: readonly Migration[] = [
   { version: 17, name: "inbound routes", sql: routes },
   { version: 18, name: "templates", sql: templates },
   { version: 19, name: "tracking", sql: tracking },
+  { version: 20, name: "hooks", sql: hooks },
 ];

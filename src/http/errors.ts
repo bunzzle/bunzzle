@@ -27,10 +27,12 @@ const FROM_RPC: Record<string, [number, string]> = {
   "not-found": [404, "not_found"],
   held: [403, "sending_paused"],
   started: [409, "invalid_state"],
+  refused: [422, "refused"],
 };
 
 const RETRY_LATER: Record<string, [number, string, string]> = {
   "storage-low": [503, "insufficient_storage", "60"],
+  "hook-failed": [503, "hook_unavailable", "5"],
 };
 
 export function fromRpc(err: unknown): ApiError {
