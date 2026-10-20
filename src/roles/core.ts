@@ -22,7 +22,7 @@ import { type ControlState, DEFAULT_TUNING } from "../shaping/control.ts";
 import { Shaper } from "../shaping/shaper.ts";
 import { sendTlsReports } from "../tlsrpt/job.ts";
 import { coreMethods } from "./core-api.ts";
-import { doctorMethods } from "./core-doctor.ts";
+import { doctorMethods, ipInfo } from "./core-doctor.ts";
 import { feedbackMethods } from "./core-feedback.ts";
 import { rotation } from "./core-rotation.ts";
 import { every, onStop, privateDir, ready } from "./runtime.ts";
@@ -126,6 +126,17 @@ export async function runCore(config: Config, log: Logger) {
         .catch((err: Error) => log.error("could not save path state", { error: err.message }));
     },
   });
+  const listed = new Set<string>();
+  const refreshListed = () =>
+    delivery
+      .call("ips", {}, { result: ipInfo, timeoutMs: 10_000 })
+      .then((ips) => {
+        listed.clear();
+        for (const ip of ips) {
+          if (ip.listings?.some((l) => l.status === "listed")) listed.add(ip.ip);
+        }
+      })
+      .catch(() => {});
   const handleEmail = deliveryHandler({
     db,
     log,
@@ -141,6 +152,7 @@ export async function runCore(config: Config, log: Logger) {
       config.relay && !config.relay.for.all
         ? { targets: config.relay.for.targets, blocked: config.relay.for.blocked }
         : null,
+    listed: (ip) => listed.has(ip),
   });
   const scheduler = new Scheduler({
     db,
@@ -259,6 +271,10 @@ export async function runCore(config: Config, log: Logger) {
       .catch((err: Error) => log.error("guard check failed", { error: err.message })),
   );
   const stopRotation = every(Math.max(1_000, scaled(HOUR)), () => rotate.tick());
+  const stopListed = config.sourceIps.length
+    ? every(Math.max(1_000, scaled(10 * MIN)), refreshListed)
+    : () => {};
+  if (config.sourceIps.length) setTimeout(() => void refreshListed(), Math.max(1_000, scaled(MIN)));
   const stopProject = every(250, () =>
     feedback
       .project()
@@ -291,6 +307,7 @@ export async function runCore(config: Config, log: Logger) {
     stopProject();
     stopGuards();
     stopRotation();
+    stopListed();
     stopDispatch();
     stopEventLog();
     await eventLog?.stop();

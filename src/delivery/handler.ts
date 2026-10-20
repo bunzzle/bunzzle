@@ -35,6 +35,7 @@ export interface DeliveryHandlerOptions {
   holdRetryMs?: number;
   suspendRetryMs?: number;
   relayRoutes?: { targets: string[]; blocked: boolean } | null;
+  listed?: (ip: string) => boolean;
 }
 
 const RELAY = "relay";
@@ -274,8 +275,16 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
     let source: string = RELAY;
     if (!via) {
       const choice = o.ips?.length
-        ? choose(db, o.ips, lane, target, provider, pending.length, now, (ip) =>
-            o.shaper.pausedUntil(Shaper.key(ip, target)),
+        ? choose(
+            db,
+            o.ips,
+            lane,
+            target,
+            provider,
+            pending.length,
+            now,
+            (ip) => o.shaper.pausedUntil(Shaper.key(ip, target)),
+            o.listed,
           )
         : { source: fixedSource };
       if ("wait" in choice) {

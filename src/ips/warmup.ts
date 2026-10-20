@@ -186,6 +186,7 @@ export function choose(
   recipients: number,
   now: number,
   pausedUntil: (ip: string) => number | null,
+  listed: (ip: string) => boolean = () => false,
 ): Choice | Wait {
   if (ips.length === 0) return { source: "default" };
   const pool = (name: string) => ips.filter((x) => x.pool === name);
@@ -199,7 +200,8 @@ export function choose(
       : pool("main").length
         ? pool("main")
         : ips;
-  const ordered = [...candidates].sort(
+  const unlisted = candidates.filter((x) => !listed(x.ip));
+  const ordered = [...(unlisted.length ? unlisted : candidates)].sort(
     (a, b) => rank(b.ip, target) - rank(a.ip, target) || a.ip.localeCompare(b.ip),
   );
   const bucket = bucketOf(provider);

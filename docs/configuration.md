@@ -70,6 +70,16 @@ Bounces, complaints and unsubscribe replies. Off unless a port is set.
 | `BUNZZLE_INBOUND_TLS_CERT_FILE` | | Certificate for STARTTLS on the inbound port. |
 | `BUNZZLE_INBOUND_TLS_KEY_FILE` | | Private key for that certificate. |
 
+## Blocklists
+
+Every 6 hours, each sending IP is looked up on Spamhaus ZEN, Barracuda, SpamCop, Mailspike and PSBL (IPv6 addresses on Spamhaus only). A list is used only when it returns its standard test entries correctly through your resolver (RFC 5782): a resolver that answers for names that do not exist, or a list that refuses the resolver, shows up as "could not check", never as a listing. A new listing is logged as a warning, `bunzzle doctor` shows it with the list's removal page, and mail moves to the sending IPs that are not listed while there are any.
+
+Spamhaus refuses queries that come through large public resolvers. Run a local resolver, or use a free Spamhaus Data Query Service key:
+
+| Variable | Default | |
+|---|---|---|
+| `BUNZZLE_SPAMHAUS_KEY_FILE` | | File with a Spamhaus Data Query Service key, readable only by the `bunzzle-delivery` user. |
+
 ## Relay
 
 A relay takes all mail (for servers whose provider blocks outbound port 25), or only some of it while the rest goes straight to the recipients' mail servers. For mail sent through the relay, MTA-STS and DANE no longer apply to the first hop. TLS with a valid certificate is always required before the password is sent.

@@ -33,6 +33,7 @@ describe("loadConfig", () => {
       eventLog: null,
       dnsUpdate: null,
       relay: null,
+      spamhausKeyFile: null,
       acme: null,
       tlsrpt: { from: null, org: "bunzzle", contact: "bunzzle" },
       submission: null,

@@ -51,6 +51,7 @@ const schema = b.object({
   BUNZZLE_RELAY_USERNAME: optional,
   BUNZZLE_RELAY_PASSWORD_FILE: optional,
   BUNZZLE_RELAY_FOR: b.string().default("all"),
+  BUNZZLE_SPAMHAUS_KEY_FILE: optional,
   BUNZZLE_ACME_EMAIL: optional,
   BUNZZLE_ACME_DIRECTORY: b
     .string()
@@ -159,6 +160,7 @@ export interface Config {
     passwordFile: string | null;
     for: { all: boolean; blocked: boolean; targets: string[] };
   } | null;
+  spamhausKeyFile: string | null;
   acme: { email: string; directory: string; dir: string; hosts: string[] } | null;
   tlsrpt: { from: string | null; org: string; contact: string };
   submission: {
@@ -344,6 +346,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
           },
         }
       : null,
+    spamhausKeyFile: c.BUNZZLE_SPAMHAUS_KEY_FILE,
     tlsrpt: {
       from: c.BUNZZLE_TLSRPT_FROM,
       org: c.BUNZZLE_TLSRPT_ORG ?? c.BUNZZLE_EHLO_NAME ?? "bunzzle",
