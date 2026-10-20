@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { child, children, parseXml, textAt } from "../../src/dmarc/xml.ts";
+import { txtText, txtValue } from "../../src/net/rdata.ts";
 import type { RequestInput, RequestResult } from "../../src/net/request.ts";
-import { Route53, txtText, txtValue } from "../../src/net/route53.ts";
+import { Route53 } from "../../src/net/route53.ts";
 import { signRequest } from "../../src/net/sigv4.ts";
 
 const EXAMPLE = {

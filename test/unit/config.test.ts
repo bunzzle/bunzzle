@@ -44,6 +44,7 @@ describe("loadConfig", () => {
       cloudflareTokenFile: null,
       cloudflareUrl: "https://api.cloudflare.com/client/v4",
       route53: null,
+      desec: null,
     });
   });
 
@@ -153,6 +154,27 @@ describe("loadConfig", () => {
         BUNZZLE_DNS_UPDATE_SERVER: "ns1.acme.test",
         BUNZZLE_DNS_UPDATE_KEY_NAME: "bunzzle",
         BUNZZLE_DNS_UPDATE_KEY_FILE: "/run/credentials/tsig",
+      }),
+    ).toThrow("one provider");
+  });
+
+  test("deSEC reads its token from a file and excludes other providers", () => {
+    const desec = { BUNZZLE_DESEC_TOKEN_FILE: "/run/credentials/desec" };
+    expect(loadConfig(desec).desec).toEqual({
+      tokenFile: "/run/credentials/desec",
+      url: "https://desec.io/api/v1",
+    });
+    expect(
+      loadConfig({ ...desec, BUNZZLE_DESEC_API_URL: "https://desec.test/api/v1/" }).desec?.url,
+    ).toBe("https://desec.test/api/v1");
+    expect(() => loadConfig({ ...desec, BUNZZLE_CLOUDFLARE_API_TOKEN: "t" })).toThrow(
+      "one provider",
+    );
+    expect(() =>
+      loadConfig({
+        ...desec,
+        BUNZZLE_ROUTE53_ACCESS_KEY_ID: "AKIDEXAMPLE",
+        BUNZZLE_ROUTE53_SECRET_ACCESS_KEY_FILE: "/run/credentials/route53",
       }),
     ).toThrow("one provider");
   });

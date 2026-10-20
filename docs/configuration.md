@@ -109,7 +109,7 @@ With an ACME email address, Bunzzle gets and renews a certificate for the inboun
 
 | Variable | Default | |
 |---|---|---|
-| `BUNZZLE_ACME_EMAIL` | | Contact address for the certificate authority. Turns automatic certificates on; needs Cloudflare, DNS updates or Route 53. |
+| `BUNZZLE_ACME_EMAIL` | | Contact address for the certificate authority. Turns automatic certificates on; needs Cloudflare, DNS updates, Route 53 or deSEC. |
 | `BUNZZLE_ACME_DIRECTORY` | Let's Encrypt | ACME directory URL of another certificate authority. |
 | `BUNZZLE_CERTS_DIR` | `./certs` | Where the certificate and its key are kept. `/var/lib/bunzzle/certs` with the shipped units. |
 
@@ -147,6 +147,16 @@ Allow the key to update only the names Bunzzle publishes: `*._domainkey`, `bounc
 Bunzzle finds the public hosted zone of each record by name (private zones are skipped) and changes only the values it owns, keeping the rest of the record set. Each change deletes the set as it was read and creates the new one in one batch, so if someone else edits the same set at that moment, the batch fails and Bunzzle reads it again instead of overwriting their edit. It then waits up to 40 seconds for Route 53 to report the change in sync.
 
 Give the IAM user only `route53:ListHostedZonesByName`, `route53:ListResourceRecordSets`, `route53:ChangeResourceRecordSets` and `route53:GetChange`. Limit `ChangeResourceRecordSets` to your hosted zones, and with the `route53:ChangeResourceRecordSetsNormalizedRecordNames` condition key to the names Bunzzle publishes.
+
+## DNS on deSEC
+
+| Variable | Default | |
+|---|---|---|
+| `BUNZZLE_DESEC_TOKEN_FILE` | | File with a deSEC API token, readable only by the `bunzzle-dns` user. |
+
+Bunzzle finds the domain that owns each record name and changes only the values it owns, keeping the rest of the RRset. New RRsets get a TTL of 3600 seconds, the lowest deSEC accepts by default; existing ones keep their TTL. When the API asks Bunzzle to slow down, it waits as long as the answer says, up to a minute, and tries again.
+
+Give the token no permission to manage tokens, and restrict it with token policies: a default policy without write permission, then one policy with write permission for each name Bunzzle publishes (`*._domainkey`, `bounce`, `_dmarc` and, with automatic certificates, `_acme-challenge` names under each sending domain). Set its allowed subnets to your server's addresses.
 
 ## Unsafe
 

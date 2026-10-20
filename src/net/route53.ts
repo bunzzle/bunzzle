@@ -1,5 +1,6 @@
 import { child, children, parseXml, textAt, type XmlNode } from "../dmarc/xml.ts";
 import type { CfRecord, CfResult } from "./cloudflare.ts";
+import { fqdn, type Plan, planRemove, planUpsert } from "./rdata.ts";
 import type { RequestInput, RequestResult } from "./request.ts";
 import { type AwsCredentials, signRequest } from "./sigv4.ts";
 
@@ -9,8 +10,6 @@ const ATTEMPTS = 3;
 const SETTLE_MS = 40_000;
 const POLL_MS = 2_000;
 const RETRY = new Set(["Throttling", "PriorRequestNotComplete", "InvalidChangeBatch"]);
-
-type Action = "created" | "updated" | "exists" | "removed" | "absent";
 
 interface RecordSet {
   ttl: number;
@@ -26,33 +25,7 @@ class ApiError extends Error {
   }
 }
 
-const fqdn = (name: string) => `${name.toLowerCase().replace(/\.$/, "")}.`;
-
 const xml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-export function txtValue(content: string): string {
-  const parts: string[] = [];
-  for (let i = 0; i < content.length || i === 0; i += 255) {
-    parts.push(`"${content.slice(i, i + 255).replace(/[\\"]/g, (c) => `\\${c}`)}"`);
-  }
-  return parts.join(" ");
-}
-
-export function txtText(value: string): string {
-  const parts = [...value.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1] as string);
-  const raw = parts.length > 0 ? parts.join("") : value;
-  return raw.replace(/\\([0-7]{3}|.)/g, (_, e: string) =>
-    e.length === 3 ? String.fromCharCode(Number.parseInt(e, 8)) : e,
-  );
-}
-
-const mxValue = (rec: CfRecord) => `${rec.priority ?? 10} ${fqdn(rec.content)}`;
-
-function same(rec: CfRecord, value: string): boolean {
-  if (rec.type === "TXT") return txtText(value) === rec.content;
-  const [priority, host] = value.trim().split(/\s+/);
-  return Number(priority) === (rec.priority ?? 10) && fqdn(host ?? "") === fqdn(rec.content);
-}
 
 export class Route53 {
   constructor(
@@ -177,10 +150,7 @@ export class Route53 {
     }
   }
 
-  async #apply(
-    rec: CfRecord,
-    plan: (values: string[]) => { values: string[] | null; action: Action },
-  ): Promise<CfResult> {
+  async #apply(rec: CfRecord, plan: (values: string[]) => Plan): Promise<CfResult> {
     try {
       const zone = await this.zoneFor(rec.name);
       if (!zone) return { ok: false, error: `no Route 53 zone for ${rec.name}` };
@@ -202,31 +172,10 @@ export class Route53 {
   }
 
   upsert(rec: CfRecord): Promise<CfResult> {
-    const wanted = rec.type === "MX" ? mxValue(rec) : txtValue(rec.content);
-    const kind =
-      rec.type !== "TXT"
-        ? null
-        : rec.content.startsWith("v=spf1")
-          ? "v=spf1"
-          : rec.content.startsWith("v=DKIM1")
-            ? "v=DKIM1"
-            : null;
-    return this.#apply(rec, (values) => {
-      if (values.some((v) => same(rec, v))) return { values: null, action: "exists" };
-      const i = kind ? values.findIndex((v) => txtText(v).startsWith(kind)) : -1;
-      if (i >= 0) {
-        return { values: values.map((v, j) => (j === i ? wanted : v)), action: "updated" };
-      }
-      return { values: [...values, wanted], action: "created" };
-    });
+    return this.#apply(rec, (values) => planUpsert(rec, values));
   }
 
   remove(rec: CfRecord): Promise<CfResult> {
-    return this.#apply(rec, (values) => {
-      const rest = values.filter((v) => !same(rec, v));
-      return rest.length === values.length
-        ? { values: null, action: "absent" }
-        : { values: rest, action: "removed" };
-    });
+    return this.#apply(rec, (values) => planRemove(rec, values));
   }
 }

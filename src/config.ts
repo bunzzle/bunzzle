@@ -76,6 +76,8 @@ const schema = b.object({
   BUNZZLE_ROUTE53_ACCESS_KEY_ID: optional,
   BUNZZLE_ROUTE53_SECRET_ACCESS_KEY_FILE: optional,
   BUNZZLE_ROUTE53_API_URL: b.string().url().default("https://route53.amazonaws.com"),
+  BUNZZLE_DESEC_TOKEN_FILE: optional,
+  BUNZZLE_DESEC_API_URL: b.string().url().default("https://desec.io/api/v1"),
 });
 
 export interface SourceIp {
@@ -173,6 +175,7 @@ export interface Config {
   cloudflareTokenFile: string | null;
   cloudflareUrl: string;
   route53: { accessKeyId: string; secretKeyFile: string; url: string } | null;
+  desec: { tokenFile: string; url: string } | null;
 }
 
 export class ConfigError extends Error {}
@@ -208,10 +211,11 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     c.BUNZZLE_CLOUDFLARE_API_TOKEN || c.BUNZZLE_CLOUDFLARE_API_TOKEN_FILE,
     update.every(Boolean),
     c.BUNZZLE_ROUTE53_ACCESS_KEY_ID,
+    c.BUNZZLE_DESEC_TOKEN_FILE,
   ].filter(Boolean);
   if (providers.length > 1) {
     throw new ConfigError(
-      "invalid configuration:\n  publish DNS records through one provider: Cloudflare, DNS updates or Route 53",
+      "invalid configuration:\n  publish DNS records through one provider: Cloudflare, DNS updates, Route 53 or deSEC",
     );
   }
   if ((c.BUNZZLE_RELAY_USERNAME || c.BUNZZLE_RELAY_PASSWORD_FILE) && !c.BUNZZLE_RELAY_HOST) {
@@ -354,5 +358,8 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
             url: c.BUNZZLE_ROUTE53_API_URL.replace(/\/+$/, ""),
           }
         : null,
+    desec: c.BUNZZLE_DESEC_TOKEN_FILE
+      ? { tokenFile: c.BUNZZLE_DESEC_TOKEN_FILE, url: c.BUNZZLE_DESEC_API_URL.replace(/\/+$/, "") }
+      : null,
   };
 }
