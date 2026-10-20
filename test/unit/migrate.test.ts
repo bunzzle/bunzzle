@@ -101,13 +101,14 @@ describe("migrate", () => {
     expect(() => migrate(db, [{ version: 2, name: "x", sql: "SELECT 1" }])).toThrow(/no gaps/);
   });
 
-  test("uses WAL and synchronous=FULL on file databases", () => {
+  test("uses WAL, synchronous=FULL and in-memory temp storage on file databases", () => {
     const path = `${Bun.env["TMPDIR"] ?? "/tmp"}/bunzzle-test-${crypto.randomUUID()}.db`;
     const db = openDatabase({ path });
     expect(db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode).toBe(
       "wal",
     );
     expect(db.query<{ synchronous: number }, []>("PRAGMA synchronous").get()?.synchronous).toBe(2);
+    expect(db.query<{ temp_store: number }, []>("PRAGMA temp_store").get()?.temp_store).toBe(2);
     db.close();
   });
 });
