@@ -1,5 +1,6 @@
 import { hashToken, TOKEN } from "../accounts/api-keys.ts";
 import type { Logger } from "../core/log.ts";
+import { CHANGEABLE } from "../hooks/reply.ts";
 import type { RpcClient } from "../ipc/rpc.ts";
 import { b } from "../validate/schema.ts";
 import { VERSION } from "../version.ts";
@@ -22,6 +23,7 @@ import {
   prepareEmail,
   renderTemplate,
   rescheduleSchema,
+  type SendRequest,
   type StoredTemplate,
   sendSchema,
   templateResult,
@@ -34,6 +36,7 @@ interface Caller {
   hash: string;
   id: string;
   domains: string[] | null;
+  hooks: boolean;
 }
 
 export const authResult = b.object({
@@ -41,6 +44,7 @@ export const authResult = b.object({
   scope: b.enum(["send", "read", "full"]),
   domains: b.array(b.string()).nullable(),
   rateLimit: b.number(),
+  hooks: b.boolean().default(false),
 });
 
 export class Buckets {
@@ -87,6 +91,32 @@ function idempotencyKeyOf(req: Request): string | null {
 }
 
 type LoadTemplate = (id: string, version: number | undefined) => Promise<StoredTemplate>;
+type Check = (email: Record<string, unknown>) => Promise<Record<string, unknown>>;
+
+async function runChecks(req: SendRequest, check: Check | null): Promise<SendRequest> {
+  if (!check) return req;
+  const { attachments, template: _template, ...rest } = req;
+  const email = {
+    ...rest,
+    ...(attachments
+      ? {
+          attachments: attachments.map((a) => ({
+            filename: a.filename,
+            content_type: a.content_type ?? null,
+          })),
+        }
+      : {}),
+  };
+  const changed = await check(email);
+  const next: Record<string, unknown> = { ...req };
+  for (const k of CHANGEABLE) if (k in changed) next[k] = changed[k];
+  const parsed = sendSchema.safeParse(next);
+  if (!parsed.success) {
+    const e = invalid(parsed.error);
+    throw new ApiError(422, "validation_error", `After a check before sending: ${e.message}`);
+  }
+  return parsed.data;
+}
 
 async function toSend(
   caller: { domains: string[] | null },
@@ -94,14 +124,13 @@ async function toSend(
   now: Date,
   load: LoadTemplate,
   track: Track,
+  check: Check | null,
 ): Promise<PreparedEmail> {
   const parsed = sendSchema.safeParse(body);
   if (!parsed.success) throw invalid(parsed.error);
   const t = parsed.data.template;
-  const tracked = await applyTracking(
-    t ? applyTemplate(parsed.data, await load(t.id, t.version)) : parsed.data,
-    track,
-  );
+  const filled = t ? applyTemplate(parsed.data, await load(t.id, t.version)) : parsed.data;
+  const tracked = await applyTracking(await runChecks(filled, check), track);
   const prepared = prepareEmail(tracked.req, now);
   const email =
     tracked.id && tracked.tracking
@@ -205,7 +234,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
         },
       );
     }
-    return { hash, id: key.id, domains: key.domains };
+    return { hash, id: key.id, domains: key.domains, hooks: key.hooks };
   };
 
   const handle =
@@ -253,6 +282,17 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
     (tokenHash: string): Track =>
     (p) =>
       rpc("tracking", { tokenHash, ...p }, trackResult);
+  const checker = (caller: Caller): Check | null =>
+    caller.hooks
+      ? async (email) =>
+          (
+            await rpc(
+              "checkEmail",
+              { tokenHash: caller.hash, email },
+              b.object({ email: b.record(b.string(), b.unknown()) }),
+            )
+          ).email
+      : null;
   const removeQueued = async (req: Request, action: "fail" | "cancel") => {
     const caller = await authenticate(req);
     const parsed = removeSchema.safeParse(await json(req));
@@ -364,6 +404,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
             new Date(),
             templates(caller.hash),
             tracker(caller.hash),
+            checker(caller),
           );
           const idempotencyKey = idempotencyKeyOf(req);
           const r = await rpc(
@@ -394,11 +435,12 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           const now = new Date();
           const load = templates(caller.hash);
           const track = tracker(caller.hash);
+          const check = checker(caller);
           const emails = [];
           for (const [i, item] of list.data.entries()) {
             try {
               emails.push({
-                ...enqueueFields(await toSend(caller, item, now, load, track)),
+                ...enqueueFields(await toSend(caller, item, now, load, track, check)),
                 ...(idempotencyKey !== null
                   ? { idempotencyKey: `${idempotencyKey}#${i}`, bodyHash: hashToken(text) }
                   : {}),

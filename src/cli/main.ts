@@ -22,6 +22,7 @@ import {
   domainsCommand,
   emailsCommand,
   holdsCommand,
+  hooksCommand,
   ipsCommand,
   keysCommand,
   pathsCommand,
@@ -51,6 +52,7 @@ Usage:
   bunzzle paths       sending speed per destination and why it changed (needs \`serve\` running)
   bunzzle webhooks    add|list|remove event webhooks (needs \`serve\` running)
   bunzzle routes      add|list|remove|retry inbound routes: mail for an address posted to a URL (needs \`serve\` running)
+  bunzzle hooks       add|list|remove checks that can accept, change or refuse email before it is queued (needs \`serve\` running)
   bunzzle ips         source IPs, reverse DNS and warm-up progress (needs \`serve\` running)
   bunzzle doctor      check configuration, IPs, every DNS record and DKIM against live DNS
   bunzzle dns-test    DOMAIN: publish a test record through the DNS provider, check it, remove it
@@ -204,6 +206,8 @@ async function main(argv: string[]) {
       return holdsCommand(argv.slice(1), loadConfig());
     case "webhooks":
       return webhooksCommand(argv.slice(1), loadConfig());
+    case "hooks":
+      return hooksCommand(argv.slice(1), loadConfig());
     case "routes":
       return routesCommand(argv.slice(1), loadConfig());
     case "suppressions":

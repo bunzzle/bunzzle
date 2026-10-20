@@ -169,6 +169,34 @@ export async function runDelivery(config: Config, log: Logger) {
           families: config.ipv6 ? [4, 6] : [4],
         }),
     ),
+    postHook: method(
+      b.object({
+        url: b.string().max(2048),
+        contentType: b.enum(["application/json", "message/rfc822"]),
+        headers: b.record(b.string().regex(/^[A-Za-z0-9-]+$/), b.string().max(1000)),
+        body: b.string().max(60 * 1024 * 1024),
+        timeoutMs: b.number().int().min(100).max(60_000),
+      }),
+      async ({ url, contentType, headers, body, timeoutMs }) => {
+        const r = await guardedRequest(
+          {
+            method: "POST",
+            url,
+            headers: { ...headers, "Content-Type": contentType },
+            body,
+            maxBody: 1024 * 1024,
+          },
+          {
+            resolver,
+            allowPrivate: true,
+            ...(ips.length ? { ownAddresses: ips } : {}),
+            families: config.ipv6 ? [4, 6] : [4],
+            timeoutMs,
+          },
+        );
+        return r.ok ? { ok: true, status: r.status, body: r.body } : { ok: false, error: r.error };
+      },
+    ),
     postInbound: method(
       b.object({
         routeId: b.string().min(1).max(64),

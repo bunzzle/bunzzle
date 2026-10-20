@@ -721,3 +721,65 @@ export async function statsCommand(argv: string[], config: Config) {
   }
   console.log(`total       ${cols.map((c) => String(r.totals[c]).padStart(12)).join("")}`);
 }
+
+interface HookView {
+  id: string;
+  kind: "check" | "scan";
+  url: string;
+  timeout_ms: number;
+  on_error: "accept" | "refuse";
+  max_score: number | null;
+}
+
+const describeHook = (h: HookView) =>
+  `${h.id}  ${h.kind}  ${h.url}  timeout ${h.timeout_ms} ms, on error ${h.on_error}${h.max_score === null ? "" : `, refuse at score ${h.max_score}`}`;
+
+export async function hooksCommand(argv: string[], config: Config) {
+  const [sub, ...rest] = argv;
+  switch (sub) {
+    case "add": {
+      const [kind, url, ...flags] = rest;
+      if ((kind !== "check" && kind !== "scan") || !url) {
+        throw new UsageError(
+          "usage: bunzzle hooks add check|scan URL [--max-score N] [--timeout-ms N] [--on-error accept|refuse]",
+        );
+      }
+      const args = parseArgs(flags, { strings: ["max-score", "timeout-ms", "on-error"] });
+      const onError = args.strings.get("on-error") ?? "accept";
+      if (onError !== "accept" && onError !== "refuse") {
+        throw new UsageError("--on-error is accept or refuse");
+      }
+      const number = (name: string, fallback: number | null) => {
+        const raw = args.strings.get(name);
+        if (raw === undefined) return fallback;
+        const n = Number(raw);
+        if (!Number.isFinite(n)) throw new UsageError(`--${name} must be a number`);
+        return n;
+      };
+      const h = await call<HookView>(config, "addHook", {
+        kind,
+        url,
+        timeoutMs: number("timeout-ms", 2_000),
+        onError,
+        maxScore: number("max-score", null),
+      });
+      console.log(`Hook ${describeHook(h)}`);
+      return;
+    }
+    case "list": {
+      const hooks = await call<HookView[]>(config, "listHooks", {});
+      if (hooks.length === 0) console.log("No hooks. Add one with `bunzzle hooks add`.");
+      for (const h of hooks) console.log(describeHook(h));
+      return;
+    }
+    case "remove": {
+      const id = rest[0];
+      if (!id) throw new UsageError("usage: bunzzle hooks remove ID");
+      await call(config, "removeHook", { id });
+      console.log(`Removed ${id}.`);
+      return;
+    }
+    default:
+      throw new UsageError("usage: bunzzle hooks add|list|remove");
+  }
+}
