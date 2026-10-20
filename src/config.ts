@@ -73,6 +73,9 @@ const schema = b.object({
   BUNZZLE_CLOUDFLARE_API_TOKEN: optional,
   BUNZZLE_CLOUDFLARE_API_TOKEN_FILE: optional,
   BUNZZLE_CLOUDFLARE_API_URL: b.string().url().default("https://api.cloudflare.com/client/v4"),
+  BUNZZLE_ROUTE53_ACCESS_KEY_ID: optional,
+  BUNZZLE_ROUTE53_SECRET_ACCESS_KEY_FILE: optional,
+  BUNZZLE_ROUTE53_API_URL: b.string().url().default("https://route53.amazonaws.com"),
 });
 
 export interface SourceIp {
@@ -169,6 +172,7 @@ export interface Config {
   cloudflareToken: string | null;
   cloudflareTokenFile: string | null;
   cloudflareUrl: string;
+  route53: { accessKeyId: string; secretKeyFile: string; url: string } | null;
 }
 
 export class ConfigError extends Error {}
@@ -195,12 +199,19 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
       "invalid configuration:\n  DNS updates need BUNZZLE_DNS_UPDATE_SERVER, BUNZZLE_DNS_UPDATE_KEY_NAME and BUNZZLE_DNS_UPDATE_KEY_FILE together",
     );
   }
-  if (
-    update.every(Boolean) &&
-    (c.BUNZZLE_CLOUDFLARE_API_TOKEN || c.BUNZZLE_CLOUDFLARE_API_TOKEN_FILE)
-  ) {
+  if (!!c.BUNZZLE_ROUTE53_ACCESS_KEY_ID !== !!c.BUNZZLE_ROUTE53_SECRET_ACCESS_KEY_FILE) {
     throw new ConfigError(
-      "invalid configuration:\n  publish DNS records through Cloudflare or through DNS updates, not both",
+      "invalid configuration:\n  set BUNZZLE_ROUTE53_ACCESS_KEY_ID and BUNZZLE_ROUTE53_SECRET_ACCESS_KEY_FILE together",
+    );
+  }
+  const providers = [
+    c.BUNZZLE_CLOUDFLARE_API_TOKEN || c.BUNZZLE_CLOUDFLARE_API_TOKEN_FILE,
+    update.every(Boolean),
+    c.BUNZZLE_ROUTE53_ACCESS_KEY_ID,
+  ].filter(Boolean);
+  if (providers.length > 1) {
+    throw new ConfigError(
+      "invalid configuration:\n  publish DNS records through one provider: Cloudflare, DNS updates or Route 53",
     );
   }
   if ((c.BUNZZLE_RELAY_USERNAME || c.BUNZZLE_RELAY_PASSWORD_FILE) && !c.BUNZZLE_RELAY_HOST) {
@@ -335,5 +346,13 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     cloudflareToken: c.BUNZZLE_CLOUDFLARE_API_TOKEN,
     cloudflareTokenFile: c.BUNZZLE_CLOUDFLARE_API_TOKEN_FILE,
     cloudflareUrl: c.BUNZZLE_CLOUDFLARE_API_URL.replace(/\/+$/, ""),
+    route53:
+      c.BUNZZLE_ROUTE53_ACCESS_KEY_ID && c.BUNZZLE_ROUTE53_SECRET_ACCESS_KEY_FILE
+        ? {
+            accessKeyId: c.BUNZZLE_ROUTE53_ACCESS_KEY_ID,
+            secretKeyFile: c.BUNZZLE_ROUTE53_SECRET_ACCESS_KEY_FILE,
+            url: c.BUNZZLE_ROUTE53_API_URL.replace(/\/+$/, ""),
+          }
+        : null,
   };
 }

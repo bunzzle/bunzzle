@@ -43,6 +43,7 @@ describe("loadConfig", () => {
       cloudflareToken: null,
       cloudflareTokenFile: null,
       cloudflareUrl: "https://api.cloudflare.com/client/v4",
+      route53: null,
     });
   });
 
@@ -130,5 +131,29 @@ describe("loadConfig", () => {
     });
     expect(() => loadConfig({ BUNZZLE_DNS_UPDATE_SERVER: "ns1.acme.test" })).toThrow(ConfigError);
     expect(() => loadConfig({ ...update, BUNZZLE_CLOUDFLARE_API_TOKEN: "t" })).toThrow(ConfigError);
+  });
+
+  test("Route 53 needs the key ID and the secret file, and excludes other providers", () => {
+    const r53 = {
+      BUNZZLE_ROUTE53_ACCESS_KEY_ID: "AKIDEXAMPLE",
+      BUNZZLE_ROUTE53_SECRET_ACCESS_KEY_FILE: "/run/credentials/route53",
+    };
+    expect(loadConfig(r53).route53).toEqual({
+      accessKeyId: "AKIDEXAMPLE",
+      secretKeyFile: "/run/credentials/route53",
+      url: "https://route53.amazonaws.com",
+    });
+    expect(() => loadConfig({ BUNZZLE_ROUTE53_ACCESS_KEY_ID: "AKIDEXAMPLE" })).toThrow(ConfigError);
+    expect(() => loadConfig({ ...r53, BUNZZLE_CLOUDFLARE_API_TOKEN_FILE: "/f" })).toThrow(
+      ConfigError,
+    );
+    expect(() =>
+      loadConfig({
+        ...r53,
+        BUNZZLE_DNS_UPDATE_SERVER: "ns1.acme.test",
+        BUNZZLE_DNS_UPDATE_KEY_NAME: "bunzzle",
+        BUNZZLE_DNS_UPDATE_KEY_FILE: "/run/credentials/tsig",
+      }),
+    ).toThrow("one provider");
   });
 });
