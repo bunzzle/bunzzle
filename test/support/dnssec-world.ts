@@ -223,6 +223,25 @@ export class TestWorld {
     return this.#answers.get(`${zone.name}#${name}|${type}`) ?? [];
   }
 
+  #dname(
+    zone: WorldZone,
+    name: string,
+  ): { records: ResourceRecord[]; alias: ResourceRecord & { type: "CNAME" } } | null {
+    const labels = name.split(".");
+    for (let i = 1; i <= labels.length; i++) {
+      const owner = labels.slice(i).join(".");
+      if (!isSubdomain(owner, zone.name)) break;
+      const records = this.#lookup(zone, owner, RRType.DNAME);
+      const d = records.find((r) => r.type === "DNAME");
+      if (d?.type !== "DNAME") continue;
+      const prefix = labels.slice(0, i).join(".");
+      const target = d.target === "" ? prefix : `${prefix}.${d.target}`;
+      const alias = record(name, RRType.CNAME, nameToWire(target), d.ttl);
+      return { records, alias: alias as ResourceRecord & { type: "CNAME" } };
+    }
+    return null;
+  }
+
   fetch = async (name: string, type: number): Promise<DnsMessage> => {
     this.queries.push({ name, type });
     const answers: ResourceRecord[] = [];
@@ -241,6 +260,12 @@ export class TestWorld {
       if (target?.type === "CNAME") {
         answers.push(...cname);
         current = target.target;
+        continue;
+      }
+      const dname = this.#dname(zone, current);
+      if (dname) {
+        answers.push(...dname.records, dname.alias);
+        current = dname.alias.target;
         continue;
       }
       const names = this.#names(zone);

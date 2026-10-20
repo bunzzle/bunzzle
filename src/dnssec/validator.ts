@@ -148,6 +148,7 @@ export class Validator {
         if (r.status !== "secure") acc.reason ??= r.reason;
       };
       for (const set of sets) {
+        if (synthesized(set, sets)) continue;
         add(await this.#rrset(set, message.authority, budget, 0));
         if (acc.status === "bogus") break;
       }
@@ -415,6 +416,18 @@ export class Validator {
     }
     throw new Bogus(reason);
   }
+}
+
+function synthesized(set: RRset, sets: RRset[]): boolean {
+  const alias = set.records[0];
+  if (set.records.length !== 1 || alias?.type !== "CNAME") return false;
+  return sets.some((d) => {
+    const dname = d.records[0];
+    if (d.records.length !== 1 || dname?.type !== "DNAME") return false;
+    if (set.name === d.name || !isSubdomain(set.name, d.name)) return false;
+    const prefix = d.name === "" ? set.name : set.name.slice(0, -(d.name.length + 1));
+    return alias.target === (dname.target === "" ? prefix : `${prefix}.${dname.target}`);
+  });
 }
 
 function chainEnd(sets: RRset[], name: string, type: number): string {

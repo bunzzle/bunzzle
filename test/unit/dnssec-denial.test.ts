@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { type DnsMessage, decodeMessage, type ResourceRecord, RRType } from "../../src/dns/wire.ts";
+import {
+  type DnsMessage,
+  decodeMessage,
+  Rcode,
+  type ResourceRecord,
+  RRType,
+} from "../../src/dns/wire.ts";
 import { canonicalCompare } from "../../src/dnssec/denial.ts";
 import { ROOT_ANCHORS, Validator } from "../../src/dnssec/validator.ts";
 import { a, record } from "../support/dnssec.ts";
@@ -236,6 +242,13 @@ test("a DNAME at an ancestor cannot be used to deny names below it", async () =>
     ],
     [record("old.example.test", 39, Uint8Array.from([3, 110, 101, 119, 4, 116, 101, 115, 116, 0]))],
   );
+  expect((await v(w).validate("x.old.example.test", RRType.A)).status).toBe("secure");
+  w.overrides.set(`x.old.example.test|${RRType.A}`, (m) => ({
+    ...m,
+    rcode: Rcode.NXDOMAIN,
+    answers: [],
+    authority: w.zones.get("example.test")?.proofs ?? [],
+  }));
   expect((await v(w).validate("x.old.example.test", RRType.A)).status).toBe("bogus");
 });
 

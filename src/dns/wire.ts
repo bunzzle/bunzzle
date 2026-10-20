@@ -91,6 +91,7 @@ export type RecordData =
   | { type: "A"; address: string }
   | { type: "AAAA"; address: string }
   | { type: "CNAME"; target: string }
+  | { type: "DNAME"; target: string }
   | { type: "NS"; target: string }
   | { type: "PTR"; target: string }
   | { type: "MX"; mx: MxData }
@@ -337,8 +338,14 @@ function readData(r: Reader, type: number, len: number, end: number): [RecordDat
     case RRType.PTR:
     case RRType.DNAME: {
       const n = r.wireName(true);
-      if (type === RRType.DNAME) return [{ type: "OTHER", code: type }, n.wire];
-      const kind = type === RRType.CNAME ? "CNAME" : type === RRType.NS ? "NS" : "PTR";
+      const kind =
+        type === RRType.CNAME
+          ? "CNAME"
+          : type === RRType.DNAME
+            ? "DNAME"
+            : type === RRType.NS
+              ? "NS"
+              : "PTR";
       return [{ type: kind, target: n.text }, n.wire];
     }
     case RRType.MX: {

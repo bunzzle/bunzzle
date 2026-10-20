@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { type DnsMessage, decodeMessage, type ResourceRecord, RRType } from "../../src/dns/wire.ts";
+import {
+  type DnsMessage,
+  decodeMessage,
+  nameToWire,
+  type ResourceRecord,
+  RRType,
+} from "../../src/dns/wire.ts";
+import { validatingResolver } from "../../src/dnssec/resolver.ts";
 import { ROOT_ANCHORS, Validator } from "../../src/dnssec/validator.ts";
 import { a, record, sign, zoneKey } from "../support/dnssec.ts";
 import { world } from "../support/dnssec-world.ts";
@@ -12,6 +19,8 @@ const cname = (name: string, target: string) => {
   const wire = [...labels.flatMap((l) => [l.length, ...new TextEncoder().encode(l)]), 0];
   return record(name, RRType.CNAME, Uint8Array.from(wire));
 };
+
+const dname = (name: string, target: string) => record(name, RRType.DNAME, nameToWire(target));
 
 const standard = (records: ResourceRecord[] = [a("www.example.test", "192.0.2.1")]) =>
   world([[""], ["test"], ["example.test"]], records);
@@ -164,6 +173,66 @@ describe("chain of trust", () => {
       RRType.A,
     );
     expect(r).toMatchObject({ status: "bogus", reason: "mail.other.test is not signed" });
+  });
+
+  test("a DNAME answer is secure when the unsigned CNAME is the one the signed DNAME makes", async () => {
+    const w = await world(
+      [[""], ["test"], ["example.test"], ["other.test"]],
+      [dname("old.example.test", "new.other.test"), a("mail.new.other.test", "192.0.2.7")],
+    );
+    const v = new Validator({ fetch: w.fetch, anchors: w.anchors });
+    const ok = await v.validate("mail.old.example.test", RRType.A);
+    expect(ok).toMatchObject({ status: "secure", reason: null });
+    expect(ok.message.answers.filter((r) => r.type !== "RRSIG").map((r) => r.type)).toEqual([
+      "DNAME",
+      "CNAME",
+      "A",
+    ]);
+    const answer = await validatingResolver(v).query("Mail.Old.Example.Test", "A");
+    expect(answer).toMatchObject({ authenticated: true, records: [{ address: "192.0.2.7" }] });
+  });
+
+  test("a CNAME the DNAME does not make, or a DNAME without its signature, is bogus", async () => {
+    const w = await world(
+      [[""], ["test"], ["example.test"], ["other.test"]],
+      [
+        dname("old.example.test", "new.other.test"),
+        a("mail.new.other.test", "192.0.2.7"),
+        a("evil.other.test", "192.0.2.66"),
+      ],
+    );
+    const retarget = (name: string, target: string) => (m: DnsMessage) => ({
+      ...m,
+      answers: m.answers.map((r) =>
+        r.type === "CNAME" ? record(name, RRType.CNAME, nameToWire(target)) : r,
+      ),
+    });
+    const check = async (name: string) =>
+      new Validator({ fetch: w.fetch, anchors: w.anchors }).validate(name, RRType.A);
+
+    w.overrides.set(
+      `mail.old.example.test|${RRType.A}`,
+      retarget("mail.old.example.test", "evil.other.test"),
+    );
+    expect((await check("mail.old.example.test")).status).toBe("bogus");
+
+    w.overrides.set(`old.example.test|${RRType.A}`, (m) => ({
+      ...m,
+      rcode: 0,
+      answers: [
+        ...(w.zones.get("example.test")?.records ?? []).filter((r) => r.type === "DNAME"),
+        record("old.example.test", RRType.CNAME, nameToWire("new.other.test")),
+      ],
+    }));
+    expect((await check("old.example.test")).status).toBe("bogus");
+
+    w.overrides.set(`mail.old.example.test|${RRType.A}`, (m) => ({
+      ...m,
+      answers: m.answers.filter(
+        (r) => !(r.type === "RRSIG" && r.rrsig.typeCovered === RRType.DNAME),
+      ),
+    }));
+    expect(await check("mail.old.example.test")).toMatchObject({ status: "bogus" });
   });
 
   test("zone keys are cached; concurrent answers share one lookup", async () => {
