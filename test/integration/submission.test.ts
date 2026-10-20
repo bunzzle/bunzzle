@@ -80,7 +80,7 @@ beforeAll(async () => {
   ).json()) as { records: { record: string; name: string; value: string }[] };
   for (const r of d.records.filter((x) => x.record === "DKIM")) zone[r.name] = { TXT: [r.value] };
   await cli("domains", "verify", "acme.test");
-});
+}, 30_000);
 
 afterAll(async () => {
   await served.stop();

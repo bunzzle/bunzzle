@@ -81,7 +81,7 @@ beforeAll(async () => {
   expect(created.out).toContain("Created test API key");
   testKey = created.token;
   expect((await cli("domains", "add", "acme.test")).code).toBe(0);
-});
+}, 30_000);
 
 afterAll(async () => {
   await served.stop();

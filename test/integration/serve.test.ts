@@ -7,7 +7,7 @@ let served: Served;
 
 beforeAll(async () => {
   served = await startServe({ BUNZZLE_MASTER_KEY: generateMasterKey() });
-});
+}, 30_000);
 
 afterAll(async () => {
   if (served.proc.exitCode === null) await served.stop();
