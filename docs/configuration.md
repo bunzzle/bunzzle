@@ -158,6 +158,14 @@ Bunzzle finds the domain that owns each record name and changes only the values 
 
 Give the token no permission to manage tokens, and restrict it with token policies: a default policy without write permission, then one policy with write permission for each name Bunzzle publishes (`*._domainkey`, `bounce`, `_dmarc` and, with automatic certificates, `_acme-challenge` names under each sending domain). Set its allowed subnets to your server's addresses.
 
+## Testing the DNS provider
+
+`bunzzle dns-test DOMAIN` checks the configured provider without `serve` running, so you can try it from any machine with the same variables. It publishes a TXT record at `_bunzzle-test.DOMAIN` with a random value longer than 255 characters, asks the provider for it again, waits up to two minutes until every name server of the zone answers with it, and removes it, also when a step fails. Each step prints `[ok]` or `[FAIL]`, and the command exits with 1 when one fails. The time it prints is how long the provider takes to publish a change.
+
+```sh
+BUNZZLE_DESEC_TOKEN_FILE=./desec-token bunzzle dns-test example.com
+```
+
 ## Unsafe
 
 | Variable | Default | |
