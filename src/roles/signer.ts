@@ -79,6 +79,26 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
       }),
       (p) => signer.signWebhook(p.id, p.msgId, p.timestamp, p.body),
     ),
+    routeSecret: method(b.object({ id: b.string().min(1).max(64) }), ({ id }) =>
+      signer.routeSecret(id),
+    ),
+    openInbound: method(
+      b.object({
+        id: b.string().min(1).max(64),
+        routeId: b.string().min(1).max(64),
+        msgId: b.string().min(1).max(100),
+        timestamp: b.number().int(),
+        body: sealedBodyWire,
+      }),
+      async (p) => {
+        try {
+          return await signer.openInbound(p.id, fromWire(p.body), p.routeId, p.msgId, p.timestamp);
+        } catch (err) {
+          if (err instanceof SignerError) throw new RpcError(err.code, err.message);
+          throw new RpcError("failed", "cannot open this body");
+        }
+      },
+    ),
     open: method(
       b.object({
         messageId: b.string().regex(MESSAGE_ID),

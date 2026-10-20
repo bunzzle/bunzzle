@@ -335,9 +335,43 @@ export class Signer {
   }
 
   async signWebhook(id: string, msgId: string, timestamp: number, body: string): Promise<string> {
+    return this.#sign(`webhook:${id}`, msgId, timestamp, body);
+  }
+
+  async routeSecret(id: string): Promise<string> {
+    return `whsec_${(await this.#o.master.derive(`route:${id}`)).toBase64()}`;
+  }
+
+  async openInbound(
+    id: string,
+    body: SealedBody,
+    routeId: string,
+    msgId: string,
+    timestamp: number,
+  ): Promise<{ body: string; signature: string }> {
+    const pair = await this.#keystore.get(body.epoch);
+    if (!pair) {
+      throw new SignerError(
+        "epoch-gone",
+        `the key for day ${body.epoch} was destroyed (retention)`,
+      );
+    }
+    let payload: string;
+    try {
+      payload = await openBody(pair, id, body);
+    } catch {
+      throw new SignerError("unreadable", "the body cannot be decrypted with its key");
+    }
+    return {
+      body: payload,
+      signature: await this.#sign(`route:${routeId}`, msgId, timestamp, payload),
+    };
+  }
+
+  async #sign(purpose: string, msgId: string, timestamp: number, body: string): Promise<string> {
     const key = await crypto.subtle.importKey(
       "raw",
-      (await this.#o.master.derive(`webhook:${id}`)) as Uint8Array<ArrayBuffer>,
+      (await this.#o.master.derive(purpose)) as Uint8Array<ArrayBuffer>,
       { name: "HMAC", hash: "SHA-256" },
       false,
       ["sign"],

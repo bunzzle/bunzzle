@@ -24,6 +24,7 @@ describe("loadConfig", () => {
       minFreeMb: 1024,
       inboundHost: "0.0.0.0",
       inboundPort: null,
+      inboundMaxSize: 10 * 1024 * 1024,
       retryScale: 1,
       publicUrl: null,
       inboundHostname: null,

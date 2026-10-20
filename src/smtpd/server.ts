@@ -18,7 +18,12 @@ export interface SmtpHooks {
   auth?(password: string, session: SmtpSession): Promise<unknown | null>;
   sender?(address: string, session: SmtpSession): Promise<SmtpReply | null>;
   recipient(address: string, session: SmtpSession): Promise<SmtpReply | null>;
-  message(recipients: string[], raw: string, session: SmtpSession): Promise<SmtpReply>;
+  message(
+    recipients: string[],
+    raw: string,
+    session: SmtpSession,
+    from: string,
+  ): Promise<SmtpReply>;
 }
 
 export interface SmtpServerOptions {
@@ -300,13 +305,14 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
   const endOfData = async (s: Socket<undefined>, c: Conn) => {
     const lines = c.data ?? [];
     const rcpts = c.rcpts;
+    const from = c.from ?? "";
     const tooBig = c.tooBig;
     reset(c);
     if (tooBig) return reply(s, `552 5.3.4 Message larger than ${maxSize} bytes`);
     c.messages++;
     let result: SmtpReply;
     try {
-      result = await o.hooks.message(rcpts, `${lines.join("\r\n")}\r\n`, c.session);
+      result = await o.hooks.message(rcpts, `${lines.join("\r\n")}\r\n`, c.session, from);
     } catch {
       result = { code: 451, text: "4.3.0 Try again later" };
     }

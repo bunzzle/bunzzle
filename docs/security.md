@@ -36,19 +36,20 @@ Every parser has limits:
 - HTTP bodies: size cap.
 - SMTP replies: line and reply length caps.
 - DNS: name length, pointer loops.
-- Inbound mail: 1 MB, 10 recipients, 500 headers, 50 parts, depth 5.
+- Inbound mail: 10 MB (`BUNZZLE_INBOUND_MAX_SIZE`), 10 recipients; bounces and reports 2 MB, 500 headers, 50 parts, depth 5; mail for routes 1,000 headers, 200 parts, depth 10.
 - IPC frames: size cap.
 
 Every one of these is fuzzed (`test/fuzz`): a few thousand inputs per target in every test run, 200,000 per target nightly in CI. Reproduce a failure with `BUNZZLE_FUZZ_SEED=<seed> bun test test/fuzz`.
 
 ## Network
 
-One private-network filter covers SMTP, webhooks, MTA-STS and DNS provider requests. Delivery resolves names itself and connects to the vetted IP, while TLS still checks the name. This stops DNS rebinding. Redirects are never followed.
+One private-network filter covers SMTP, webhooks, inbound routes, MTA-STS and DNS provider requests. Delivery resolves names itself and connects to the vetted IP, while TLS still checks the name. This stops DNS rebinding. Redirects are never followed.
 
 ## Abuse
 
 - Only verified domains can send.
-- Inbound accepts only signed bounce and unsubscribe addresses, so it is never an open relay.
+- Inbound accepts only signed bounce and unsubscribe addresses and addresses with a route, and never sends mail on, so it is never an open relay.
+- Mail for a route is stored encrypted until the app accepts it. Core cannot read it; only the signer opens it, for the delivery role to post.
 - Bulk mail is held at a 0.3% complaint rate or 5% hard bounces.
 - Bulk mail from an API key is held when it sends ten times its normal hourly volume, as a leaked key would.
 

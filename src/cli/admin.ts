@@ -197,6 +197,57 @@ export async function pathsCommand(argv: string[], config: Config) {
   }
 }
 
+export async function routesCommand(argv: string[], config: Config) {
+  const [sub, ...rest] = argv;
+  switch (sub) {
+    case "add": {
+      const [address, url, ...flags] = rest;
+      if (!address || !url) {
+        throw new UsageError("usage: bunzzle routes add ADDRESS URL [--raw]");
+      }
+      const args = parseArgs(flags, { flags: ["raw"] });
+      const r = await call<{
+        id: string;
+        address: string;
+        endpoint: string;
+        format: string;
+        signing_secret: string;
+      }>(config, "createRoute", { address, url, format: args.flags.has("raw") ? "raw" : "parsed" });
+      console.log(`Route ${r.id}: ${r.address} → ${r.endpoint} (${r.format})`);
+      console.log(`Signing secret (Standard Webhooks format): ${r.signing_secret}`);
+      return;
+    }
+    case "list": {
+      const routes = await call<
+        { id: string; address: string; endpoint: string; format: string }[]
+      >(config, "listRoutes", {});
+      if (routes.length === 0) {
+        console.log("No routes yet. Add one with `bunzzle routes add ADDRESS URL`.");
+      }
+      for (const r of routes) console.log(`${r.id}  ${r.address}  ${r.endpoint}  (${r.format})`);
+      return;
+    }
+    case "remove": {
+      const id = rest[0];
+      if (!id) throw new UsageError("usage: bunzzle routes remove ID");
+      await call(config, "deleteRoute", { id });
+      console.log(`Removed ${id}.`);
+      return;
+    }
+    case "retry": {
+      const id = rest[0];
+      if (!id) throw new UsageError("usage: bunzzle routes retry ID");
+      const r = await call<{ requeued: number }>(config, "retryRoute", { id });
+      console.log(
+        `${r.requeued} failed ${r.requeued === 1 ? "message" : "messages"} queued again.`,
+      );
+      return;
+    }
+    default:
+      throw new UsageError("usage: bunzzle routes add|list|remove|retry");
+  }
+}
+
 export async function webhooksCommand(argv: string[], config: Config) {
   const [sub, ...rest] = argv;
   switch (sub) {

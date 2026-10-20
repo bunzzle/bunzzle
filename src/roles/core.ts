@@ -17,6 +17,7 @@ import { beginAtEnd, exportEvents } from "../eventlog/export.ts";
 import { EventLog } from "../eventlog/log.ts";
 import { gmailGuard, savePostmaster } from "../guards/gmail.ts";
 import { reputationGuard } from "../guards/guards.ts";
+import { pruneRouted } from "../inbound/routes.ts";
 import { RpcClient, serveRpc } from "../ipc/rpc.ts";
 import { rollover } from "../ips/warmup.ts";
 import { expireSuspensions } from "../queue/control.ts";
@@ -29,6 +30,7 @@ import { coreMethods } from "./core-api.ts";
 import { doctorMethods, ipInfo } from "./core-doctor.ts";
 import { feedbackMethods } from "./core-feedback.ts";
 import { rotation } from "./core-rotation.ts";
+import { routeMethods } from "./core-routes.ts";
 import { every, onStop, privateDir, ready } from "./runtime.ts";
 import {
   deliveryReportWire,
@@ -216,6 +218,18 @@ export async function runCore(config: Config, log: Logger) {
     scale,
   });
   await feedback.recover();
+  const routes = routeMethods({
+    db,
+    writer,
+    log,
+    signer,
+    delivery,
+    currentKey,
+    allowHttp: config.allowPrivateDestinations,
+    storage: () => storage.state(),
+    scale,
+  });
+  await routes.recover();
   const rotate = rotation({
     db,
     writer,
@@ -238,6 +252,7 @@ export async function runCore(config: Config, log: Logger) {
   const server = await serveRpc(sock.core, {
     ...api.methods,
     ...feedback.methods,
+    ...routes.methods,
     ...doctor,
   });
 
@@ -253,6 +268,7 @@ export async function runCore(config: Config, log: Logger) {
       pruneIdempotency(d, Date.now());
       pruneDmarc(d, Date.now());
       pruneConversations(d, Date.now() - config.retentionDays * 24 * HOUR);
+      pruneRouted(d, Date.now() - config.retentionDays * 24 * HOUR);
     }),
   );
   const stopTlsReports = every(Math.max(1_000, scaled(HOUR)), () =>
@@ -339,6 +355,11 @@ export async function runCore(config: Config, log: Logger) {
       .dispatch()
       .catch((err: Error) => log.error("webhook dispatch failed", { error: err.message })),
   );
+  const stopRoutes = every(250, () =>
+    routes
+      .dispatch()
+      .catch((err: Error) => log.error("route dispatch failed", { error: err.message })),
+  );
 
   const stopEventLog = eventLog
     ? every(1_000, () =>
@@ -365,6 +386,7 @@ export async function runCore(config: Config, log: Logger) {
     stopPostmaster();
     stopListed();
     stopDispatch();
+    stopRoutes();
     stopEventLog();
     await eventLog?.stop();
     server.stop();
