@@ -30,6 +30,7 @@ import { UsageError } from "./args.ts";
 import { backupCommand, restoreCommand } from "./backup.ts";
 import { dkimCommand } from "./dkim.ts";
 import { dnsTestCommand } from "./dnstest.ts";
+import { postmasterCommand } from "./postmaster.ts";
 import { sendCommand } from "./send.ts";
 
 const USAGE = `bunzzle ${VERSION}
@@ -46,6 +47,7 @@ Usage:
   bunzzle ips         source IPs, reverse DNS and warm-up progress (needs \`serve\` running)
   bunzzle doctor      check configuration, IPs, every DNS record and DKIM against live DNS
   bunzzle dns-test    DOMAIN: publish a test record through the DNS provider, check it, remove it
+  bunzzle postmaster  auth: sign in once to read Gmail spam rates from Postmaster Tools
   bunzzle holds       bulk mail paused by the reputation or anomaly guard; release ID (needs \`serve\` running)
   bunzzle suppressions list|add|remove suppressed addresses (needs \`serve\` running)
   bunzzle queue       what is waiting per destination; suspend|resume a destination; fail|cancel queued email (needs \`serve\` running)
@@ -175,6 +177,9 @@ async function main(argv: string[]) {
       return;
     case "dns-test":
       process.exitCode = await dnsTestCommand(argv.slice(1), loadConfig());
+      return;
+    case "postmaster":
+      process.exitCode = await postmasterCommand(argv.slice(1), loadConfig());
       return;
     case "ips":
       return ipsCommand(argv.slice(1), loadConfig());

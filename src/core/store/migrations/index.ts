@@ -11,6 +11,7 @@ import queueControl from "./0010_queue_control.sql" with { type: "text" };
 import eventTime from "./0011_event_time.sql" with { type: "text" };
 import conversations from "./0012_conversations.sql" with { type: "text" };
 import testKeys from "./0013_test_keys.sql" with { type: "text" };
+import postmaster from "./0014_postmaster.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -32,4 +33,5 @@ export const migrations: readonly Migration[] = [
   { version: 11, name: "event time", sql: eventTime },
   { version: 12, name: "conversations", sql: conversations },
   { version: 13, name: "test keys", sql: testKeys },
+  { version: 14, name: "postmaster", sql: postmaster },
 ];

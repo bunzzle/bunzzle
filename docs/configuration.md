@@ -172,6 +172,18 @@ Bunzzle finds the domain that owns each record name and changes only the values 
 
 Give the token no permission to manage tokens, and restrict it with token policies: a default policy without write permission, then one policy with write permission for each name Bunzzle publishes (`*._domainkey`, `bounce`, `_dmarc` and, with automatic certificates, `_acme-challenge` names under each sending domain). Set its allowed subnets to your server's addresses.
 
+## Gmail Postmaster Tools
+
+Gmail does not send a report for each complaint, so its spam rate is only visible in Postmaster Tools. With these settings, the `dns` role reads each verified domain's daily numbers every 6 hours. Bulk mail for a domain is held when Gmail reports a spam rate of 0.3% or more, or a BAD domain reputation, and a warning is logged from 0.1% or a LOW reputation. `bunzzle doctor` and `GET /domains/:name` (`gmail`) show the latest day: spam rate, reputation, SPF, DKIM and DMARC pass rates and the share sent over TLS.
+
+| Variable | Default | |
+|---|---|---|
+| `BUNZZLE_POSTMASTER_CLIENT_ID` | | OAuth client ID (type "Desktop app") from a Google Cloud project with the Gmail Postmaster Tools API turned on. |
+| `BUNZZLE_POSTMASTER_CLIENT_SECRET_FILE` | | File with that client's secret, readable only by the `bunzzle-dns` user. |
+| `BUNZZLE_POSTMASTER_REFRESH_TOKEN_FILE` | | File with the refresh token from `bunzzle postmaster auth`, readable only by the `bunzzle-dns` user. |
+
+Add and verify your domains in Postmaster Tools first. Then, on a machine with a browser, run `bunzzle postmaster auth --client-id ID --client-secret-file FILE --out FILE`, sign in with the same Google account, and copy the file it writes to the server. The command asks only for read access to Postmaster Tools, and prints neither the secret nor the token.
+
 ## Testing the DNS provider
 
 `bunzzle dns-test DOMAIN` checks the configured provider without `serve` running, so you can try it from any machine with the same variables. It publishes a TXT record at `_bunzzle-test.DOMAIN` with a random value longer than 255 characters, asks the provider for it again, waits up to two minutes until every name server of the zone answers with it, and removes it, also when a step fails. Each step prints `[ok]` or `[FAIL]`, and the command exits with 1 when one fails. The time it prints is how long the provider takes to publish a change.

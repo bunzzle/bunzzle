@@ -37,6 +37,8 @@ describe("role environments under bunzzle serve", () => {
       "BUNZZLE_DNS_UPDATE_KEY_FILE",
       "BUNZZLE_ROUTE53_SECRET_ACCESS_KEY_FILE",
       "BUNZZLE_DESEC_TOKEN_FILE",
+      "BUNZZLE_POSTMASTER_CLIENT_SECRET_FILE",
+      "BUNZZLE_POSTMASTER_REFRESH_TOKEN_FILE",
     ]) {
       expect(rolesGetting(name)).toEqual(["dns"]);
     }

@@ -47,6 +47,7 @@ describe("loadConfig", () => {
       cloudflareUrl: "https://api.cloudflare.com/client/v4",
       route53: null,
       desec: null,
+      postmaster: null,
     });
   });
 
