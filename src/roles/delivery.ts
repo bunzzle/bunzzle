@@ -7,6 +7,7 @@ import { createResolver, parseServer, type Resolver, systemServers } from "../dn
 import { checkReverse, type ReverseCheck } from "../dns/reverse.ts";
 import { ownValidation } from "../dnssec/resolver.ts";
 import { method, RpcClient, serveRpc } from "../ipc/rpc.ts";
+import { blocklists, checkBlocklists, type Listing } from "../ips/blocklists.ts";
 import { guardedPost } from "../net/post.ts";
 import { guardedRequest } from "../net/request.ts";
 import { limitsFor } from "../shaping/limits.ts";
@@ -75,6 +76,29 @@ export async function runDelivery(config: Config, log: Logger) {
           ip,
           problem: r.problem,
         });
+      }
+    }
+  };
+  const lists = blocklists(
+    config.spamhausKeyFile ? (await Bun.file(config.spamhausKeyFile).text()).trim() : null,
+  );
+  const listings = new Map<string, Listing[]>();
+  const checkLists = async () => {
+    for (const ip of ips) {
+      const found = await checkBlocklists(uncached, ip, lists);
+      const before = new Set(
+        (listings.get(ip) ?? []).filter((l) => l.status === "listed").map((l) => l.list),
+      );
+      listings.set(ip, found);
+      for (const l of found) {
+        if (l.status === "listed" && !before.has(l.list)) {
+          log.warn("sending IP is on a blocklist", {
+            ip,
+            list: l.name,
+            detail: l.detail,
+            removal: l.removal,
+          });
+        }
       }
     }
   };
@@ -151,6 +175,7 @@ export async function runDelivery(config: Config, log: Logger) {
         ip,
         ehlo: ehloFor(ip),
         ...(reverse.get(ip) ?? { ptr: null, forwardConfirmed: false, problem: "not checked yet" }),
+        listings: listings.get(ip) ?? null,
       })),
     ),
     dns: method(
@@ -206,9 +231,12 @@ export async function runDelivery(config: Config, log: Logger) {
   });
   await checkIps();
   const stopChecks = every(3_600_000, checkIps);
+  void checkLists();
+  const stopLists = every(6 * 3_600_000, checkLists);
   const stopExpire = every(60_000, () => transport.forget([]));
   onStop(log, async () => {
     stopChecks();
+    stopLists();
     stopExpire();
     server.stop();
     await pool.closeAll();

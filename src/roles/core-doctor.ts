@@ -29,13 +29,25 @@ export interface DoctorDeps {
 
 const dnssecInfo = b.object({ mode: b.enum(["resolver", "own", "off"]), detail: b.string() });
 
-const ipInfo = b.array(
+export const ipInfo = b.array(
   b.object({
     ip: b.string(),
     ehlo: b.string(),
     ptr: b.string().nullable(),
     forwardConfirmed: b.boolean(),
     problem: b.string().nullable(),
+    listings: b
+      .array(
+        b.object({
+          list: b.string(),
+          name: b.string(),
+          status: b.enum(["clean", "listed", "unusable"]),
+          detail: b.string(),
+          removal: b.string().nullable(),
+        }),
+      )
+      .nullable()
+      .optional(),
   }),
 );
 
@@ -113,6 +125,21 @@ export function doctorMethods(deps: DoctorDeps): Methods {
           ? `reverse DNS ${ip.ptr}, EHLO ${ip.ehlo}`
           : `${ip.problem}: Gmail and others reject mail from IPs without matching reverse DNS`,
       );
+      const listings = ip.listings ?? null;
+      if (!listings) {
+        add("ips", `${ip.ip} blocklists`, "warn", "not checked yet");
+        continue;
+      }
+      for (const l of listings.filter((x) => x.status === "listed")) {
+        add("ips", `${ip.ip} on ${l.name}`, "fail", `${l.detail}; removal: ${l.removal}`);
+      }
+      for (const l of listings.filter((x) => x.status === "unusable")) {
+        add("ips", `${ip.ip} ${l.name}`, "warn", `could not check: ${l.detail}`);
+      }
+      const clean = listings.filter((x) => x.status === "clean").length;
+      if (clean === listings.length) {
+        add("ips", `${ip.ip} blocklists`, "ok", `not listed on ${clean} blocklists`);
+      }
     }
 
     const domains = listDomains(db);
