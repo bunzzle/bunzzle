@@ -174,7 +174,7 @@ export interface Choice {
 }
 
 export interface Wait {
-  wait: { delayMs: number; reason: string };
+  wait: { delayMs: number; reason: string; blocked?: boolean };
 }
 
 export function choose(
@@ -236,6 +236,7 @@ export function choose(
     wait: {
       delayMs: Math.max(1_000, (soonestPause ?? now + 60_000) - now),
       reason: `every source IP is paused for ${target}`,
+      blocked: true,
     },
   };
 }

@@ -178,4 +178,16 @@ describe("loadConfig", () => {
       }),
     ).toThrow("one provider");
   });
+
+  test("the relay takes all mail, or only listed destinations and blocked paths", () => {
+    const relay = { BUNZZLE_RELAY_HOST: "smtp.relay.test" };
+    expect(loadConfig(relay).relay?.for).toEqual({ all: true, blocked: false, targets: [] });
+    expect(
+      loadConfig({ ...relay, BUNZZLE_RELAY_FOR: "Microsoft, example.com., blocked" }).relay?.for,
+    ).toEqual({ all: false, blocked: true, targets: ["microsoft", "example.com"] });
+    expect(() => loadConfig({ ...relay, BUNZZLE_RELAY_FOR: "all,blocked" })).toThrow(ConfigError);
+    expect(() => loadConfig({ ...relay, BUNZZLE_RELAY_FOR: " , " })).toThrow(ConfigError);
+    expect(() => loadConfig({ ...relay, BUNZZLE_RELAY_FOR: "bad_name" })).toThrow(ConfigError);
+    expect(() => loadConfig({ BUNZZLE_RELAY_FOR: "blocked" })).toThrow("needs BUNZZLE_RELAY_HOST");
+  });
 });

@@ -137,6 +137,10 @@ export async function runCore(config: Config, log: Logger) {
     suspendRetryMs: scaled(5 * MIN),
     maxWaitMs: Math.max(1_000, Math.floor(Math.max(2_000, scaled(45 * MIN)) / 3)),
     bounceDomainFor: (d) => (returnPathReady(getDomain(db, d)) ? bounceDomain(d) : null),
+    relayRoutes:
+      config.relay && !config.relay.for.all
+        ? { targets: config.relay.for.targets, blocked: config.relay.for.blocked }
+        : null,
   });
   const scheduler = new Scheduler({
     db,

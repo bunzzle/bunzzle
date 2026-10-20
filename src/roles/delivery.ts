@@ -114,6 +114,7 @@ export async function runDelivery(config: Config, log: Logger) {
         allowPrivate: config.allowPrivateDestinations,
         dane,
         relay,
+        relayAll: config.relay?.for.all ?? true,
         requiretls: config.requiretls,
         ...(ips.length ? { ownAddresses: ips } : {}),
       },

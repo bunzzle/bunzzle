@@ -98,7 +98,7 @@ export function allRecipients(
   }));
 }
 
-async function relayDestination(
+export async function relayDestination(
   domain: string,
   relay: Relay,
   opts: DeliveryOptions,
