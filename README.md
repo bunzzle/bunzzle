@@ -61,6 +61,8 @@ curl http://127.0.0.1:3000/emails/<id> -H "Authorization: Bearer bz_…"
 
 `GET /emails` searches by recipient (`to`), status, tag (`tag=name:value`), sender domain and time (`since`, `until`), newest first, with `limit` and `cursor`. `GET /stats` counts sent, delivered, deferred, bounced, failed, suppressed, complained and unsubscribed per day, for all mail or one `domain` or `tag` (`since` and `until` as `YYYY-MM-DD`, the last 7 days by default). `bunzzle emails list` and `bunzzle stats` show the same from the server. Email sent with a test key is left out of the stats.
 
+The whole API is described in [openapi.json](openapi.json) (OpenAPI 3.1); `bunzzle openapi` prints the description for the version you run.
+
 API keys are shown once and stored only as a hash. They have a scope (`send`, `read`, `full`), can be limited to some domains (`--domain`) and have a per-second rate limit.
 
 ### Templates
@@ -205,7 +207,7 @@ bun run check
 bun run build
 ```
 
-`dev` starts the server and reloads on save, `check` runs the type check, the linter and the tests, and `build` makes a single binary at `dist/bunzzle`.
+`dev` starts the server and reloads on save, `check` runs the type check, the linter and the tests, and `build` makes a single binary at `dist/bunzzle`. After changing the API, `bun run openapi` writes `openapi.json` again; a test fails while it is out of date.
 
 Tests include fuzzing of every parser that reads outside input (`test/fuzz`, more iterations with `BUNZZLE_FUZZ_ITERATIONS`) and an end-to-end check for any installed server (`test/system/e2e.ts`).
 

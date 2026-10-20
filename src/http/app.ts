@@ -5,6 +5,18 @@ import { b } from "../validate/schema.ts";
 import { VERSION } from "../version.ts";
 import { ApiError, errorResponse, fromRpc } from "./errors.ts";
 import {
+  createDomainSchema,
+  createRouteSchema,
+  createSuppressionSchema,
+  createTemplateSchema,
+  createWebhookSchema,
+  previewSchema,
+  removeSchema,
+  suspendSchema,
+  updateDomainSchema,
+  updateTemplateSchema,
+} from "./schemas.ts";
+import {
   applyTemplate,
   type PreparedEmail,
   prepareEmail,
@@ -119,50 +131,6 @@ function enqueueFields(email: PreparedEmail) {
     ...(email.expiresAt !== undefined ? { expiresAt: email.expiresAt } : {}),
   };
 }
-
-const suspendSchema = b.object({
-  target: b.string().max(300),
-  reason: b.string().min(1).max(500),
-  until: b.string().max(64).optional(),
-});
-
-const templateBody = {
-  subject: b.string().max(998),
-  html: b
-    .string()
-    .max(2 * 1024 * 1024)
-    .nullable(),
-  text: b
-    .string()
-    .max(2 * 1024 * 1024)
-    .nullable(),
-};
-
-const createTemplateSchema = b.object({
-  name: b.string().max(64),
-  subject: templateBody.subject,
-  html: templateBody.html.optional(),
-  text: templateBody.text.optional(),
-});
-
-const updateTemplateSchema = b.object({
-  subject: templateBody.subject.optional(),
-  html: templateBody.html.optional(),
-  text: templateBody.text.optional(),
-});
-
-const previewSchema = b.object({
-  version: b.number().int().min(1).optional(),
-  variables: b.record(b.string(), b.unknown()).optional(),
-});
-
-const removeSchema = b.object({
-  reason: b.string().min(1).max(500),
-  domain: b.string().max(253).optional(),
-  sender_domain: b.string().max(253).optional(),
-  older_than_seconds: b.number().int().nonnegative().optional(),
-  dry_run: b.boolean().default(false),
-});
 
 function invalid(error: b.ValidationError): ApiError {
   const issue = error.issues[0];
@@ -497,7 +465,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
         }),
         POST: handle(async (req) => {
           const caller = await authenticate(req);
-          const parsed = b.object({ name: b.string().min(1).max(253) }).safeParse(await json(req));
+          const parsed = createDomainSchema.safeParse(await json(req));
           if (!parsed.success) throw invalid(parsed.error);
           return Response.json(
             await rpc("addDomain", { tokenHash: caller.hash, name: parsed.data.name }),
@@ -513,23 +481,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
         }),
         PATCH: handle(async (req) => {
           const caller = await authenticate(req);
-          const parsed = b
-            .object({
-              ip_pool: b
-                .string()
-                .regex(/^[a-z0-9-]{1,32}$/)
-                .nullable()
-                .optional(),
-              tracking: b
-                .object({
-                  host: b.string().min(1).max(253),
-                  opens: b.boolean().optional(),
-                  clicks: b.boolean().optional(),
-                })
-                .nullable()
-                .optional(),
-            })
-            .safeParse(await json(req));
+          const parsed = updateDomainSchema.safeParse(await json(req));
           if (!parsed.success) throw invalid(parsed.error);
           const { ip_pool, tracking } = parsed.data;
           if (ip_pool === undefined && tracking === undefined) {
@@ -577,9 +529,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
         }),
         POST: handle(async (req) => {
           const caller = await authenticate(req);
-          const parsed = b
-            .object({ endpoint: b.string().max(2048), events: b.array(b.string()).optional() })
-            .safeParse(await json(req));
+          const parsed = createWebhookSchema.safeParse(await json(req));
           if (!parsed.success) throw invalid(parsed.error);
           return Response.json(
             await rpc("createWebhook", {
@@ -606,13 +556,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
         }),
         POST: handle(async (req) => {
           const caller = await authenticate(req);
-          const parsed = b
-            .object({
-              address: b.string().max(320),
-              endpoint: b.string().max(2048),
-              format: b.string().max(20).optional(),
-            })
-            .safeParse(await json(req));
+          const parsed = createRouteSchema.safeParse(await json(req));
           if (!parsed.success) throw invalid(parsed.error);
           return Response.json(
             await rpc("createRoute", {
@@ -749,9 +693,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
         }),
         POST: handle(async (req) => {
           const caller = await authenticate(req);
-          const parsed = b
-            .object({ email: b.string().max(320), scope: b.enum(["all", "bulk"]).optional() })
-            .safeParse(await json(req));
+          const parsed = createSuppressionSchema.safeParse(await json(req));
           if (!parsed.success) throw invalid(parsed.error);
           return Response.json(
             await rpc("addSuppression", { tokenHash: caller.hash, ...parsed.data }),

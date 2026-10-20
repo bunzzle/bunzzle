@@ -4,6 +4,7 @@ import { createLogger } from "../core/log.ts";
 import { readMasterKeyText } from "../crypto/load.ts";
 import { generateMasterKey, MasterKeyError } from "../crypto/master.ts";
 import { KeyFileError } from "../dkim/keys.ts";
+import { openApi } from "../http/openapi.ts";
 import { AddressError } from "../mime/address.ts";
 import { MimeError } from "../mime/builder.ts";
 import { runApi } from "../roles/api.ts";
@@ -44,6 +45,7 @@ Usage:
   bunzzle send        Send one email straight to the recipients' mail servers
   bunzzle dkim        Create DKIM keys and print their DNS records
   bunzzle master-key  Print a new random master key
+  bunzzle openapi     Print the OpenAPI description of the API
   bunzzle domains     add|verify|show|list|reports sending domains and their DMARC reports (needs \`serve\` running)
   bunzzle keys        create|list|revoke API keys (needs \`serve\` running)
   bunzzle paths       sending speed per destination and why it changed (needs \`serve\` running)
@@ -218,6 +220,9 @@ async function main(argv: string[]) {
       return restoreCommand(argv.slice(1), loadConfig());
     case "master-key":
       console.log(generateMasterKey());
+      return;
+    case "openapi":
+      console.log(JSON.stringify(openApi(), null, 2));
       return;
     case "--version":
     case "-v":
