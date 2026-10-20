@@ -422,6 +422,25 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
             await rpc("getDomain", { tokenHash: caller.hash, name: req.params["name"] }),
           );
         }),
+        PATCH: handle(async (req) => {
+          const caller = await authenticate(req);
+          const parsed = b
+            .object({
+              ip_pool: b
+                .string()
+                .regex(/^[a-z0-9-]{1,32}$/)
+                .nullable(),
+            })
+            .safeParse(await json(req));
+          if (!parsed.success) throw invalid(parsed.error);
+          return Response.json(
+            await rpc("setDomainPool", {
+              tokenHash: caller.hash,
+              name: req.params["name"],
+              pool: parsed.data.ip_pool,
+            }),
+          );
+        }),
       },
       "/domains/:name/dmarc": {
         GET: handle(async (req) => {

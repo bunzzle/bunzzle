@@ -22,7 +22,7 @@ After editing the file, `sudo systemctl reload 'bunzzle-*'` (or `kill -HUP` on `
 | Variable | Default | |
 |---|---|---|
 | `BUNZZLE_EHLO_NAME` | | Name the server introduces itself with. Must be the reverse DNS (PTR) name of the sending IP. |
-| `BUNZZLE_SOURCE_IPS` | | Sending IPs, comma-separated. Add `=bulk` to put an IP in the bulk pool: `203.0.113.7,203.0.113.8=bulk`. |
+| `BUNZZLE_SOURCE_IPS` | | Sending IPs, comma-separated. Add `=name` to put an IP in a named pool: `203.0.113.7,203.0.113.8=bulk,203.0.113.9=acme`. Without a pool an IP is in `main`. |
 | `BUNZZLE_SOURCE_IP` | | A single sending IP. Use `BUNZZLE_SOURCE_IPS` for more than one. |
 | `BUNZZLE_ESTABLISHED_IPS` | | IPs that already have a good reputation. They skip warm-up. |
 | `BUNZZLE_IPV6` | `false` | Also deliver over IPv6. Only with reverse DNS for the IPv6 address. |
@@ -82,6 +82,10 @@ Spamhaus refuses queries that come through large public resolvers. Run a local r
 | Variable | Default | |
 |---|---|---|
 | `BUNZZLE_SPAMHAUS_KEY_FILE` | | File with a Spamhaus Data Query Service key, readable only by the `bunzzle-delivery` user. |
+
+## IP pools
+
+Transactional mail goes out from the `main` pool and `"lane": "bulk"` mail from the `bulk` pool, when there is one. Any other pool name is for dedicated IPs: `bunzzle domains pool acme.test acme` (or `PATCH /domains/acme.test` with `{"ip_pool": "acme"}`) sends all of that domain's mail, both lanes, only from the IPs in `acme`, and `bunzzle keys create --pool acme` does the same for one API key, ahead of the domain's pool. If the pool has no usable IP, the mail waits instead of going out from shared IPs; `bunzzle doctor` shows it. `none` puts the domain back on the shared IPs. Warm-up and per-destination limits stay per IP.
 
 ## Relay
 

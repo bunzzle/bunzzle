@@ -113,6 +113,22 @@ export async function domainsCommand(argv: string[], config: Config) {
     if (!name) throw new UsageError("usage: bunzzle domains reports DOMAIN [--days N]");
     return dmarcReports(config, name, rest);
   }
+  if (sub === "pool") {
+    const [pool] = rest;
+    if (!name || !pool || rest.length > 1) {
+      throw new UsageError("usage: bunzzle domains pool DOMAIN POOL|none");
+    }
+    const r = await call<{ name: string; ip_pool: string | null }>(config, "setDomainPool", {
+      name,
+      pool: pool === "none" ? null : pool,
+    });
+    console.log(
+      r.ip_pool
+        ? `${r.name} now sends only from the IPs in the pool ${r.ip_pool}.`
+        : `${r.name} uses the shared IPs again.`,
+    );
+    return;
+  }
   if (rest.length > 0) throw new UsageError(`unexpected argument: ${rest[0]}`);
   switch (sub) {
     case "add":
@@ -374,7 +390,7 @@ export async function keysCommand(argv: string[], config: Config) {
   switch (sub) {
     case "create": {
       const args = parseArgs(rest, {
-        strings: ["name", "scope", "rate-limit"],
+        strings: ["name", "scope", "rate-limit", "pool"],
         lists: ["domain"],
         flags: ["test"],
       });
@@ -394,6 +410,7 @@ export async function keysCommand(argv: string[], config: Config) {
         ...(domains ? { domains } : {}),
         ...(rateLimit ? { rateLimit: Number(rateLimit) } : {}),
         ...(args.flags.has("test") ? { test: true } : {}),
+        ...(args.strings.get("pool") ? { pool: args.strings.get("pool") } : {}),
       });
       console.log(
         `Created ${key.test ? "test " : ""}API key "${key.name}" (${key.scope}${key.domains ? `, only ${key.domains.join(", ")}` : ""}).${key.test ? " Email sent with it is recorded but never delivered." : ""}`,

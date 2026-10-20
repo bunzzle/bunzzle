@@ -187,19 +187,27 @@ export function choose(
   now: number,
   pausedUntil: (ip: string) => number | null,
   listed: (ip: string) => boolean = () => false,
+  assigned: string | null = null,
 ): Choice | Wait {
   if (ips.length === 0) return { source: "default" };
   const pool = (name: string) => ips.filter((x) => x.pool === name);
+  if (assigned !== null && pool(assigned).length === 0) {
+    return {
+      wait: { delayMs: 5 * 60_000, reason: `no source IP is in the pool ${assigned}` },
+    };
+  }
   const candidates =
-    lane === "bulk"
-      ? pool("bulk").length
-        ? pool("bulk")
+    assigned !== null
+      ? pool(assigned)
+      : lane === "bulk"
+        ? pool("bulk").length
+          ? pool("bulk")
+          : pool("main").length
+            ? pool("main")
+            : ips
         : pool("main").length
           ? pool("main")
-          : ips
-      : pool("main").length
-        ? pool("main")
-        : ips;
+          : ips;
   const unlisted = candidates.filter((x) => !listed(x.ip));
   const ordered = [...(unlisted.length ? unlisted : candidates)].sort(
     (a, b) => rank(b.ip, target) - rank(a.ip, target) || a.ip.localeCompare(b.ip),

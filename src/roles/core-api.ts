@@ -27,11 +27,13 @@ import { suppressedAtIntake } from "../delivery/simulator.ts";
 import {
   type Domain,
   type DomainRecord,
+  domainPool,
   evaluate,
   expectedRecords,
   getDomain,
   listDomains,
   saveDomain,
+  setDomainPool,
 } from "../domains/domains.ts";
 import { findIdempotent, rememberIdempotent } from "../emails/idempotency.ts";
 import { METRICS, searchEmails, statsFor } from "../emails/search.ts";
@@ -163,6 +165,16 @@ export function coreMethods(deps: CoreDeps): {
     const fresh = signerDomains !== null && now() - signerDomains.at < SIGNER_DOMAINS_MS;
     if (fresh && signerDomains?.domains.has(domain)) return true;
     return (await fetchSignerDomains()).has(domain);
+  };
+
+  const knownPool = (pool: string) => {
+    const pools = [...new Set((deps.ips ?? []).map((x) => x.pool))];
+    if (!pools.includes(pool)) {
+      throw new RpcError(
+        "invalid",
+        `no source IP is in the pool ${pool}; pools in BUNZZLE_SOURCE_IPS: ${pools.join(", ") || "none"}`,
+      );
+    }
   };
 
   const caller = (hash: string | undefined, needed: Scope): ApiKey => {
@@ -316,6 +328,9 @@ export function coreMethods(deps: CoreDeps): {
               apiKeyId: key.id === "operator" ? null : key.id,
               scheduledAt: p.scheduledAt ?? null,
               ...(key.test ? { test: true } : {}),
+              ...((key.pool ?? domainPool(db, headerDomain))
+                ? { pool: key.pool ?? domainPool(db, headerDomain) }
+                : {}),
             },
             ...(p.expiresAt !== undefined ? { expiresAt: p.expiresAt } : {}),
             ...(p.scheduledAt !== undefined ? { runAfter: p.scheduledAt } : {}),
@@ -588,6 +603,19 @@ export function coreMethods(deps: CoreDeps): {
       return domainView(getDomain(db, name) as Domain);
     }),
 
+    setDomainPool: method(
+      b.object({ tokenHash, name: b.string().max(253), pool: b.string().max(32).nullable() }),
+      async (p) => {
+        caller(p.tokenHash, "full");
+        if (p.pool !== null) knownPool(p.pool);
+        const name = domainName(p.name);
+        if (!(await writer.run((d) => setDomainPool(d, name, p.pool, now())))) {
+          throw new RpcError("not-found", "domain not found");
+        }
+        return { name, ip_pool: p.pool };
+      },
+    ),
+
     getDomain: method(b.object({ tokenHash, name: b.string().max(253) }), (p) => {
       caller(p.tokenHash, "read");
       const d = getDomain(db, domainName(p.name));
@@ -595,6 +623,7 @@ export function coreMethods(deps: CoreDeps): {
       const gmail = latestPostmaster(db, d.name);
       return {
         ...domainView(d),
+        ip_pool: domainPool(db, d.name),
         gmail: gmail
           ? {
               day: gmail.day,
@@ -626,8 +655,10 @@ export function coreMethods(deps: CoreDeps): {
         domains: b.array(b.string().max(253)).max(100).optional(),
         rateLimit: b.number().int().min(1).max(10_000).optional(),
         test: b.boolean().optional(),
+        pool: b.string().max(32).optional(),
       }),
       async (p) => {
+        if (p.pool !== undefined) knownPool(p.pool);
         const domains = p.domains?.map(domainName);
         const { key, token } = await writer.run((d) =>
           createKey(
@@ -638,6 +669,7 @@ export function coreMethods(deps: CoreDeps): {
               ...(domains ? { domains } : {}),
               ...(p.rateLimit ? { rateLimit: p.rateLimit } : {}),
               ...(p.test ? { test: true } : {}),
+              ...(p.pool !== undefined ? { pool: p.pool } : {}),
             },
             now(),
           ),

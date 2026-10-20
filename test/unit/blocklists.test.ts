@@ -169,4 +169,33 @@ describe("blocklists", () => {
     expect(pick(["192.0.2.2"])).toEqual({ source: "192.0.2.1" });
     expect("source" in pick(["192.0.2.1", "192.0.2.2"])).toBe(true);
   });
+
+  test("an assigned pool is the only one used; a pool without IPs makes mail wait", () => {
+    const db = openDatabase({ path: ":memory:" });
+    const ips = [
+      { ip: "192.0.2.1", pool: "main", established: true },
+      { ip: "192.0.2.2", pool: "bulk", established: true },
+      { ip: "192.0.2.3", pool: "acme", established: true },
+    ];
+    const pick = (lane: "transactional" | "bulk", pool: string | null) =>
+      choose(
+        db,
+        ips,
+        lane,
+        "example.test",
+        null,
+        1,
+        Date.now(),
+        () => null,
+        () => false,
+        pool,
+      );
+    expect(pick("transactional", null)).toEqual({ source: "192.0.2.1" });
+    expect(pick("bulk", null)).toEqual({ source: "192.0.2.2" });
+    expect(pick("transactional", "acme")).toEqual({ source: "192.0.2.3" });
+    expect(pick("bulk", "acme")).toEqual({ source: "192.0.2.3" });
+    expect(pick("transactional", "gone")).toEqual({
+      wait: { delayMs: 300_000, reason: "no source IP is in the pool gone" },
+    });
+  });
 });

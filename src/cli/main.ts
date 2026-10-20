@@ -82,9 +82,10 @@ bunzzle domains:
   verify DOMAIN     check the DNS records now
   show DOMAIN | list
   rotate DOMAIN     start or continue DKIM key rotation (automatic every BUNZZLE_DKIM_ROTATE_DAYS)
+  pool DOMAIN POOL  send only from the IPs in POOL (from BUNZZLE_SOURCE_IPS); none for the shared IPs
 
 bunzzle keys:
-  create --name NAME [--scope send|read|full] [--domain DOMAIN] [--rate-limit N] [--test]
+  create --name NAME [--scope send|read|full] [--domain DOMAIN] [--rate-limit N] [--test] [--pool POOL]
   list | revoke ID
 
 API (bunzzle serve):
