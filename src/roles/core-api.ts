@@ -34,7 +34,8 @@ import {
   saveDomain,
 } from "../domains/domains.ts";
 import { findIdempotent, rememberIdempotent } from "../emails/idempotency.ts";
-import { emailView } from "../emails/view.ts";
+import { METRICS, searchEmails, statsFor } from "../emails/search.ts";
+import { emailSummary, emailView } from "../emails/view.ts";
 import { latestPostmaster } from "../guards/gmail.ts";
 import {
   activeHold,
@@ -448,6 +449,70 @@ export function coreMethods(deps: CoreDeps): {
       if (!view) throw new RpcError("not-found", "email not found");
       return view;
     }),
+
+    listEmails: method(
+      b.object({
+        tokenHash,
+        limit: b.number().int().min(1).max(100),
+        before: b.string().regex(MESSAGE_ID).optional(),
+        to: b.string().max(320).optional(),
+        status: b
+          .enum(["queued", "deferred", "unknown", "delivered", "bounced", "failed"])
+          .optional(),
+        tag: b.string().max(512).optional(),
+        domain: b.string().max(253).optional(),
+        since: b.number().int().optional(),
+        until: b.number().int().optional(),
+      }),
+      (p) => {
+        caller(p.tokenHash, "read");
+        const ids = searchEmails(db, {
+          limit: p.limit + 1,
+          before: p.before,
+          to: p.to?.toLowerCase(),
+          status: p.status,
+          tag: p.tag,
+          domain: p.domain?.toLowerCase(),
+          since: p.since,
+          until: p.until,
+        });
+        const page = ids.slice(0, p.limit);
+        return {
+          data: page.flatMap((id) => {
+            const s = emailSummary(db, id, now());
+            return s ? [s] : [];
+          }),
+          next_cursor: ids.length > p.limit ? (page.at(-1) ?? null) : null,
+        };
+      },
+    ),
+
+    stats: method(
+      b.object({
+        tokenHash,
+        since: b.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        until: b.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        domain: b.string().max(253).optional(),
+        tag: b.string().max(512).optional(),
+      }),
+      (p) => {
+        caller(p.tokenHash, "read");
+        const days = (Date.parse(p.until) - Date.parse(p.since)) / 86_400_000;
+        if (!(days >= 0 && days <= 400)) {
+          throw new RpcError("invalid", "since must be before until, at most 400 days apart");
+        }
+        const data = statsFor(db, {
+          since: p.since,
+          until: p.until,
+          domain: p.domain?.toLowerCase(),
+          tag: p.tag,
+        });
+        const totals = Object.fromEntries(
+          METRICS.map((m) => [m, data.reduce((n, d) => n + d[m], 0)]),
+        );
+        return { object: "stats", since: p.since, until: p.until, totals, data };
+      },
+    ),
 
     cancelEmail: method(b.object({ tokenHash, id: b.string() }), async (p) => {
       const key = caller(p.tokenHash, "send");

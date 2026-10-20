@@ -62,7 +62,10 @@ export class Writer {
         })
         .immediate();
     } catch (error) {
-      for (const p of batch) p.reject(error);
+      batch.forEach((p, i) => {
+        const r = results[i];
+        p.reject(r && !r.ok ? r.error : error);
+      });
       return;
     }
 

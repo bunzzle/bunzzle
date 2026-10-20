@@ -255,6 +255,58 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
         },
       },
       "/emails": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const q = new URL(req.url).searchParams;
+          const STATUS: Record<string, string> = {
+            queued: "queued",
+            delivery_delayed: "deferred",
+            sending: "unknown",
+            delivered: "delivered",
+            bounced: "bounced",
+            failed: "failed",
+          };
+          const time = (name: string) => {
+            const v = q.get(name);
+            if (v === null) return undefined;
+            const t = Date.parse(v);
+            if (Number.isNaN(t))
+              throw new ApiError(422, "validation_error", `${name} must be a date`);
+            return t;
+          };
+          const status = q.get("status");
+          if (status !== null && !STATUS[status]) {
+            throw new ApiError(
+              422,
+              "validation_error",
+              `status must be one of: ${Object.keys(STATUS).join(", ")}`,
+            );
+          }
+          const limit = Number(q.get("limit") ?? 20);
+          if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+            throw new ApiError(422, "validation_error", "limit must be 1 to 100");
+          }
+          const since = time("since");
+          const until = time("until");
+          return Response.json({
+            object: "list",
+            ...(await rpc(
+              "listEmails",
+              {
+                tokenHash: caller.hash,
+                limit,
+                ...(q.get("cursor") ? { before: q.get("cursor") } : {}),
+                ...(q.get("to") ? { to: q.get("to") } : {}),
+                ...(status ? { status: STATUS[status] } : {}),
+                ...(q.get("tag") ? { tag: q.get("tag") } : {}),
+                ...(q.get("domain") ? { domain: q.get("domain") } : {}),
+                ...(since !== undefined ? { since } : {}),
+                ...(until !== undefined ? { until } : {}),
+              },
+              b.object({ data: b.array(b.unknown()), next_cursor: b.string().nullable() }),
+            )),
+          });
+        }),
         POST: handle(async (req) => {
           const caller = await authenticate(req);
           const text = await req.text();
@@ -414,6 +466,31 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           const caller = await authenticate(req);
           return Response.json(
             await rpc("deleteWebhook", { tokenHash: caller.hash, id: req.params["id"] }),
+          );
+        }),
+      },
+      "/stats": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const q = new URL(req.url).searchParams;
+          const day = (t: number) => new Date(t).toISOString().slice(0, 10);
+          const date = (name: string) => {
+            const v = q.get(name);
+            if (v !== null && (!/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(v)))) {
+              throw new ApiError(422, "validation_error", `${name} must be a date like 2026-10-20`);
+            }
+            return v;
+          };
+          const until = date("until") ?? day(Date.now());
+          const since = date("since") ?? day(Date.parse(until) - 6 * 86_400_000);
+          return Response.json(
+            await rpc("stats", {
+              tokenHash: caller.hash,
+              since,
+              until,
+              ...(q.get("domain") ? { domain: q.get("domain") } : {}),
+              ...(q.get("tag") ? { tag: q.get("tag") } : {}),
+            }),
           );
         }),
       },

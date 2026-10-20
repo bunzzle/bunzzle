@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { appendEvent } from "../core/events.ts";
 import { enqueue, jobId } from "../core/jobs.ts";
 import type { SealedBody } from "../crypto/envelope.ts";
+import { countEmail, indexEmail } from "../emails/search.ts";
 import { domainOf, normalizeAddress } from "../mime/address.ts";
 
 export interface EmailPayload {
@@ -75,12 +76,23 @@ export function enqueueEmail(db: Database, email: NewEmail, now: number): string
     `INSERT INTO recipients (job_id, address, status, class, reply, updated_at)
      VALUES (?, ?, 'failed', 'suppressed', ?, ?)`,
   );
+  const meta = email.metadata ?? {};
+  indexEmail(db, {
+    id,
+    domain: domainOf(email.from),
+    keyId: (meta["apiKeyId"] as string | null | undefined) ?? null,
+    test: meta["test"] === true,
+    tags: (meta["tags"] as { name: string; value: string }[] | undefined) ?? [],
+  });
+  let sent = 0;
+  let suppressedCount = 0;
   for (const [domain, addresses] of byDomain) {
     let live = 0;
     for (const address of addresses) {
       const s = email.suppressed?.get(address);
       if (s) {
         blocked.run(jobId(id, domain), address, `suppressed (${s.reason})`, now);
+        suppressedCount++;
         appendEvent(db, {
           messageId: id,
           kind: "suppressed",
@@ -91,6 +103,7 @@ export function enqueueEmail(db: Database, email: NewEmail, now: number): string
       } else {
         insert.run(jobId(id, domain), address, now);
         live++;
+        sent++;
       }
     }
     if (live === 0) {
@@ -99,6 +112,8 @@ export function enqueueEmail(db: Database, email: NewEmail, now: number): string
       ).run(now, jobId(id, domain));
     }
   }
+  countEmail(db, id, "sent", sent, now);
+  countEmail(db, id, "suppressed", suppressedCount, now);
   db.query<unknown, [string, number, Uint8Array, Uint8Array]>(
     "INSERT INTO bodies (message_id, epoch, wrapped, body) VALUES (?, ?, ?, ?)",
   ).run(id, email.body.epoch, email.body.wrapped, email.body.body);

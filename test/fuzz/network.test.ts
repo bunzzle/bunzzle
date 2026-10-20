@@ -218,7 +218,9 @@ describe("fuzz: network input", () => {
                 ? { ok: true }
                 : lists.has(m)
                   ? []
-                  : { id: "0199f3a4-7c1e-7d55-9a21-3b6f0c9e4d12", existed: false };
+                  : m === "listEmails"
+                    ? { data: [], next_cursor: null }
+                    : { id: "0199f3a4-7c1e-7d55-9a21-3b6f0c9e4d12", existed: false };
           return opts?.result ? opts.result.parse(value) : value;
         },
       } as unknown as RpcClient;
@@ -226,6 +228,9 @@ describe("fuzz: network input", () => {
       cleanups.push(() => app.stop(true));
       const paths = [
         "/emails",
+        "/emails?status=x&limit=0&since=x",
+        "/stats",
+        "/stats?until=x&since=2026-13-45",
         "/emails/0199f3a4-7c1e-7d55-9a21-3b6f0c9e4d12",
         "/domains",
         "/domains/example.com",

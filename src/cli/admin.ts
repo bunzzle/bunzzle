@@ -554,3 +554,71 @@ export async function queueCommand(argv: string[], config: Config) {
       throw new UsageError("usage: bunzzle queue [show|suspend|resume|fail|cancel]");
   }
 }
+
+interface EmailRow {
+  id: string;
+  created_at: string;
+  last_event: string;
+  to: string[];
+  tags: { name: string; value: string }[];
+}
+
+export async function emailsCommand(argv: string[], config: Config) {
+  const [sub, ...rest] = argv;
+  if (sub !== "list") {
+    throw new UsageError(
+      "usage: bunzzle emails list [--to EMAIL] [--status S] [--tag NAME:VALUE] [--domain D] [--limit N] [--cursor ID]",
+    );
+  }
+  const args = parseArgs(rest, { strings: ["to", "status", "tag", "domain", "limit", "cursor"] });
+  const status = args.strings.get("status");
+  const internal: Record<string, string> = {
+    queued: "queued",
+    delivery_delayed: "deferred",
+    sending: "unknown",
+    delivered: "delivered",
+    bounced: "bounced",
+    failed: "failed",
+  };
+  if (status && !internal[status]) {
+    throw new UsageError(`--status must be one of: ${Object.keys(internal).join(", ")}`);
+  }
+  const page = await call<{ data: EmailRow[]; next_cursor: string | null }>(config, "listEmails", {
+    limit: Number(args.strings.get("limit") ?? 20),
+    ...(args.strings.get("cursor") ? { before: args.strings.get("cursor") } : {}),
+    ...(args.strings.get("to") ? { to: args.strings.get("to") } : {}),
+    ...(status ? { status: internal[status] } : {}),
+    ...(args.strings.get("tag") ? { tag: args.strings.get("tag") } : {}),
+    ...(args.strings.get("domain") ? { domain: args.strings.get("domain") } : {}),
+  });
+  if (page.data.length === 0) console.log("No emails match.");
+  for (const e of page.data) {
+    const tags = e.tags.map((t) => `${t.name}:${t.value}`).join(",");
+    console.log(
+      `${e.id}  ${e.created_at}  ${e.last_event.padEnd(16)}  ${e.to.join(", ")}${tags ? `  [${tags}]` : ""}`,
+    );
+  }
+  if (page.next_cursor) console.log(`\nmore: --cursor ${page.next_cursor}`);
+}
+
+export async function statsCommand(argv: string[], config: Config) {
+  const args = parseArgs(argv, { strings: ["since", "until", "domain", "tag"] });
+  const day = (t: number) => new Date(t).toISOString().slice(0, 10);
+  const until = args.strings.get("until") ?? day(Date.now());
+  const since = args.strings.get("since") ?? day(Date.parse(until) - 6 * 86_400_000);
+  const r = await call<{
+    totals: Record<string, number>;
+    data: ({ day: string } & Record<string, number>)[];
+  }>(config, "stats", {
+    since,
+    until,
+    ...(args.strings.get("domain") ? { domain: args.strings.get("domain") } : {}),
+    ...(args.strings.get("tag") ? { tag: args.strings.get("tag") } : {}),
+  });
+  const cols = Object.keys(r.totals);
+  console.log(`day         ${cols.map((c) => c.padStart(12)).join("")}`);
+  for (const d of r.data) {
+    console.log(`${d.day}  ${cols.map((c) => String(d[c] ?? 0).padStart(12)).join("")}`);
+  }
+  console.log(`total       ${cols.map((c) => String(r.totals[c]).padStart(12)).join("")}`);
+}
