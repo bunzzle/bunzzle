@@ -5,14 +5,12 @@ bun bench/intake.ts [emails] [clients]
 bun bench/delivery.ts [emails] [destinations] [clients]
 bun bench/queue.ts [messages] [producers]
 bun bench/crash.ts [messages] [kills]
-bun bench/scale.ts [emails] [destinations] [clients] [backlog]
 ```
 
 - `intake`: `POST /emails` into the queue, nothing sent.
 - `delivery`: API to a local SMTP sink, with STARTTLS and DKIM.
 - `queue`: the queue alone.
 - `crash`: kills roles with SIGKILL during work and counts lost and duplicate emails.
-- `scale`: a million bulk emails to many destinations, some of them slow, greylisting, deferring or dropping connections, with one transactional probe per second. With `backlog`, every email is scheduled for the same moment, so the whole queue is due at once.
 
 The intake and delivery benchmarks start a full `bunzzle serve` (five roles), a fake DNS server and a fake MX, and print throughput, latency, CPU per email by role and memory. The load generator runs on the same machine, so the numbers are a lower bound.
 
@@ -39,15 +37,3 @@ On a 2-CPU, 2 GB Linux VM (Ubuntu under Lima on the same M2, Bun 1.4.3, 2026-10-
 | CPU per delivered email | < 2 ms | 1.2 ms (signer 0.8, core 0.2, delivery 0.1, api 0.1) |
 
 Intake is faster here than on macOS because fsync costs less in the VM, whose disk writes may be cached by the host; on a real VPS disk expect it lower. The delivery and CPU numbers don't depend on that.
-
-Scale run on the same M2, Bun 1.4.3, 2026-10-20: 1,000,000 bulk emails to 1,000 destinations. Of the receivers, 70% answer normally, 10% take 3 s per reply, 10% greylist the first attempt, 5% defer with 421 and 5% drop 5% of connections after the data.
-
-| Measure | Result |
-|---|---|
-| Delivered, intake and delivery at the same time | ~1,630/s sustained (~5.9 M/h) |
-| Intake alone (backlog mode) | ~5,300/s |
-| Drain with 1 M due at once (backlog mode) | ~1,450–1,500/s |
-| Transactional probes during the bulk run | p50 ~10 ms |
-| Open SMTP connections | ~1,385 |
-| Memory (summed RSS, macOS) | 330–570 MB |
-| Database size with 1 M emails | 6.7 GB |
