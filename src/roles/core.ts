@@ -11,6 +11,7 @@ import type { DeliveryTransport } from "../delivery/transport.ts";
 import { pruneDmarc } from "../dmarc/store.ts";
 import { bounceDomain, getDomain, returnPathReady } from "../domains/domains.ts";
 import { pruneIdempotency } from "../emails/idempotency.ts";
+import { pruneConversations } from "../emails/view.ts";
 import { beginAtEnd, exportEvents } from "../eventlog/export.ts";
 import { EventLog } from "../eventlog/log.ts";
 import { reputationGuard } from "../guards/guards.ts";
@@ -244,6 +245,7 @@ export async function runCore(config: Config, log: Logger) {
     writer.run((d) => {
       pruneIdempotency(d, Date.now());
       pruneDmarc(d, Date.now());
+      pruneConversations(d, Date.now() - config.retentionDays * 24 * HOUR);
     }),
   );
   const stopTlsReports = every(Math.max(1_000, scaled(HOUR)), () =>

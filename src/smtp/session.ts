@@ -1,5 +1,11 @@
 import type { TlsaData } from "../dns/wire.ts";
-import { type Reply, replyText, SmtpConnection, SmtpError } from "./connection.ts";
+import {
+  type Reply,
+  replyText,
+  SmtpConnection,
+  SmtpError,
+  type TranscriptLine,
+} from "./connection.ts";
 import { verifyDane } from "./dane.ts";
 import { SessionPool } from "./pool.ts";
 
@@ -113,6 +119,7 @@ export interface SessionResult {
   tryNext: boolean;
   recipients: RecipientResult[];
   reused?: boolean | undefined;
+  transcript?: TranscriptLine[] | undefined;
 }
 
 class Abort extends Error {
@@ -208,6 +215,8 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
       Object.assign(tls, pooled.tls);
       uses = pooled.uses;
       result.reused = true;
+      conn.transcript = { start: startedAt, lines: [] };
+      conn.note("-", `reusing the connection to ${input.address}:${input.port}`);
     } else {
       conn = await SmtpConnection.connect({
         host: input.address,
@@ -215,6 +224,11 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
         timeoutMs: t.connect,
         ...(input.localAddress ? { localAddress: input.localAddress } : {}),
       });
+      conn.transcript = { start: startedAt, lines: [] };
+      conn.note(
+        "-",
+        `connected to ${input.address}:${input.port}${input.localAddress ? ` from ${input.localAddress}` : ""}`,
+      );
 
       if (input.implicitTls) {
         phase = "starttls";
@@ -453,7 +467,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
     } else {
       const r = dataReply as Reply;
       if (r.code !== 354) throw new Abort("data", statusOf(r.code), false, replyText(r), r);
-      await conn.write(dotStuff(input.data), t.dataXfer);
+      await conn.write(dotStuff(input.data), t.dataXfer, { content: true });
       phase = "dot";
       let final: Reply;
       try {
@@ -512,6 +526,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
     } else throw err;
     result.phase = abort.phase;
     result.error = abort.message;
+    conn?.note("-", abort.message);
     result.tryNext = abort.tryNext;
     for (const address of input.recipients) {
       if (results.has(address)) continue;
@@ -530,6 +545,8 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
       } catch {}
     }
   } finally {
+    result.transcript = conn?.transcript?.lines;
+    if (conn) conn.transcript = null;
     if (!kept) {
       conn?.close();
       input.pool?.done(poolKey);

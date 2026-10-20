@@ -345,6 +345,23 @@ function array<T extends AnySchema>(element: T): ArraySchema<T> {
   return new ArraySchema(element);
 }
 
+function tuple<const T extends readonly AnySchema[]>(
+  items: T,
+): Schema<{ -readonly [k in keyof T]: Output<T[k]> }, { -readonly [k in keyof T]: Input<T[k]> }> {
+  return new Schema((v, p, i) => {
+    if (!Array.isArray(v)) return expected(i, p, "array", v);
+    if (v.length !== items.length) return fail(i, p, `must have exactly ${items.length} items`);
+    const out: unknown[] = [];
+    let ok = true;
+    items.forEach((item, n) => {
+      const r = item.check(v[n], [...p, n], i);
+      if (r === FAIL) ok = false;
+      else out.push(r);
+    });
+    return ok ? (out as { -readonly [k in keyof T]: Output<T[k]> }) : FAIL;
+  });
+}
+
 function record<K extends Schema<string, unknown, boolean, boolean>, V extends AnySchema>(
   keys: K,
   values: V,
@@ -406,6 +423,7 @@ export const b = {
   enum: enumOf,
   object,
   array,
+  tuple,
   record,
   union,
   discriminatedUnion,

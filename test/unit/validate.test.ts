@@ -100,4 +100,15 @@ describe("b", () => {
     const schema: b.Schema<{ a: string }> = b.object({ a: b.string() });
     expect([out.a, input.a, schema.parse({ a: "y" }).a]).toEqual(["x", "x", "y"]);
   });
+
+  test("tuple: fixed length, each item checked by its own schema", () => {
+    const t = b.tuple([b.number().int(), b.enum(["C", "S"]), b.string().max(3)]);
+    expect(t.parse([1, "C", "abc"])).toEqual([1, "C", "abc"]);
+    expect(t.safeParse([1, "C"]).success).toBe(false);
+    expect(t.safeParse([1, "C", "abc", 4]).success).toBe(false);
+    const bad = t.safeParse([1.5, "X", "abcd"]);
+    expect(bad.success).toBe(false);
+    if (!bad.success) expect(bad.error.issues.map((x) => x.path)).toEqual([[0], [1], [2]]);
+    expect(t.safeParse("nope").success).toBe(false);
+  });
 });
