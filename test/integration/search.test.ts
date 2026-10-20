@@ -161,6 +161,8 @@ describe("GET /stats and bunzzle stats", () => {
     };
     expect(other.totals["sent"]).toBe(0);
     expect((await api("/stats?since=2026-01-01&until=2020-01-01")).status).toBe(422);
+    expect((await api("/stats?until=yesterday")).status).toBe(422);
+    expect((await api("/stats?since=2026-13-45")).status).toBe(422);
     const out = await cli("stats");
     expect(out.code).toBe(0);
     expect(out.stdout).toMatch(/total\s+5\s+4/);

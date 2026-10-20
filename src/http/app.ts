@@ -474,8 +474,15 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           const caller = await authenticate(req);
           const q = new URL(req.url).searchParams;
           const day = (t: number) => new Date(t).toISOString().slice(0, 10);
-          const until = q.get("until") ?? day(Date.now());
-          const since = q.get("since") ?? day(Date.parse(until) - 6 * 86_400_000);
+          const date = (name: string) => {
+            const v = q.get(name);
+            if (v !== null && (!/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(v)))) {
+              throw new ApiError(422, "validation_error", `${name} must be a date like 2026-10-20`);
+            }
+            return v;
+          };
+          const until = date("until") ?? day(Date.now());
+          const since = date("since") ?? day(Date.parse(until) - 6 * 86_400_000);
           return Response.json(
             await rpc("stats", {
               tokenHash: caller.hash,
