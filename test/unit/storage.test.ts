@@ -6,7 +6,12 @@ function watch(min: number, values: (number | null)[]) {
   const lines: Record<string, unknown>[] = [];
   const log = createLogger("debug", {}, (l) => lines.push(JSON.parse(l)));
   let i = 0;
-  const w = new StorageWatch("/data", min, log, async () => values[i++] ?? null);
+  const w = new StorageWatch(
+    "/data",
+    () => min,
+    log,
+    async () => values[i++] ?? null,
+  );
   return { w, lines, msgs: () => lines.map((l) => String(l["msg"])) };
 }
 

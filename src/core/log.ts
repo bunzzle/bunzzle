@@ -8,17 +8,17 @@ export interface Logger {
   warn(msg: string, fields?: Record<string, unknown>): void;
   error(msg: string, fields?: Record<string, unknown>): void;
   child(fields: Record<string, unknown>): Logger;
+  setLevel(level: LogLevel): void;
 }
 
 export function createLogger(
   level: LogLevel = "info",
   base: Record<string, unknown> = {},
   write: (line: string, level: LogLevel) => void = defaultWrite,
+  shared: { min: number } = { min: ORDER[level] },
 ): Logger {
-  const min = ORDER[level];
-
   const emit = (lvl: LogLevel, msg: string, fields?: Record<string, unknown>) => {
-    if (ORDER[lvl] < min) return;
+    if (ORDER[lvl] < shared.min) return;
     write(
       JSON.stringify({ time: new Date().toISOString(), level: lvl, msg, ...base, ...fields }),
       lvl,
@@ -30,7 +30,10 @@ export function createLogger(
     info: (msg, fields) => emit("info", msg, fields),
     warn: (msg, fields) => emit("warn", msg, fields),
     error: (msg, fields) => emit("error", msg, fields),
-    child: (fields) => createLogger(level, { ...base, ...fields }, write),
+    child: (fields) => createLogger(level, { ...base, ...fields }, write, shared),
+    setLevel: (next) => {
+      shared.min = ORDER[next];
+    },
   };
 }
 

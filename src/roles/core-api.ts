@@ -79,7 +79,7 @@ export interface CoreDeps {
   currentKey: () => Promise<EpochPublicKey>;
   sourceIp: string | string[] | null;
   inboundHost?: string | null;
-  anomalyFloor?: number;
+  anomalyFloor?: () => number;
   ips?: SourceIp[];
   publish?: (records: DomainRecord[]) => Promise<boolean>;
   paths?: () => PathView[];
@@ -251,7 +251,7 @@ export function coreMethods(deps: CoreDeps): {
       }
       if (key.id !== "operator") {
         const count = await writer.run((d) => countKeyBulk(d, key.id, 1, t));
-        const threshold = anomalyThreshold(db, key.id, t, deps.anomalyFloor ?? 500);
+        const threshold = anomalyThreshold(db, key.id, t, deps.anomalyFloor?.() ?? 500);
         if (count > threshold) {
           const reason = `unusual volume: ${count} bulk emails this hour from API key ${key.prefix}…, normal is under ${threshold}`;
           const { created } = await writer.run((d) =>

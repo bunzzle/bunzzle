@@ -11,6 +11,7 @@ import { runCore } from "../roles/core.ts";
 import { runDelivery } from "../roles/delivery.ts";
 import { runDns } from "../roles/dns.ts";
 import { runInbound } from "../roles/inbound.ts";
+import { Reloader } from "../roles/reload.ts";
 import { runSigner } from "../roles/signer.ts";
 import { runSupervisor } from "../roles/supervisor.ts";
 import { ROLES, type Role } from "../roles/wire.ts";
@@ -138,6 +139,8 @@ async function role(name: string | undefined) {
   if (!ROLES.includes(name as Role)) throw new UsageError(`unknown role: ${name}`);
   const config = loadConfig();
   const log = createLogger(config.logLevel, { service: "bunzzle", role: name });
+  const reloader = await Reloader.start(name as Role, config, log);
+  process.on("SIGHUP", () => void reloader.reload());
   switch (name as Role) {
     case "signer":
       return runSigner(config, log, await signerMasterKey(config));

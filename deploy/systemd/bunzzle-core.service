@@ -11,7 +11,9 @@ User=bunzzle-core
 Group=bunzzle-core
 EnvironmentFile=/etc/bunzzle/bunzzle.env
 Environment=BUNZZLE_RUN_DIR=/run/bunzzle
+Environment=BUNZZLE_ENV_FILE=/etc/bunzzle/bunzzle.env
 ExecStart=/usr/local/bin/bunzzle role core
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=1
 RestartSteps=5
