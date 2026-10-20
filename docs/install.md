@@ -52,6 +52,8 @@ LoadCredential=cloudflare-token:/etc/bunzzle/cloudflare-token
 Environment=BUNZZLE_CLOUDFLARE_API_TOKEN_FILE=%d/cloudflare-token
 ```
 
+Every other secret file works the same way, in the unit of the role that reads it: `bunzzle-dns` for `BUNZZLE_DNS_UPDATE_KEY_FILE`, `BUNZZLE_ROUTE53_SECRET_ACCESS_KEY_FILE` and `BUNZZLE_DESEC_TOKEN_FILE`, `bunzzle-delivery` for `BUNZZLE_RELAY_PASSWORD_FILE` and `BUNZZLE_SPAMHAUS_KEY_FILE`.
+
 To offer STARTTLS on the inbound port, give the inbound role a certificate for `BUNZZLE_INBOUND_HOSTNAME` (for example from Let's Encrypt):
 
 ```sh
