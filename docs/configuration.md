@@ -109,7 +109,7 @@ With an ACME email address, Bunzzle gets and renews a certificate for the inboun
 
 | Variable | Default | |
 |---|---|---|
-| `BUNZZLE_ACME_EMAIL` | | Contact address for the certificate authority. Turns automatic certificates on; needs Cloudflare or DNS updates. |
+| `BUNZZLE_ACME_EMAIL` | | Contact address for the certificate authority. Turns automatic certificates on; needs Cloudflare, DNS updates or Route 53. |
 | `BUNZZLE_ACME_DIRECTORY` | Let's Encrypt | ACME directory URL of another certificate authority. |
 | `BUNZZLE_CERTS_DIR` | `./certs` | Where the certificate and its key are kept. `/var/lib/bunzzle/certs` with the shipped units. |
 
@@ -136,6 +136,17 @@ Instead of Cloudflare, Bunzzle can publish and rotate its records on any DNS ser
 | `BUNZZLE_DNS_UPDATE_ALGORITHM` | `hmac-sha256` | `hmac-sha256` or `hmac-sha512`. |
 
 Allow the key to update only the names Bunzzle publishes: `*._domainkey`, `bounce` and `_dmarc` under each sending domain.
+
+## DNS on Route 53
+
+| Variable | Default | |
+|---|---|---|
+| `BUNZZLE_ROUTE53_ACCESS_KEY_ID` | | Access key ID of an IAM user made for Bunzzle. |
+| `BUNZZLE_ROUTE53_SECRET_ACCESS_KEY_FILE` | | File with that user's secret access key, readable only by the `bunzzle-dns` user. |
+
+Bunzzle finds the public hosted zone of each record by name (private zones are skipped) and changes only the values it owns, keeping the rest of the record set. Each change deletes the set as it was read and creates the new one in one batch, so if someone else edits the same set at that moment, the batch fails and Bunzzle reads it again instead of overwriting their edit. It then waits up to 40 seconds for Route 53 to report the change in sync.
+
+Give the IAM user only `route53:ListHostedZonesByName`, `route53:ListResourceRecordSets`, `route53:ChangeResourceRecordSets` and `route53:GetChange`. Limit `ChangeResourceRecordSets` to your hosted zones, and with the `route53:ChangeResourceRecordSetsNormalizedRecordNames` condition key to the names Bunzzle publishes.
 
 ## Unsafe
 

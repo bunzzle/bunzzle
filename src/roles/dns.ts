@@ -7,6 +7,7 @@ import { method, serveRpc } from "../ipc/rpc.ts";
 import { Cloudflare } from "../net/cloudflare.ts";
 import { guardedRequest } from "../net/request.ts";
 import { DnsUpdater } from "../net/rfc2136.ts";
+import { Route53 } from "../net/route53.ts";
 import { b } from "../validate/schema.ts";
 import { every, onStop, ready } from "./runtime.ts";
 import { sockets } from "./wire.ts";
@@ -23,13 +24,22 @@ export async function runDns(config: Config, log: Logger) {
     (config.cloudflareTokenFile
       ? (await Bun.file(config.cloudflareTokenFile).text()).trim()
       : null);
-  const cloudflare = token
-    ? new Cloudflare(token, config.cloudflareUrl, (r) =>
-        guardedRequest(r, {
-          resolver,
-          allowPrivate: config.allowPrivateDestinations,
-          timeoutMs: 15_000,
-        }),
+  const api = (r: Parameters<typeof guardedRequest>[0]) =>
+    guardedRequest(r, {
+      resolver,
+      allowPrivate: config.allowPrivateDestinations,
+      timeoutMs: 15_000,
+    });
+  const cloudflare = token ? new Cloudflare(token, config.cloudflareUrl, api) : null;
+  const r53 = config.route53;
+  const route53 = r53
+    ? new Route53(
+        {
+          accessKeyId: r53.accessKeyId,
+          secretAccessKey: (await Bun.file(r53.secretKeyFile).text()).trim(),
+        },
+        r53.url,
+        api,
       )
     : null;
   const u = config.dnsUpdate;
@@ -44,8 +54,14 @@ export async function runDns(config: Config, log: Logger) {
         createResolver({ servers }),
       )
     : null;
-  const provider = cloudflare ?? updater;
-  const providerName = cloudflare ? "cloudflare" : updater ? "dns-update" : null;
+  const provider = cloudflare ?? updater ?? route53;
+  const providerName = cloudflare
+    ? "cloudflare"
+    : updater
+      ? "dns-update"
+      : route53
+        ? "route53"
+        : null;
 
   const server = await serveRpc(sockets(config.runDir).dns, {
     publish: method(

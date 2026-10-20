@@ -28,7 +28,7 @@ With the systemd units or the six-container compose file, each role is a separat
 - **API keys** are stored as SHA-256 hashes and shown once.
 - **Webhook secrets** are derived from the master key in the signer and never stored.
 - **Logs** never contain bodies.
-- **Cloudflare API token** (optional, for publishing DNS records and rotating DKIM keys without manual steps) is held only by `dns`, a role that sees no email, no keys and no database, and whose only network access is the provider's API. Someone who takes over `delivery` cannot use it. Create it with only `Zone.DNS: Edit`, limited to the zones Bunzzle sends for. Without a token, Bunzzle prints the records and waits for you to publish them; rotation then pauses at that step and keeps signing with the current keys.
+- **Cloudflare API token** (optional, for publishing DNS records and rotating DKIM keys without manual steps) is held only by `dns`, a role that sees no email, no keys and no database, and whose only network access is the provider's API. Someone who takes over `delivery` cannot use it. Create it with only `Zone.DNS: Edit`, limited to the zones Bunzzle sends for. A Route 53 access key or a TSIG key is held the same way; give it only the permissions listed in [configuration.md](configuration.md). Without a token, Bunzzle prints the records and waits for you to publish them; rotation then pauses at that step and keeps signing with the current keys.
 
 ## Outside input
 
@@ -43,7 +43,7 @@ Every one of these is fuzzed (`test/fuzz`): a few thousand inputs per target in 
 
 ## Network
 
-One private-network filter covers SMTP, webhooks, MTA-STS and Cloudflare requests. Delivery resolves names itself and connects to the vetted IP, while TLS still checks the name. This stops DNS rebinding. Redirects are never followed.
+One private-network filter covers SMTP, webhooks, MTA-STS and DNS provider requests. Delivery resolves names itself and connects to the vetted IP, while TLS still checks the name. This stops DNS rebinding. Redirects are never followed.
 
 ## Abuse
 
