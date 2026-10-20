@@ -15,7 +15,9 @@ After editing the file, `sudo systemctl reload 'bunzzle-*'` (or `kill -HUP` on `
 | `BUNZZLE_DATA_DIR` | `./data` | Where the SQLite database lives. |
 | `BUNZZLE_RUN_DIR` | `./run` | Unix sockets the roles use to talk to each other. |
 | `BUNZZLE_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
-| `BUNZZLE_PUBLIC_URL` | | Public https URL of the API, used in the one-click unsubscribe links of bulk email. |
+| `BUNZZLE_PUBLIC_URL` | | Public https URL of the API, used in the one-click unsubscribe links of bulk email. Tracking hosts are a CNAME to its host. |
+| `BUNZZLE_TRACK_PORT` | | HTTPS port for open and click tracking, usually `443`. Each tracking host needs a certificate in `BUNZZLE_CERTS_DIR/track/HOST/`. |
+| `BUNZZLE_TRACK_HOST` | `0.0.0.0` | Address the tracking port listens on. |
 
 ## Sending
 
@@ -126,7 +128,7 @@ For apps that can only send through SMTP. Off unless a port is set, and it needs
 
 ## Certificates
 
-With an ACME email address, Bunzzle gets and renews a certificate for the inbound and submission hostnames by itself (Let's Encrypt by default), using DNS-01 challenges through the DNS provider below. Certificate files you set yourself always win.
+With an ACME email address, Bunzzle gets and renews a certificate for the inbound and submission hostnames, and one for each verified tracking host when `BUNZZLE_TRACK_PORT` is set, by itself (Let's Encrypt by default), using DNS-01 challenges through the DNS provider below. Certificate files you set yourself always win.
 
 | Variable | Default | |
 |---|---|---|
@@ -134,7 +136,7 @@ With an ACME email address, Bunzzle gets and renews a certificate for the inboun
 | `BUNZZLE_ACME_DIRECTORY` | Let's Encrypt | ACME directory URL of another certificate authority. |
 | `BUNZZLE_CERTS_DIR` | `./certs` | Where the certificate and its key are kept. `/var/lib/bunzzle/certs` with the shipped units. |
 
-The certificate is renewed 30 days before it expires. The inbound listener and the submission ports notice the new file within 10 minutes and restart to use it.
+The certificate is renewed 30 days before it expires. The inbound listener, the submission ports and the tracking port notice the new file within 10 minutes and restart to use it.
 
 ## DNS on Cloudflare
 

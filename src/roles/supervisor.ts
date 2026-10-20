@@ -118,6 +118,7 @@ export async function runSupervisor(
   let url: unknown = null;
   let inboundPort: unknown = null;
   let submissionPorts: unknown = null;
+  let trackPort: unknown = null;
   for (const role of ROLES) {
     const child = spawn(role);
     children.set(role, child);
@@ -126,6 +127,7 @@ export async function runSupervisor(
       if (role === "api") {
         url = info["url"];
         submissionPorts = info["submissionPorts"] ?? null;
+        trackPort = info["trackPort"] ?? null;
       }
       if (role === "inbound") inboundPort = info["port"] ?? null;
     } catch (err) {
@@ -138,6 +140,7 @@ export async function runSupervisor(
     url,
     inboundPort,
     ...(submissionPorts ? { submissionPorts } : {}),
+    ...(trackPort ? { trackPort } : {}),
     roles: Object.fromEntries([...children].map(([r, c]) => [r, c.proc.pid])),
   });
 

@@ -1,9 +1,10 @@
 import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { startApp } from "../http/app.ts";
+import { startTrackServer, trackCerts } from "../http/track.ts";
 import { RpcClient } from "../ipc/rpc.ts";
 import { startSubmission } from "../submission/server.ts";
-import { onStop, ready, watchFile } from "./runtime.ts";
+import { every, onStop, ready, watchFile } from "./runtime.ts";
 import { sockets } from "./wire.ts";
 
 async function loadCert(certFile: string, keyFile: string): Promise<{ cert: string; key: string }> {
@@ -38,7 +39,33 @@ export async function runApi(config: Config, log: Logger) {
       );
     }
   }
+  const track = config.track;
+  let tracker: ReturnType<typeof startTrackServer> | null = null;
+  let loaded = "";
+  const loadTracker = async () => {
+    if (!track) return;
+    const certs = await trackCerts(track.dir);
+    const seen = JSON.stringify(certs);
+    if (seen === loaded) return;
+    loaded = seen;
+    await tracker?.stop();
+    tracker = null;
+    if (certs.length === 0) {
+      log.warn("click and open tracking waits for a certificate", { dir: track.dir });
+      return;
+    }
+    const started = startTrackServer({ core, log, hostname: track.host, port: track.port, certs });
+    tracker = started;
+    log.info("tracking listener ready", {
+      port: started.port,
+      hosts: certs.map((c) => c.serverName),
+    });
+  };
+  await loadTracker();
+  const stopTrackWatch = track ? every(10 * 60_000, loadTracker) : () => {};
   const restart = onStop(log, async () => {
+    stopTrackWatch();
+    await tracker?.stop();
     for (const l of listeners) l.stop();
     await server.stop();
     core.close();
@@ -52,5 +79,6 @@ export async function runApi(config: Config, log: Logger) {
   ready({
     url: server.url.href,
     ...(listeners.length ? { submissionPorts: listeners.map((l) => l.port) } : {}),
+    ...(tracker ? { trackPort: (tracker as ReturnType<typeof startTrackServer>).port } : {}),
   });
 }

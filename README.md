@@ -57,7 +57,7 @@ curl -X POST http://127.0.0.1:3000/emails \
 curl http://127.0.0.1:3000/emails/<id> -H "Authorization: Bearer bz_…"
 ```
 
-`POST /emails` takes `from`, `to`, `cc`, `bcc`, `reply_to`, `subject`, `html`, `text`, `template`, `headers`, `attachments`, `tags`, `scheduled_at`, `expires_at` and `require_tls`. `GET /emails/:id` shows each recipient's status and every attempt: the MX host, TLS version, whether the certificate was verified, the rule that applied, the server's reply and the whole SMTP conversation with timings (without the message content or passwords, kept for `BUNZZLE_RETENTION_DAYS`). Bodies are never returned: once accepted, only the signer can decrypt them. `POST /emails/batch` takes an array of up to 100 such emails and returns their ids in order; if one of them is invalid, none is queued. Until a scheduled email starts sending, `PATCH /emails/:id` with a new `scheduled_at` moves it and `POST /emails/:id/cancel` cancels it.
+`POST /emails` takes `from`, `to`, `cc`, `bcc`, `reply_to`, `subject`, `html`, `text`, `template`, `headers`, `attachments`, `tags`, `scheduled_at`, `expires_at`, `require_tls` and `tracking`. `GET /emails/:id` shows each recipient's status and every attempt: the MX host, TLS version, whether the certificate was verified, the rule that applied, the server's reply and the whole SMTP conversation with timings (without the message content or passwords, kept for `BUNZZLE_RETENTION_DAYS`). Bodies are never returned: once accepted, only the signer can decrypt them. `POST /emails/batch` takes an array of up to 100 such emails and returns their ids in order; if one of them is invalid, none is queued. Until a scheduled email starts sending, `PATCH /emails/:id` with a new `scheduled_at` moves it and `POST /emails/:id/cancel` cancels it.
 
 `GET /emails` searches by recipient (`to`), status, tag (`tag=name:value`), sender domain and time (`since`, `until`), newest first, with `limit` and `cursor`. `GET /stats` counts sent, delivered, deferred, bounced, failed, suppressed, complained and unsubscribed per day, for all mail or one `domain` or `tag` (`since` and `until` as `YYYY-MM-DD`, the last 7 days by default). `bunzzle emails list` and `bunzzle stats` show the same from the server. Email sent with a test key is left out of the stats.
 
@@ -78,6 +78,22 @@ curl -X POST http://127.0.0.1:3000/emails \
 A template has a `subject` and `html`, `text` or both. `{{name}}` inserts a variable and `{{order.id}}` a nested one. In HTML, values are escaped; `{{{name}}}` inserts one as it is. `{{#if name}}…{{else}}…{{/if}}` shows a part only when the value is set and not empty, and `{{#each items}}…{{/each}}` repeats a part for each entry of a list, with `{{this}}` or `{{this.field}}` for the entry. A missing variable refuses the email with the names of all missing variables, so nothing goes out half filled. Syntax errors are refused when the template is saved, with the line.
 
 Send with `template` instead of `subject`, `html` and `text`; each email in `POST /emails/batch` has its own `variables`. `PATCH /templates/:id` saves a new version (fields left out are kept) and email uses the newest one unless `template.version` asks for another. `GET /templates/:id?version=N` shows a version, `POST /templates/:id/preview` with `variables` (and `version`) returns the filled subject, HTML and text without sending, and `GET /templates` and `DELETE /templates/:id` list and remove. `:id` is the template's id or name. Keys with the send scope can send with templates and preview them; changing them needs the full scope.
+
+### Open and click tracking
+
+```sh
+curl -X PATCH http://127.0.0.1:3000/domains/your.domain \
+  -H "Authorization: Bearer bz_…" -H "Content-Type: application/json" \
+  -d '{"tracking":{"host":"links.your.domain","opens":true,"clicks":true}}'
+```
+
+Tracking is off until a domain has a tracking host: a subdomain with a CNAME record to the host of `BUNZZLE_PUBLIC_URL`. `GET /domains/:name` shows the record and its status. Once the record is verified, `opens` and `clicks` apply to every email from the domain, and `"tracking": {"opens": false, "clicks": true}` on an email changes that for this email only. An email that asks for tracking before the host is verified is refused. `bunzzle domains tracking DOMAIN HOST --opens --clicks` does the same from the server, and `none` removes the host.
+
+Every `http` and `https` link in the HTML part then goes through `https://links.your.domain/c/…` and redirects to the original address. Each link is signed with the email id and the address it points to; a changed or made-up link gets a 404, so the host never redirects anywhere else. Links keep working after retention ends. Links with a `data-no-track` attribute and the text part stay as they are. For opens, a 1×1 image is added at the end of the HTML part.
+
+Each open and click is an event on `GET /emails/:id` and an `email.opened` or `email.clicked` webhook with the user agent, at most 100 of each per email. IP addresses are not stored. HEAD requests redirect without counting, so mail scanners that check links that way are left out.
+
+The API answers `/o/…` and `/c/…`, so a reverse proxy can serve the tracking host with its own certificate and pass it on. With `BUNZZLE_TRACK_PORT=443`, Bunzzle serves the tracking hosts over HTTPS itself, with the certificate of each host from `BUNZZLE_CERTS_DIR/track/HOST/` (`cert.pem` and `key.pem`), and gets and renews them by itself when `BUNZZLE_ACME_EMAIL` and a DNS provider are set.
 
 ### Test mode
 
@@ -121,7 +137,7 @@ Receivers report back, and Bunzzle acts on it:
 - Inbound routes. `bunzzle routes add support@your.domain https://app.your.domain/inbound` (or `POST /routes`) posts every message for that address, or for `*@your.domain`, to your app as JSON: envelope, headers, text, HTML and attachments, or the raw message with `--raw`. Requests are signed in the Standard Webhooks format with the secret shown once. 429 and 5xx answers are retried, with `Retry-After` honored, for about a day; any other 4xx stops at once, and `bunzzle routes retry ID` sends those again. Point the domain's MX at this server.
 - A suppression list, checked for every email: hard bounces stop all mail for a year, a domain that doesn't exist for 30 days; complaints and unsubscribes stop bulk mail only, for good. Password resets still reach someone who unsubscribed from a newsletter. `GET/POST/DELETE /suppressions` or `bunzzle suppressions`.
 - One-click unsubscribe (required by Gmail and Yahoo for bulk senders) is added to every `"lane": "bulk"` email, signed into DKIM, hosted at `BUNZZLE_PUBLIC_URL/u/…`.
-- Webhooks: `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.unsubscribed`, `email.suppressed`, `email.failed`, `email.canceled`. Signed in the Standard Webhooks format. Retried for about a day. Webhook URLs that point to private networks are refused.
+- Webhooks: `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.unsubscribed`, `email.suppressed`, `email.failed`, `email.canceled`, `email.opened`, `email.clicked`. Signed in the Standard Webhooks format. Retried for about a day. Webhook URLs that point to private networks are refused.
 - Event log. With `BUNZZLE_EVENT_LOG=true` every event also goes to local files, one JSON object per line, rotated daily and gzipped, for log shippers and `grep` (see `docs/configuration.md`).
 
 ### Reputation

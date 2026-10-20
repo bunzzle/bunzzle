@@ -85,6 +85,7 @@ bunzzle domains:
   show DOMAIN | list
   rotate DOMAIN     start or continue DKIM key rotation (automatic every BUNZZLE_DKIM_ROTATE_DAYS)
   pool DOMAIN POOL  send only from the IPs in POOL (from BUNZZLE_SOURCE_IPS); none for the shared IPs
+  tracking DOMAIN HOST [--opens] [--clicks]   track through HOST (a CNAME to BUNZZLE_PUBLIC_URL); none to stop
 
 bunzzle keys:
   create --name NAME [--scope send|read|full] [--domain DOMAIN] [--rate-limit N] [--test] [--pool POOL]
@@ -97,10 +98,11 @@ API (bunzzle serve):
   GET|POST /routes, DELETE /routes/:id, POST /routes/:id/retry   inbound mail to a URL
   GET|POST /suppressions, DELETE /suppressions/:email
   GET|POST /u/:token      one-click unsubscribe (public, added to bulk email)
+  GET  /o/:token, /c/:token/:url   open and click tracking (public, signed)
   GET  /emails            search: to, status, tag, domain, since, until, limit, cursor
   GET  /emails/:id        status per recipient, every attempt with MX, TLS and the reply
   GET  /stats             per day: since, until, domain, tag
-  GET|POST /domains, GET /domains/:name, POST /domains/:name/verify
+  GET|POST /domains, GET|PATCH /domains/:name, POST /domains/:name/verify
 
 bunzzle dkim:
   keygen --domain DOMAIN --out PATH [--selector NAME] [--force] [--unencrypted]

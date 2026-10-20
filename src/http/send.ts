@@ -54,6 +54,7 @@ export const sendSchema = b.object({
   expires_at: b.string().max(64).optional(),
   require_tls: b.boolean().optional(),
   lane: b.enum(["transactional", "bulk"]).optional(),
+  tracking: b.object({ opens: b.boolean().optional(), clicks: b.boolean().optional() }).optional(),
 });
 
 export type SendRequest = b.infer<typeof sendSchema>;
@@ -118,6 +119,7 @@ export function applyTemplate(req: SendRequest, t: StoredTemplate): SendRequest 
 }
 
 export interface PreparedEmail {
+  id?: string;
   from: string;
   fromDomain: string;
   recipients: string[];
@@ -134,6 +136,7 @@ export interface PreparedEmail {
     bcc: string[];
     replyTo: string[];
     tags: { name: string; value: string }[];
+    tracking?: { opens: boolean; clicks: boolean };
   };
 }
 

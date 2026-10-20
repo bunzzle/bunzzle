@@ -42,7 +42,15 @@ export async function runDns(config: Config, log: Logger) {
       )
     : null;
 
+  let trackHosts: string[] = [];
   const server = await serveRpc(sockets(config.runDir).dns, {
+    trackingHosts: method(
+      b.object({ hosts: b.array(b.string().regex(/^[a-z0-9.-]{1,253}$/)).max(10_000) }),
+      ({ hosts }) => {
+        trackHosts = hosts.filter((h) => !h.includes(".."));
+        return { certificates: config.track !== null && config.acme !== null && provider !== null };
+      },
+    ),
     postmaster: method(
       b.object({ domains: b.array(b.string().min(1).max(253)).max(1000) }),
       async ({ domains }) => {
@@ -83,26 +91,32 @@ export async function runDns(config: Config, log: Logger) {
         allowPrivate: config.allowPrivateDestinations,
         timeoutMs: 30_000,
       });
-    let nextAt = Date.now() + 5_000;
-    const tick = async () => {
-      if (Date.now() < nextAt) return;
+    const certify = async (hosts: string[], dir: string) => {
       try {
         await ensureCertificate({
           directory: acme.directory,
           email: acme.email,
-          hosts: acme.hosts,
-          dir: acme.dir,
+          hosts,
+          dir,
           dns: provider,
           request,
           log,
         });
-        nextAt = Date.now() + 12 * HOUR;
+        return true;
       } catch (err) {
-        nextAt = Date.now() + HOUR;
-        log.error("could not get a TLS certificate", {
-          hosts: acme.hosts,
-          error: (err as Error).message,
-        });
+        log.error("could not get a TLS certificate", { hosts, error: (err as Error).message });
+        return false;
+      }
+    };
+    const nextAt = new Map<string, number>();
+    const due = (key: string) => Date.now() >= (nextAt.get(key) ?? 0);
+    const after = (key: string, ok: boolean) => nextAt.set(key, Date.now() + (ok ? 12 : 1) * HOUR);
+    const tick = async () => {
+      if (acme.hosts.length > 0 && due("")) after("", await certify(acme.hosts, acme.dir));
+      const track = config.track;
+      if (!track) return;
+      for (const host of trackHosts) {
+        if (due(host)) after(host, await certify([host], `${track.dir}/${host}`));
       }
     };
     stopAcme = every(60_000, tick);

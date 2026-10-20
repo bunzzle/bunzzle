@@ -27,6 +27,7 @@ describe("loadConfig", () => {
       inboundMaxSize: 10 * 1024 * 1024,
       retryScale: 1,
       publicUrl: null,
+      track: null,
       inboundHostname: null,
       inboundTlsCertFile: null,
       inboundTlsKeyFile: null,

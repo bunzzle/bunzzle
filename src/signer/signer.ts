@@ -326,8 +326,20 @@ export class Signer {
     return { data, bounceToken };
   }
 
-  readToken(token: string) {
-    return readToken(this.#o.master, token);
+  readToken(token: string, url?: string) {
+    return readToken(this.#o.master, token, url);
+  }
+
+  async trackTokens(
+    messageId: string,
+    opens: boolean,
+    urls: string[],
+  ): Promise<{ open: string | null; links: string[] }> {
+    const master = this.#o.master;
+    return {
+      open: opens ? await makeToken(master, "o", messageId) : null,
+      links: await Promise.all(urls.map((u) => makeToken(master, "c", messageId, u))),
+    };
   }
 
   async webhookSecret(id: string): Promise<string> {

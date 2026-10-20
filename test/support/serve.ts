@@ -8,6 +8,7 @@ export interface Served {
   url: string;
   inboundPort: number | null;
   submissionPorts: number[];
+  trackPort: number | null;
   pids: Map<string, number>;
   logs: Record<string, unknown>[];
   stop(): Promise<number>;
@@ -34,6 +35,7 @@ export async function startServe(env: Record<string, string>): Promise<Served> {
   const listening = Promise.withResolvers<string>();
   let inboundPort: number | null = null;
   let submissionPorts: number[] = [];
+  let trackPort: number | null = null;
   let stderrText = "";
   const read = async (stream: ReadableStream<Uint8Array>, isErr: boolean) => {
     let buf = "";
@@ -65,6 +67,7 @@ export async function startServe(env: Record<string, string>): Promise<Served> {
           submissionPorts = Array.isArray(entry["submissionPorts"])
             ? (entry["submissionPorts"] as number[])
             : [];
+          trackPort = typeof entry["trackPort"] === "number" ? entry["trackPort"] : null;
           listening.resolve(String(entry["url"]));
         }
       }
@@ -84,6 +87,9 @@ export async function startServe(env: Record<string, string>): Promise<Served> {
     },
     get submissionPorts() {
       return submissionPorts;
+    },
+    get trackPort() {
+      return trackPort;
     },
     pids,
     logs,
