@@ -64,8 +64,17 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
       b.object({ domain: b.string().max(253), which: b.enum(["active", "next"]) }),
       ({ domain, which }) => signer.signCanary(domain, which),
     ),
-    readToken: method(b.object({ token: b.string().max(100) }), ({ token }) =>
-      signer.readToken(token),
+    readToken: method(
+      b.object({ token: b.string().max(100), url: b.string().max(2000).optional() }),
+      ({ token, url }) => signer.readToken(token, url),
+    ),
+    trackTokens: method(
+      b.object({
+        id: b.string().regex(MESSAGE_ID),
+        opens: b.boolean(),
+        urls: b.array(b.string().max(2000)).max(200),
+      }),
+      ({ id, opens, urls }) => signer.trackTokens(id, opens, urls),
     ),
     webhookSecret: method(b.object({ id: b.string().min(1).max(64) }), ({ id }) =>
       signer.webhookSecret(id),

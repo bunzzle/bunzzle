@@ -32,6 +32,7 @@ import { feedbackMethods } from "./core-feedback.ts";
 import { rotation } from "./core-rotation.ts";
 import { routeMethods } from "./core-routes.ts";
 import { templateMethods } from "./core-templates.ts";
+import { trackingMethods } from "./core-tracking.ts";
 import { every, onStop, privateDir, ready } from "./runtime.ts";
 import {
   deliveryReportWire,
@@ -208,6 +209,7 @@ export async function runCore(config: Config, log: Logger) {
     paths: () => shaper.views(),
     storage: () => storage.state(),
     publish: (records) => rotate.publish(records),
+    tracking: (domain) => tracking.view(domain),
   });
   const feedback = feedbackMethods({
     db,
@@ -242,6 +244,15 @@ export async function runCore(config: Config, log: Logger) {
     inboundHost: config.inboundHostname,
     rotateDays: () => config.dkimRotateDays,
   });
+  const tracking = trackingMethods({
+    db,
+    writer,
+    log,
+    signer,
+    delivery,
+    dns,
+    publicUrl: config.publicUrl,
+  });
   const doctor = doctorMethods({
     db,
     config,
@@ -255,6 +266,7 @@ export async function runCore(config: Config, log: Logger) {
     ...feedback.methods,
     ...routes.methods,
     ...templateMethods({ db, writer }),
+    ...tracking.methods,
     ...doctor,
   });
 
@@ -288,7 +300,10 @@ export async function runCore(config: Config, log: Logger) {
   const stopSuspensions = every(Math.max(1_000, scaled(MIN)), () =>
     writer.run((d) => expireSuspensions(d, Date.now())),
   );
-  const stopVerify = every(Math.max(1_000, scaled(5 * MIN)), () => api.verifyPending());
+  const stopVerify = every(Math.max(1_000, scaled(5 * MIN)), async () => {
+    await api.verifyPending();
+    await tracking.refresh();
+  });
   const stopGuards = every(Math.max(1_000, scaled(MIN)), () =>
     writer
       .run((d) => {

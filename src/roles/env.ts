@@ -89,6 +89,8 @@ const BY_ROLE: Record<Role, string[]> = {
     "BUNZZLE_SUBMISSION_HOSTNAME",
     "BUNZZLE_SUBMISSION_TLS_CERT_FILE",
     "BUNZZLE_SUBMISSION_TLS_KEY_FILE",
+    "BUNZZLE_TRACK_PORT",
+    "BUNZZLE_PUBLIC_URL",
   ],
   api: [
     "BUNZZLE_HOST",
@@ -105,6 +107,8 @@ const BY_ROLE: Record<Role, string[]> = {
     "BUNZZLE_ACME_EMAIL",
     "BUNZZLE_CERTS_DIR",
     "BUNZZLE_INBOUND_PORT",
+    "BUNZZLE_TRACK_HOST",
+    "BUNZZLE_TRACK_PORT",
   ],
   inbound: [
     "BUNZZLE_INBOUND_HOST",

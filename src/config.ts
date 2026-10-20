@@ -42,6 +42,8 @@ const schema = b.object({
     .max(40 * 1024 * 1024)
     .default(10 * 1024 * 1024),
   BUNZZLE_RETRY_SCALE: b.coerce.number().positive().max(1).default(1),
+  BUNZZLE_TRACK_HOST: b.string().min(1).default("0.0.0.0"),
+  BUNZZLE_TRACK_PORT: b.coerce.number().int().min(0).max(65535).optional(),
   BUNZZLE_PUBLIC_URL: optional.refine((v) => v === null || /^https?:\/\/[^\s/]+/.test(v), {
     message: "must be an http(s) URL like https://mail.example.com",
   }),
@@ -159,6 +161,7 @@ export interface Config {
   inboundMaxSize: number;
   retryScale: number;
   publicUrl: string | null;
+  track: { host: string; port: number; dir: string } | null;
   inboundHostname: string | null;
   inboundTlsCertFile: string | null;
   inboundTlsKeyFile: string | null;
@@ -304,10 +307,13 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
         hosts: [...new Set(acmeHosts.map((h) => h.toLowerCase()))],
       }
     : null;
+  if (c.BUNZZLE_TRACK_PORT !== undefined && !c.BUNZZLE_PUBLIC_URL) {
+    throw new ConfigError("invalid configuration:\n  BUNZZLE_TRACK_PORT needs BUNZZLE_PUBLIC_URL");
+  }
   if (acme) {
-    if (acme.hosts.length === 0) {
+    if (acme.hosts.length === 0 && c.BUNZZLE_TRACK_PORT === undefined) {
       throw new ConfigError(
-        "invalid configuration:\n  BUNZZLE_ACME_EMAIL needs the inbound or submission port and a hostname",
+        "invalid configuration:\n  BUNZZLE_ACME_EMAIL needs the inbound, submission or tracking port and a hostname",
       );
     }
   }
@@ -354,6 +360,10 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     inboundMaxSize: c.BUNZZLE_INBOUND_MAX_SIZE,
     retryScale: c.BUNZZLE_RETRY_SCALE,
     publicUrl: c.BUNZZLE_PUBLIC_URL?.replace(/\/+$/, "") ?? null,
+    track:
+      c.BUNZZLE_TRACK_PORT !== undefined
+        ? { host: c.BUNZZLE_TRACK_HOST, port: c.BUNZZLE_TRACK_PORT, dir: `${certsDir}/track` }
+        : null,
     inboundHostname: c.BUNZZLE_INBOUND_HOSTNAME ?? c.BUNZZLE_EHLO_NAME,
     inboundTlsCertFile: c.BUNZZLE_INBOUND_TLS_CERT_FILE ?? (acme ? `${certsDir}/cert.pem` : null),
     inboundTlsKeyFile: c.BUNZZLE_INBOUND_TLS_KEY_FILE ?? (acme ? `${certsDir}/key.pem` : null),

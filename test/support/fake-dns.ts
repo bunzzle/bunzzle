@@ -126,6 +126,9 @@ function answer(zone: Zone, q: Uint8Array, tcp: boolean): Uint8Array | null {
     if (!current) rcode = 3;
   }
   if (current && rcode === 0) {
+    if (type === RRType.CNAME && current.CNAME) {
+      records.push(rr(target, type, ttl, encodeName(current.CNAME)));
+    }
     if (type === RRType.MX) {
       for (const [pref, host] of current.MX ?? []) {
         records.push(rr(target, type, ttl, [...u16(pref), ...encodeName(host)]));

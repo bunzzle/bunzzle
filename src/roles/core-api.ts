@@ -84,6 +84,7 @@ export interface CoreDeps {
   inboundHost?: string | null;
   anomalyFloor?: () => number;
   ips?: SourceIp[];
+  tracking?: (domain: string) => unknown;
   publish?: (records: DomainRecord[]) => Promise<boolean>;
   paths?: () => PathView[];
   storage?: () => StorageState;
@@ -624,6 +625,7 @@ export function coreMethods(deps: CoreDeps): {
       return {
         ...domainView(d),
         ip_pool: domainPool(db, d.name),
+        tracking: deps.tracking?.(d.name) ?? null,
         gmail: gmail
           ? {
               day: gmail.day,

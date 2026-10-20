@@ -14,6 +14,7 @@ import {
   sendSchema,
   templateResult,
 } from "./send.ts";
+import { applyTracking, type Track, trackResult, trackRoutes } from "./track.ts";
 
 const MAX_BODY = 50 * 1024 * 1024;
 
@@ -80,12 +81,20 @@ async function toSend(
   body: unknown,
   now: Date,
   load: LoadTemplate,
+  track: Track,
 ): Promise<PreparedEmail> {
   const parsed = sendSchema.safeParse(body);
   if (!parsed.success) throw invalid(parsed.error);
   const t = parsed.data.template;
-  const req = t ? applyTemplate(parsed.data, await load(t.id, t.version)) : parsed.data;
-  const email = prepareEmail(req, now);
+  const tracked = await applyTracking(
+    t ? applyTemplate(parsed.data, await load(t.id, t.version)) : parsed.data,
+    track,
+  );
+  const prepared = prepareEmail(tracked.req, now);
+  const email =
+    tracked.id && tracked.tracking
+      ? { ...prepared, id: tracked.id, meta: { ...prepared.meta, tracking: tracked.tracking } }
+      : prepared;
   if (caller.domains && !caller.domains.includes(email.fromDomain)) {
     throw new ApiError(
       403,
@@ -98,6 +107,7 @@ async function toSend(
 
 function enqueueFields(email: PreparedEmail) {
   return {
+    ...(email.id !== undefined ? { id: email.id } : {}),
     from: email.from,
     recipients: email.recipients,
     data: email.data,
@@ -271,6 +281,10 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
     };
   };
 
+  const tracker =
+    (tokenHash: string): Track =>
+    (p) =>
+      rpc("tracking", { tokenHash, ...p }, trackResult);
   const removeQueued = async (req: Request, action: "fail" | "cancel") => {
     const caller = await authenticate(req);
     const parsed = removeSchema.safeParse(await json(req));
@@ -294,6 +308,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
     port,
     maxRequestBodySize: MAX_BODY,
     routes: {
+      ...trackRoutes(core, log),
       "/health": {
         GET: async () => {
           let ok = false;
@@ -375,7 +390,13 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
         POST: handle(async (req) => {
           const caller = await authenticate(req);
           const text = await req.text();
-          const email = await toSend(caller, parseJson(text), new Date(), templates(caller.hash));
+          const email = await toSend(
+            caller,
+            parseJson(text),
+            new Date(),
+            templates(caller.hash),
+            tracker(caller.hash),
+          );
           const idempotencyKey = idempotencyKeyOf(req);
           const r = await rpc(
             "enqueue",
@@ -404,11 +425,12 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           const idempotencyKey = idempotencyKeyOf(req);
           const now = new Date();
           const load = templates(caller.hash);
+          const track = tracker(caller.hash);
           const emails = [];
           for (const [i, item] of list.data.entries()) {
             try {
               emails.push({
-                ...enqueueFields(await toSend(caller, item, now, load)),
+                ...enqueueFields(await toSend(caller, item, now, load, track)),
                 ...(idempotencyKey !== null
                   ? { idempotencyKey: `${idempotencyKey}#${i}`, bodyHash: hashToken(text) }
                   : {}),
@@ -496,17 +518,38 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
               ip_pool: b
                 .string()
                 .regex(/^[a-z0-9-]{1,32}$/)
-                .nullable(),
+                .nullable()
+                .optional(),
+              tracking: b
+                .object({
+                  host: b.string().min(1).max(253),
+                  opens: b.boolean().optional(),
+                  clicks: b.boolean().optional(),
+                })
+                .nullable()
+                .optional(),
             })
             .safeParse(await json(req));
           if (!parsed.success) throw invalid(parsed.error);
-          return Response.json(
-            await rpc("setDomainPool", {
-              tokenHash: caller.hash,
-              name: req.params["name"],
-              pool: parsed.data.ip_pool,
-            }),
-          );
+          const { ip_pool, tracking } = parsed.data;
+          if (ip_pool === undefined && tracking === undefined) {
+            throw new ApiError(422, "validation_error", "Send `ip_pool` or `tracking`.");
+          }
+          const name = req.params["name"];
+          const out: Record<string, unknown> = { name };
+          if (ip_pool !== undefined) {
+            Object.assign(
+              out,
+              await rpc("setDomainPool", { tokenHash: caller.hash, name, pool: ip_pool }),
+            );
+          }
+          if (tracking !== undefined) {
+            Object.assign(
+              out,
+              await rpc("setDomainTracking", { tokenHash: caller.hash, name, tracking }),
+            );
+          }
+          return Response.json(out);
         }),
       },
       "/domains/:name/dmarc": {

@@ -33,7 +33,9 @@ export interface FeedbackDeps {
   now?: () => number;
 }
 
-const tokenResult = b.object({ purpose: b.enum(["b", "u"]), messageId: b.string() }).nullable();
+const tokenResult = b
+  .object({ purpose: b.enum(["b", "u", "o", "c"]), messageId: b.string() })
+  .nullable();
 
 export function feedbackMethods(deps: FeedbackDeps) {
   const { db, writer, log, signer, delivery } = deps;

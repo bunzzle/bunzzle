@@ -30,6 +30,10 @@ function typeOf(kind: string, data: Record<string, unknown>): EventType | null {
       return "email.suppressed";
     case "canceled":
       return "email.canceled";
+    case "opened":
+      return "email.opened";
+    case "clicked":
+      return "email.clicked";
     case "dead":
       return data["code"] === "expired" ||
         data["code"] === "retries_exhausted" ||
@@ -107,6 +111,10 @@ export function projectEvents(db: Database, now: number, limit = 500): number {
     }
     if (type === "email.complained") detail["feedback_type"] = data["feedback_type"] ?? null;
     if (type === "email.failed") detail["reason"] = data["code"] ?? null;
+    if (type === "email.opened" || type === "email.clicked") {
+      detail["user_agent"] = data["user_agent"] ?? null;
+    }
+    if (type === "email.clicked") detail["click"] = { link: data["link"] ?? null };
     const payload = JSON.stringify({
       type,
       created_at: new Date(e.occurred_at).toISOString(),

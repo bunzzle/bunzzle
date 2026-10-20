@@ -129,6 +129,37 @@ export async function domainsCommand(argv: string[], config: Config) {
     );
     return;
   }
+  if (sub === "tracking") {
+    const [host, ...flags] = rest;
+    if (!name || !host) {
+      throw new UsageError("usage: bunzzle domains tracking DOMAIN HOST|none [--opens] [--clicks]");
+    }
+    const args = parseArgs(flags, { flags: ["opens", "clicks"] });
+    const r = await call<{
+      name: string;
+      tracking: {
+        host: string;
+        opens: boolean;
+        clicks: boolean;
+        record: { value: string; status: string };
+      } | null;
+    }>(config, "setDomainTracking", {
+      name,
+      tracking:
+        host === "none"
+          ? null
+          : { host, opens: args.flags.has("opens"), clicks: args.flags.has("clicks") },
+    });
+    const t = r.tracking;
+    if (!t) {
+      console.log(`${r.name} has no tracking.`);
+      return;
+    }
+    const on = [t.opens ? "opens" : "", t.clicks ? "clicks" : ""].filter(Boolean).join(" and ");
+    console.log(`${r.name} tracks ${on || "nothing by default"} through ${t.host}.`);
+    console.log(`[${mark(t.record.status)}] CNAME  ${t.host}  ${t.record.value}`);
+    return;
+  }
   if (rest.length > 0) throw new UsageError(`unexpected argument: ${rest[0]}`);
   switch (sub) {
     case "add":

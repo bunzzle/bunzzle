@@ -218,26 +218,36 @@ describe("fuzz: network input", () => {
         "paths",
       ]);
       const core = {
-        async call(m: string, _p: unknown, opts?: { result?: b.Schema }) {
+        async call(m: string, params: unknown, opts?: { result?: b.Schema }) {
           const value =
             m === "authenticate"
               ? { id: "key", scope: "full", domains: null, rateLimit: 1_000_000 }
-              : m === "health"
-                ? { ok: true }
-                : lists.has(m)
-                  ? []
-                  : m === "listEmails"
-                    ? { data: [], next_cursor: null }
-                    : m === "getTemplate"
-                      ? {
-                          id: "t",
-                          name: "t",
-                          version: 1,
-                          subject: "Hi {{name}}",
-                          html: "{{#each items}}<b>{{this.n}}</b>{{{raw}}}{{/each}}",
-                          text: "{{#if a.b}}{{a.b}}{{else}}-{{/if}}",
-                        }
-                      : { id: "0199f3a4-7c1e-7d55-9a21-3b6f0c9e4d12", existed: false };
+              : m === "tracking"
+                ? {
+                    host: "links.example.com",
+                    opens: true,
+                    clicks: true,
+                    open: "bae2kmxj4wl5wq3ru6gkfyzcjauwrwfqgbydiyc7zt",
+                    links: ((params as { urls: string[] }).urls ?? []).map(
+                      () => "bae2kmxj4wl5wq3r",
+                    ),
+                  }
+                : m === "health"
+                  ? { ok: true }
+                  : lists.has(m)
+                    ? []
+                    : m === "listEmails"
+                      ? { data: [], next_cursor: null }
+                      : m === "getTemplate"
+                        ? {
+                            id: "t",
+                            name: "t",
+                            version: 1,
+                            subject: "Hi {{name}}",
+                            html: "{{#each items}}<b>{{this.n}}</b>{{{raw}}}{{/each}}",
+                            text: "{{#if a.b}}{{a.b}}{{else}}-{{/if}}",
+                          }
+                        : { id: "0199f3a4-7c1e-7d55-9a21-3b6f0c9e4d12", existed: false };
           return opts?.result ? opts.result.parse(value) : value;
         },
       } as unknown as RpcClient;
@@ -265,6 +275,9 @@ describe("fuzz: network input", () => {
         "/suppressions",
         "/suppressions/a%40b.c",
         "/u/bae2kmxj4wl5wq3ru6gkfyzcjauwrwfqgbydiyc7zt",
+        "/o/bae2kmxj4wl5wq3ru6gkfyzcjauwrwfqgbydiyc7zt",
+        "/c/bae2kmxj4wl5wq3ru6gkfyzcjauwrwfqgbydiyc7zt/aHR0cHM6Ly9hLmV4YW1wbGUv",
+        "/c/x/%ff",
         "/holds",
         "/holds/1",
         "/ips",
@@ -287,6 +300,14 @@ describe("fuzz: network input", () => {
             template: { id: "t", variables: { name: "x", items: [{ n: 1 }], a: { b: true } } },
           }),
           JSON.stringify({ name: "t", subject: "{{x}}", html: "{{#if y}}{{/if}}", text: null }),
+          JSON.stringify({
+            from: "a@example.com",
+            to: "b@example.org",
+            subject: "s",
+            html: `<a href='https://a.example/?x=1&amp;y'>a</a><A HREF=http://b.example/>`,
+            tracking: { opens: true, clicks: false },
+          }),
+          JSON.stringify({ host: "links.example.com", tracking: { host: "x", opens: 1 } }),
           JSON.stringify({ version: 1, variables: { raw: "<i>", items: [{}, null, "x"] } }),
         ],
         dictionary: ['"', "{", "}", "[", "]", "null", "1e999", "\\u0000", " "],
@@ -307,6 +328,7 @@ describe("fuzz: network input", () => {
           const res = await fetch(`http://127.0.0.1:${app.port}${path}`, {
             method: methodName,
             headers,
+            redirect: "manual",
             ...(methodName === "GET" ? {} : { body: input }),
           });
           await res.arrayBuffer();

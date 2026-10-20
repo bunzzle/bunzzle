@@ -221,7 +221,9 @@ export async function runDelivery(config: Config, log: Logger) {
     dns: method(
       b.object({
         queries: b
-          .array(b.object({ name: b.string().min(1).max(255), type: b.enum(["TXT", "MX"]) }))
+          .array(
+            b.object({ name: b.string().min(1).max(255), type: b.enum(["TXT", "MX", "CNAME"]) }),
+          )
           .max(20),
       }),
       async ({ queries }) => {
@@ -232,6 +234,7 @@ export async function runDelivery(config: Config, log: Logger) {
             out[`${q.type}:${q.name}`] = answer.records.flatMap((r) => {
               if (r.type === "TXT") return [r.strings.join("")];
               if (r.type === "MX") return [`${r.mx.preference} ${r.mx.exchange}`];
+              if (r.type === "CNAME" && q.type === "CNAME") return [r.target];
               return [];
             });
           } catch {
