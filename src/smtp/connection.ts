@@ -40,7 +40,20 @@ export function replyText(r: Reply): string {
   return `${r.code} ${r.lines.join(" ")}`.trim();
 }
 
+export type TranscriptLine = [ms: number, who: "C" | "S" | "-", text: string];
+
+export interface Transcript {
+  start: number;
+  lines: TranscriptLine[];
+}
+
+const MAX_TRANSCRIPT_LINES = 300;
+const MAX_TRANSCRIPT_TEXT = 1000;
+
+const redact = (line: string) => line.replace(/^(AUTH\s+\S+)\s+\S.*$/i, "$1 [hidden]");
+
 export class SmtpConnection {
+  transcript: Transcript | null = null;
   private socket!: Socket<undefined>;
   private buffer = "";
   private waiter: (() => void) | null = null;
@@ -160,9 +173,16 @@ export class SmtpConnection {
     return line;
   }
 
+  note(who: "C" | "S" | "-", text: string) {
+    const t = this.transcript;
+    if (!t || t.lines.length >= MAX_TRANSCRIPT_LINES) return;
+    t.lines.push([Date.now() - t.start, who, text.slice(0, MAX_TRANSCRIPT_TEXT)]);
+  }
+
   async readReply(timeoutMs: number): Promise<Reply> {
     const deadline = Date.now() + timeoutMs;
     const lines: string[] = [];
+    const raw: string[] = [];
     let code = 0;
     for (;;) {
       const line = this.takeLine();
@@ -179,8 +199,12 @@ export class SmtpConnection {
         });
         continue;
       }
+      raw.push(line);
       const m = /^([2-5]\d\d)([ -]|$)(.*)$/.exec(line);
-      if (!m) throw new SmtpError("protocol", `malformed reply: ${line.slice(0, 100)}`);
+      if (!m) {
+        this.note("S", raw.join("\n"));
+        throw new SmtpError("protocol", `malformed reply: ${line.slice(0, 100)}`);
+      }
       const c = Number(m[1]);
       if (code && c !== code) throw new SmtpError("protocol", "reply code changed mid-reply");
       code = c;
@@ -188,6 +212,7 @@ export class SmtpConnection {
       if (lines.length > MAX_REPLY_LINES) throw new SmtpError("protocol", "reply too long");
       if (m[2] !== "-") break;
     }
+    this.note("S", raw.join("\n"));
     const em = /^([245]\.\d{1,3}\.\d{1,3})(\s|$)/.exec(lines[0] ?? "");
     let enhanced: string | null = null;
     if (em && (em[1] as string)[0] === String(code)[0]) {
@@ -203,9 +228,17 @@ export class SmtpConnection {
     return this.buffer.length > 0;
   }
 
-  async write(data: string | Uint8Array, timeoutMs: number): Promise<void> {
+  async write(
+    data: string | Uint8Array,
+    timeoutMs: number,
+    o: { content?: boolean } = {},
+  ): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     let bytes = typeof data === "string" ? enc.encode(data) : data;
+    if (o.content) this.note("C", `[message content, ${bytes.length} bytes]`);
+    else if (typeof data === "string") {
+      for (const line of data.split("\r\n")) if (line) this.note("C", redact(line));
+    }
     while (bytes.length > 0) {
       if (this.closedError) throw this.closedError;
       const n = this.socket.write(bytes);
@@ -246,6 +279,10 @@ export class SmtpConnection {
           return;
         }
         const authErr = s.getAuthorizationError();
+        this.note(
+          "-",
+          `TLS ${version} ${s.getCipher()?.name ?? ""}, certificate ${ok && !authErr ? "verified" : `not verified (${authErr ? ((authErr as Error & { code?: string }).code ?? authErr.message) : "handshake"})`}`,
+        );
         resolve({
           authorized: ok && !authErr,
           error: authErr ? ((authErr as Error & { code?: string }).code ?? authErr.message) : null,

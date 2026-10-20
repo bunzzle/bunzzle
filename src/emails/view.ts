@@ -90,6 +90,9 @@ export function emailView(db: Database, id: string, now: number) {
     updated_at: iso(r.updated_at),
   }));
   const events = eventsFor(db, id);
+  const conversation = db.query<{ session: number; data: string }, [string, number]>(
+    "SELECT session, data FROM conversations WHERE message_id = ? AND attempt_at = ? ORDER BY session",
+  );
   const recipientEvents = events.filter((e) => e.kind === "recipient");
   const attempts = events
     .filter((e) => e.kind === "attempt")
@@ -97,6 +100,9 @@ export function emailView(db: Database, id: string, now: number) {
       const d = e.data ?? {};
       const target = String(d["target"] ?? "");
       const sessions = (d["sessions"] as Record<string, unknown>[] | undefined) ?? [];
+      const talks = new Map(
+        conversation.all(id, e.occurred_at).map((c) => [c.session, c.data] as const),
+      );
       return {
         at: iso(e.occurred_at),
         domain: target,
@@ -105,7 +111,7 @@ export function emailView(db: Database, id: string, now: number) {
         via: d["via"] === "relay" ? "relay" : "direct",
         tls_policy: (d["policy"] as { rule?: string } | null)?.rule ?? null,
         reconciled: d["recalled"] === true,
-        sessions: sessions.map((s) => {
+        sessions: sessions.map((s, i) => {
           const tls = (s["tls"] ?? {}) as Record<string, unknown>;
           return {
             host: s["host"],
@@ -120,6 +126,13 @@ export function emailView(db: Database, id: string, now: number) {
             },
             stopped_at: s["phase"] === "done" ? null : s["phase"],
             error: s["error"] ?? null,
+            conversation: (JSON.parse(talks.get(i) ?? "[]") as [number, string, string][]).map(
+              ([ms, who, text]) => ({
+                at_ms: ms,
+                from: who === "C" ? "client" : who === "S" ? "server" : "note",
+                text,
+              }),
+            ),
           };
         }),
         results: recipientEvents
@@ -162,3 +175,8 @@ export function emailView(db: Database, id: string, now: number) {
 }
 
 export type EmailView = NonNullable<ReturnType<typeof emailView>>;
+
+export function pruneConversations(db: Database, before: number): number {
+  return db.query<unknown, [number]>("DELETE FROM conversations WHERE attempt_at < ?").run(before)
+    .changes;
+}

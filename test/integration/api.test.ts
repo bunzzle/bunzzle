@@ -177,6 +177,23 @@ describe("POST /emails and GET /emails/:id", () => {
     expect(attempt.sessions[0]?.tls).toMatchObject({ status: "unverified", rule: "opportunistic" });
     expect(attempt.sessions[0]?.tls.version).toMatch(/^TLSv1\.[23]$/);
     expect(attempt.results).toHaveLength(2);
+    const talk = (
+      attempt.sessions[0] as unknown as {
+        conversation: { at_ms: number; from: string; text: string }[];
+      }
+    ).conversation;
+    const lines = talk.map((l) => `${l.from}: ${l.text}`);
+    expect(lines[0]).toMatch(/^note: connected to 127\.0\.0\.1:\d+$/);
+    expect(lines[1]).toMatch(/^server: 220 /);
+    expect(lines).toContain("client: STARTTLS");
+    expect(lines.some((l) => /^note: TLS TLSv1\.[23] .+, certificate not verified/.test(l))).toBe(
+      true,
+    );
+    expect(lines.some((l) => l.startsWith("client: MAIL FROM:<"))).toBe(true);
+    expect(lines).toContain("client: RCPT TO:<boss@example.test>");
+    expect(lines.some((l) => /^client: \[message content, \d+ bytes\]$/.test(l))).toBe(true);
+    expect(lines.some((l) => l.includes("sign-in link"))).toBe(false);
+    expect(talk.every((l, i) => i === 0 || l.at_ms >= (talk[i - 1]?.at_ms ?? 0))).toBe(true);
 
     const received =
       mx.sessions.flatMap((s) => s.messages).find((m) => m.includes("sign-in link")) ?? "";

@@ -89,6 +89,10 @@ describe("sending through a relay", () => {
     expect(r.sessions[0]?.tls.status).toBe("verified");
     expect(received.length).toBe(before + 1);
     expect(received.at(-1)?.rcpts).toEqual(["someone@gmail.example"]);
+    const talk = (r.sessions[0]?.transcript ?? []).map(([, who, text]) => `${who} ${text}`);
+    expect(talk).toContain("C AUTH PLAIN [hidden]");
+    expect(talk.join("\n")).not.toContain(btoa("\0bunzzle\0s3cret"));
+    expect(talk.join("\n")).not.toContain("s3cret");
   });
 
   test("TLS from the first byte works too", async () => {

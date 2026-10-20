@@ -435,6 +435,12 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         mx: report.destination.kind === "targets" ? report.destination.mxHosts : [],
         sessions: sessionsOf(report),
       });
+      const save = d.query<unknown, [string, number, number, string]>(
+        "INSERT OR REPLACE INTO conversations (message_id, attempt_at, session, data) VALUES (?, ?, ?, ?)",
+      );
+      report.sessions.forEach((s, i) => {
+        if (s.transcript?.length) save.run(job.messageId, at, i, JSON.stringify(s.transcript));
+      });
       if (pauseBy) {
         event("path_paused", { path: pathKey, until: pausedUntil, reason: pauseBy.reply });
       } else if (slowBy) {

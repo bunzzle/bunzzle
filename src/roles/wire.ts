@@ -135,6 +135,10 @@ export const deliveryReportWire: b.Schema<DeliveryReport> = b.object({
         tryNext: b.boolean(),
         recipients: b.array(recipient).max(1000),
         reused: b.boolean().optional(),
+        transcript: b
+          .array(b.tuple([b.number().int().min(0), b.enum(["C", "S", "-"]), b.string().max(1000)]))
+          .max(300)
+          .optional(),
       }),
     )
     .max(16),
