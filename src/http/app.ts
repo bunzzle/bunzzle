@@ -4,7 +4,16 @@ import type { RpcClient } from "../ipc/rpc.ts";
 import { b } from "../validate/schema.ts";
 import { VERSION } from "../version.ts";
 import { ApiError, errorResponse, fromRpc } from "./errors.ts";
-import { type PreparedEmail, prepareEmail, rescheduleSchema, sendSchema } from "./send.ts";
+import {
+  applyTemplate,
+  type PreparedEmail,
+  prepareEmail,
+  renderTemplate,
+  rescheduleSchema,
+  type StoredTemplate,
+  sendSchema,
+  templateResult,
+} from "./send.ts";
 
 const MAX_BODY = 50 * 1024 * 1024;
 
@@ -64,10 +73,19 @@ function idempotencyKeyOf(req: Request): string | null {
   return key;
 }
 
-function toSend(caller: { domains: string[] | null }, body: unknown, now: Date): PreparedEmail {
+type LoadTemplate = (id: string, version: number | undefined) => Promise<StoredTemplate>;
+
+async function toSend(
+  caller: { domains: string[] | null },
+  body: unknown,
+  now: Date,
+  load: LoadTemplate,
+): Promise<PreparedEmail> {
   const parsed = sendSchema.safeParse(body);
   if (!parsed.success) throw invalid(parsed.error);
-  const email = prepareEmail(parsed.data, now);
+  const t = parsed.data.template;
+  const req = t ? applyTemplate(parsed.data, await load(t.id, t.version)) : parsed.data;
+  const email = prepareEmail(req, now);
   if (caller.domains && !caller.domains.includes(email.fromDomain)) {
     throw new ApiError(
       403,
@@ -96,6 +114,36 @@ const suspendSchema = b.object({
   target: b.string().max(300),
   reason: b.string().min(1).max(500),
   until: b.string().max(64).optional(),
+});
+
+const templateBody = {
+  subject: b.string().max(998),
+  html: b
+    .string()
+    .max(2 * 1024 * 1024)
+    .nullable(),
+  text: b
+    .string()
+    .max(2 * 1024 * 1024)
+    .nullable(),
+};
+
+const createTemplateSchema = b.object({
+  name: b.string().max(64),
+  subject: templateBody.subject,
+  html: templateBody.html.optional(),
+  text: templateBody.text.optional(),
+});
+
+const updateTemplateSchema = b.object({
+  subject: templateBody.subject.optional(),
+  html: templateBody.html.optional(),
+  text: templateBody.text.optional(),
+});
+
+const previewSchema = b.object({
+  version: b.number().int().min(1).optional(),
+  variables: b.record(b.string(), b.unknown()).optional(),
 });
 
 const removeSchema = b.object({
@@ -206,6 +254,23 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
     }
   };
 
+  const templates = (tokenHash: string): LoadTemplate => {
+    const seen = new Map<string, Promise<StoredTemplate>>();
+    return (id, version) => {
+      const key = `${id}@${version ?? ""}`;
+      let t = seen.get(key);
+      if (!t) {
+        t = rpc(
+          "getTemplate",
+          { tokenHash, id, ...(version !== undefined ? { version } : {}) },
+          templateResult,
+        );
+        seen.set(key, t);
+      }
+      return t;
+    };
+  };
+
   const removeQueued = async (req: Request, action: "fail" | "cancel") => {
     const caller = await authenticate(req);
     const parsed = removeSchema.safeParse(await json(req));
@@ -310,7 +375,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
         POST: handle(async (req) => {
           const caller = await authenticate(req);
           const text = await req.text();
-          const email = toSend(caller, parseJson(text), new Date());
+          const email = await toSend(caller, parseJson(text), new Date(), templates(caller.hash));
           const idempotencyKey = idempotencyKeyOf(req);
           const r = await rpc(
             "enqueue",
@@ -338,14 +403,16 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           }
           const idempotencyKey = idempotencyKeyOf(req);
           const now = new Date();
-          const emails = list.data.map((item, i) => {
+          const load = templates(caller.hash);
+          const emails = [];
+          for (const [i, item] of list.data.entries()) {
             try {
-              return {
-                ...enqueueFields(toSend(caller, item, now)),
+              emails.push({
+                ...enqueueFields(await toSend(caller, item, now, load)),
                 ...(idempotencyKey !== null
                   ? { idempotencyKey: `${idempotencyKey}#${i}`, bodyHash: hashToken(text) }
                   : {}),
-              };
+              });
             } catch (err) {
               if (err instanceof ApiError) {
                 throw new ApiError(
@@ -357,7 +424,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
               }
               throw err;
             }
-          });
+          }
           const r = await rpc(
             "enqueueBatch",
             { tokenHash: caller.hash, emails },
@@ -528,6 +595,78 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           return Response.json(
             await rpc("retryRoute", { tokenHash: caller.hash, id: req.params["id"] }),
           );
+        }),
+      },
+      "/templates": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const data = await rpc("listTemplates", { tokenHash: caller.hash }, b.array(b.unknown()));
+          return Response.json({ object: "list", data });
+        }),
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          const parsed = createTemplateSchema.safeParse(await json(req));
+          if (!parsed.success) throw invalid(parsed.error);
+          const p = parsed.data;
+          return Response.json(
+            await rpc("createTemplate", {
+              tokenHash: caller.hash,
+              name: p.name,
+              subject: p.subject,
+              ...(typeof p.html === "string" ? { html: p.html } : {}),
+              ...(typeof p.text === "string" ? { text: p.text } : {}),
+            }),
+          );
+        }),
+      },
+      "/templates/:id": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const raw = new URL(req.url).searchParams.get("version");
+          const version = raw === null ? undefined : Number(raw);
+          if (version !== undefined && (!Number.isInteger(version) || version < 1)) {
+            throw new ApiError(422, "validation_error", "`version` must be a whole number from 1");
+          }
+          return Response.json(
+            await rpc("getTemplate", {
+              tokenHash: caller.hash,
+              id: req.params["id"],
+              ...(version !== undefined ? { version } : {}),
+            }),
+          );
+        }),
+        PATCH: handle(async (req) => {
+          const caller = await authenticate(req);
+          const parsed = updateTemplateSchema.safeParse(await json(req));
+          if (!parsed.success) throw invalid(parsed.error);
+          return Response.json(
+            await rpc("updateTemplate", {
+              tokenHash: caller.hash,
+              id: req.params["id"],
+              ...parsed.data,
+            }),
+          );
+        }),
+        DELETE: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(
+            await rpc("deleteTemplate", { tokenHash: caller.hash, id: req.params["id"] }),
+          );
+        }),
+      },
+      "/templates/:id/preview": {
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          const parsed = previewSchema.safeParse(await json(req));
+          if (!parsed.success) throw invalid(parsed.error);
+          const t = await templates(caller.hash)(req.params["id"] ?? "", parsed.data.version);
+          return Response.json({
+            object: "preview",
+            id: t.id,
+            name: t.name,
+            version: t.version,
+            ...renderTemplate(t, parsed.data.variables ?? {}),
+          });
         }),
       },
       "/stats": {

@@ -212,6 +212,7 @@ describe("fuzz: network input", () => {
         "listDomains",
         "listWebhooks",
         "listRoutes",
+        "listTemplates",
         "listSuppressions",
         "ips",
         "paths",
@@ -227,7 +228,16 @@ describe("fuzz: network input", () => {
                   ? []
                   : m === "listEmails"
                     ? { data: [], next_cursor: null }
-                    : { id: "0199f3a4-7c1e-7d55-9a21-3b6f0c9e4d12", existed: false };
+                    : m === "getTemplate"
+                      ? {
+                          id: "t",
+                          name: "t",
+                          version: 1,
+                          subject: "Hi {{name}}",
+                          html: "{{#each items}}<b>{{this.n}}</b>{{{raw}}}{{/each}}",
+                          text: "{{#if a.b}}{{a.b}}{{else}}-{{/if}}",
+                        }
+                      : { id: "0199f3a4-7c1e-7d55-9a21-3b6f0c9e4d12", existed: false };
           return opts?.result ? opts.result.parse(value) : value;
         },
       } as unknown as RpcClient;
@@ -248,6 +258,10 @@ describe("fuzz: network input", () => {
         "/routes",
         "/routes/x",
         "/routes/x/retry",
+        "/templates",
+        "/templates/x",
+        "/templates/x?version=0",
+        "/templates/x/preview",
         "/suppressions",
         "/suppressions/a%40b.c",
         "/u/bae2kmxj4wl5wq3ru6gkfyzcjauwrwfqgbydiyc7zt",
@@ -267,6 +281,13 @@ describe("fuzz: network input", () => {
           JSON.stringify({ url: "https://hooks.example.com/x", events: ["email.bounced"] }),
           JSON.stringify({ address: "*@example.com", endpoint: "https://app.example.com/in" }),
           JSON.stringify({ email: "a@b.c", scope: "bulk" }),
+          JSON.stringify({
+            from: "a@example.com",
+            to: "b@example.org",
+            template: { id: "t", variables: { name: "x", items: [{ n: 1 }], a: { b: true } } },
+          }),
+          JSON.stringify({ name: "t", subject: "{{x}}", html: "{{#if y}}{{/if}}", text: null }),
+          JSON.stringify({ version: 1, variables: { raw: "<i>", items: [{}, null, "x"] } }),
         ],
         dictionary: ['"', "{", "}", "[", "]", "null", "1e999", "\\u0000", " "],
         maxLength: 32 * 1024,

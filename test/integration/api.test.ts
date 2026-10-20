@@ -507,3 +507,123 @@ describe("scopes, domain limits, rate limits, revocation", () => {
     expect((await api("/domains", { token })).status).toBe(403);
   });
 });
+
+describe("templates", () => {
+  const post = (path: string, body: unknown, token?: string) =>
+    api(path, { method: "POST", body: JSON.stringify(body), ...(token ? { token } : {}) });
+
+  test("create, send with variables, change, pin an old version, preview, delete", async () => {
+    const created = await post("/templates", {
+      name: "order-shipped",
+      subject: "Order {{order.id}} shipped",
+      html: "<p>Hi {{name}}</p>{{#each items}}<li>{{this}}</li>{{/each}}",
+      text: "Hi {{name}}",
+    });
+    expect(created.status).toBe(200);
+    const t = (await created.json()) as { id: string; version: number; versions: number[] };
+    expect(t).toMatchObject({ object: "template", name: "order-shipped", version: 1 });
+    expect(
+      (await post("/templates", { name: "order-shipped", subject: "x", text: "x" })).status,
+    ).toBe(422);
+
+    const vars = { name: "<Ayşe>", order: { id: "A-7" }, items: ["tea", "cups"] };
+    const sent = await send({
+      from: "Acme <hello@acme.test>",
+      to: "tpl@example.test",
+      template: { id: "order-shipped", variables: vars },
+    });
+    expect(sent.status).toBe(200);
+    let message = "";
+    for (let i = 0; i < 100 && !message; i++) {
+      message = mx.sessions.flatMap((s) => s.messages).find((m) => m.includes("A-7")) ?? "";
+      if (!message) await Bun.sleep(100);
+    }
+    expect(message).toContain("Subject: Order A-7 shipped");
+    expect(message).toContain("&lt;Ay");
+
+    const patched = await api(`/templates/${t.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ subject: "Shipped: {{order.id}}", text: null }),
+    });
+    expect(patched.status).toBe(200);
+    expect(await patched.json()).toMatchObject({ version: 2, text: null, versions: [1, 2] });
+    expect(await (await api(`/templates/order-shipped?version=1`)).json()).toMatchObject({
+      version: 1,
+      subject: "Order {{order.id}} shipped",
+      text: "Hi {{name}}",
+    });
+
+    const preview = async (body: unknown) => post(`/templates/order-shipped/preview`, body);
+    const latest = await preview({ variables: vars });
+    expect(await latest.json()).toMatchObject({ version: 2, subject: "Shipped: A-7" });
+    const pinned = await preview({ version: 1, variables: vars });
+    expect(await pinned.json()).toMatchObject({
+      subject: "Order A-7 shipped",
+      html: "<p>Hi &lt;Ayşe&gt;</p><li>tea</li><li>cups</li>",
+      text: "Hi <Ayşe>",
+    });
+    const missing = await preview({ variables: { name: "x" } });
+    expect(missing.status).toBe(422);
+    expect(((await missing.json()) as { message: string }).message).toBe(
+      "Missing template variables: order.id, items",
+    );
+    expect((await preview({ version: 9 })).status).toBe(404);
+
+    const list = (await (await api("/templates")).json()) as { data: { name: string }[] };
+    expect(list.data.map((x) => x.name)).toContain("order-shipped");
+    expect((await api(`/templates/${t.id}`, { method: "DELETE" })).status).toBe(200);
+    expect((await api("/templates/order-shipped")).status).toBe(404);
+  });
+
+  test("bad syntax is refused when saved, with the field and line", async () => {
+    const r = await post("/templates", { name: "broken", subject: "Hi", html: "a\n{{#if x}}" });
+    expect(r.status).toBe(422);
+    expect(((await r.json()) as { message: string }).message).toBe(
+      "html: line 2: `{{#if}}` is never closed",
+    );
+    const nobody = await post("/templates", { name: "nobody", subject: "Hi" });
+    expect(nobody.status).toBe(422);
+  });
+
+  test("a batch uses its own variables per email; one bad email refuses the batch", async () => {
+    expect(
+      (await post("/templates", { name: "hello", subject: "Hello {{name}}", text: "Hi {{name}}" }))
+        .status,
+    ).toBe(200);
+    const item = (to: string, variables: Record<string, unknown>) => ({
+      from: "hello@acme.test",
+      to,
+      template: { id: "hello", variables },
+    });
+    const bad = await post("/emails/batch", [
+      item("b1@example.test", { name: "Bob" }),
+      item("b2@example.test", {}),
+    ]);
+    expect(bad.status).toBe(422);
+    expect(((await bad.json()) as { message: string }).message).toBe(
+      "emails[1]: Missing template variables: name",
+    );
+    const ok = await post("/emails/batch", [
+      item("b1@example.test", { name: "Bob" }),
+      item("b2@example.test", { name: "Can" }),
+    ]);
+    expect(ok.status).toBe(200);
+    const unknown = await send({
+      from: "hello@acme.test",
+      to: "x@example.test",
+      template: { id: "nope" },
+    });
+    expect(unknown.status).toBe(404);
+  });
+
+  test("send keys can use templates but not change them", async () => {
+    const sender = await newKey("--scope", "send");
+    expect(
+      (await post("/templates/hello/preview", { variables: { name: "x" } }, sender)).status,
+    ).toBe(200);
+    expect(
+      (await post("/templates", { name: "mine", subject: "x", text: "x" }, sender)).status,
+    ).toBe(403);
+    expect((await api("/templates/hello", { method: "DELETE", token: sender })).status).toBe(403);
+  });
+});

@@ -1,5 +1,6 @@
 import { type Address, AddressError, domainOf, parseAddress } from "../mime/address.ts";
 import { type Attachment, buildMessage, MimeError, newMessageId } from "../mime/builder.ts";
+import { MissingVariables, parse, render, TemplateError } from "../templates/render.ts";
 import { b } from "../validate/schema.ts";
 import { ApiError } from "./errors.ts";
 
@@ -13,7 +14,14 @@ export const rescheduleSchema = b.object({ scheduled_at: b.string().max(64) });
 export const sendSchema = b.object({
   from: b.string().min(3).max(1000),
   to: addresses,
-  subject: b.string().max(998),
+  subject: b.string().max(998).optional(),
+  template: b
+    .object({
+      id: b.string().min(1).max(64),
+      version: b.number().int().min(1).optional(),
+      variables: b.record(b.string(), b.unknown()).optional(),
+    })
+    .optional(),
   cc: addresses.optional(),
   bcc: addresses.optional(),
   reply_to: addresses.optional(),
@@ -49,6 +57,65 @@ export const sendSchema = b.object({
 });
 
 export type SendRequest = b.infer<typeof sendSchema>;
+
+export const templateResult = b.object({
+  id: b.string(),
+  name: b.string(),
+  version: b.number(),
+  subject: b.string(),
+  html: b.string().nullable(),
+  text: b.string().nullable(),
+});
+
+export type StoredTemplate = b.infer<typeof templateResult>;
+
+export interface Rendered {
+  subject: string;
+  html?: string;
+  text?: string;
+}
+
+export function renderTemplate(t: StoredTemplate, variables: Record<string, unknown>): Rendered {
+  const missing = new Set<string>();
+  const one = (field: string, source: string, mode: "html" | "text") => {
+    try {
+      return render(parse(source), variables, mode);
+    } catch (err) {
+      if (err instanceof MissingVariables) {
+        for (const name of err.names) missing.add(name);
+        return "";
+      }
+      if (err instanceof TemplateError) {
+        throw new ApiError(422, "validation_error", `Template ${field}: ${err.message}`);
+      }
+      throw err;
+    }
+  };
+  const out = {
+    subject: one("subject", t.subject, "text"),
+    ...(t.html !== null ? { html: one("html", t.html, "html") } : {}),
+    ...(t.text !== null ? { text: one("text", t.text, "text") } : {}),
+  };
+  if (missing.size > 0) {
+    throw new ApiError(
+      422,
+      "validation_error",
+      `Missing template variables: ${[...missing].join(", ")}`,
+    );
+  }
+  return out;
+}
+
+export function applyTemplate(req: SendRequest, t: StoredTemplate): SendRequest {
+  if (req.subject !== undefined || req.html !== undefined || req.text !== undefined) {
+    throw new ApiError(
+      422,
+      "validation_error",
+      "Send either `template` or `subject`, `html` and `text`, not both.",
+    );
+  }
+  return { ...req, ...renderTemplate(t, req.template?.variables ?? {}) };
+}
 
 export interface PreparedEmail {
   from: string;
@@ -109,6 +176,9 @@ export function prepareEmail(req: SendRequest, now: Date): PreparedEmail {
   const replyTo = parseList("reply_to", req.reply_to);
   if (to.length + cc.length + bcc.length > 50) {
     throw new ApiError(422, "validation_error", "At most 50 recipients (to, cc and bcc together)");
+  }
+  if (req.subject === undefined) {
+    throw new ApiError(422, "validation_error", "Missing `subject` field.");
   }
   if (req.html === undefined && req.text === undefined) {
     throw new ApiError(422, "validation_error", "Missing `html` or `text` field.");
