@@ -10,11 +10,12 @@ import { deliveryHandler } from "../delivery/handler.ts";
 import { shredBodies } from "../delivery/queue.ts";
 import type { DeliveryTransport } from "../delivery/transport.ts";
 import { pruneDmarc } from "../dmarc/store.ts";
-import { bounceDomain, getDomain, returnPathReady } from "../domains/domains.ts";
+import { bounceDomain, getDomain, listDomains, returnPathReady } from "../domains/domains.ts";
 import { pruneIdempotency } from "../emails/idempotency.ts";
 import { pruneConversations } from "../emails/view.ts";
 import { beginAtEnd, exportEvents } from "../eventlog/export.ts";
 import { EventLog } from "../eventlog/log.ts";
+import { gmailGuard, savePostmaster } from "../guards/gmail.ts";
 import { reputationGuard } from "../guards/guards.ts";
 import { RpcClient, serveRpc } from "../ipc/rpc.ts";
 import { rollover } from "../ips/warmup.ts";
@@ -23,6 +24,7 @@ import { Scheduler } from "../scheduler/scheduler.ts";
 import { type ControlState, DEFAULT_TUNING } from "../shaping/control.ts";
 import { Shaper } from "../shaping/shaper.ts";
 import { sendTlsReports } from "../tlsrpt/job.ts";
+import { b } from "../validate/schema.ts";
 import { coreMethods } from "./core-api.ts";
 import { doctorMethods, ipInfo } from "./core-doctor.ts";
 import { feedbackMethods } from "./core-feedback.ts";
@@ -277,6 +279,50 @@ export async function runCore(config: Config, log: Logger) {
       })
       .catch((err: Error) => log.error("guard check failed", { error: err.message })),
   );
+  const dayStats = b.object({
+    day: b.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    spamRatio: b.number().nullable(),
+    reputation: b.string().max(32).nullable(),
+    spfRatio: b.number().nullable(),
+    dkimRatio: b.number().nullable(),
+    dmarcRatio: b.number().nullable(),
+    encryptedRatio: b.number().nullable(),
+  });
+  const postmasterAnswer = b.object({
+    enabled: b.boolean(),
+    results: b.array(
+      b.object({
+        domain: b.string(),
+        ok: b.boolean(),
+        days: b.array(dayStats).max(400).optional(),
+        error: b.string().max(2000).optional(),
+      }),
+    ),
+  });
+  const readPostmaster = async () => {
+    const domains = listDomains(db)
+      .filter((d) => d.status === "verified")
+      .map((d) => d.name);
+    if (domains.length === 0) return;
+    const r = await dns
+      .call("postmaster", { domains }, { result: postmasterAnswer, timeoutMs: 120_000 })
+      .catch(() => null);
+    if (!r?.enabled) return;
+    for (const x of r.results) {
+      if (!x.ok) log.warn("could not read Postmaster Tools", { domain: x.domain, error: x.error });
+    }
+    await writer.run((d) => {
+      const at = Date.now();
+      for (const x of r.results) if (x.ok && x.days) savePostmaster(d, x.domain, x.days, at);
+      gmailGuard(d, domains, at, log);
+    });
+  };
+  const stopPostmaster = every(Math.max(1_000, scaled(6 * HOUR)), () =>
+    readPostmaster().catch((err: Error) =>
+      log.error("Postmaster Tools check failed", { error: err.message }),
+    ),
+  );
+  setTimeout(() => void readPostmaster().catch(() => {}), Math.max(1_000, scaled(2 * MIN)));
   const stopRotation = every(Math.max(1_000, scaled(HOUR)), () => rotate.tick());
   const stopStorage = every(30_000, () => storage.check());
   const stopListed = config.sourceIps.length
@@ -316,6 +362,7 @@ export async function runCore(config: Config, log: Logger) {
     stopGuards();
     stopRotation();
     stopStorage();
+    stopPostmaster();
     stopListed();
     stopDispatch();
     stopEventLog();

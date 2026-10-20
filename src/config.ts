@@ -81,6 +81,14 @@ const schema = b.object({
   BUNZZLE_ROUTE53_API_URL: b.string().url().default("https://route53.amazonaws.com"),
   BUNZZLE_DESEC_TOKEN_FILE: optional,
   BUNZZLE_DESEC_API_URL: b.string().url().default("https://desec.io/api/v1"),
+  BUNZZLE_POSTMASTER_CLIENT_ID: optional,
+  BUNZZLE_POSTMASTER_CLIENT_SECRET_FILE: optional,
+  BUNZZLE_POSTMASTER_REFRESH_TOKEN_FILE: optional,
+  BUNZZLE_POSTMASTER_API_URL: b
+    .string()
+    .url()
+    .default("https://gmailpostmastertools.googleapis.com"),
+  BUNZZLE_POSTMASTER_TOKEN_URL: b.string().url().default("https://oauth2.googleapis.com/token"),
 });
 
 export interface SourceIp {
@@ -182,6 +190,13 @@ export interface Config {
   cloudflareUrl: string;
   route53: { accessKeyId: string; secretKeyFile: string; url: string } | null;
   desec: { tokenFile: string; url: string } | null;
+  postmaster: {
+    clientId: string;
+    clientSecretFile: string;
+    refreshTokenFile: string;
+    apiUrl: string;
+    tokenUrl: string;
+  } | null;
 }
 
 export class ConfigError extends Error {}
@@ -222,6 +237,16 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
   if (providers.length > 1) {
     throw new ConfigError(
       "invalid configuration:\n  publish DNS records through one provider: Cloudflare, DNS updates, Route 53 or deSEC",
+    );
+  }
+  const postmaster = [
+    c.BUNZZLE_POSTMASTER_CLIENT_ID,
+    c.BUNZZLE_POSTMASTER_CLIENT_SECRET_FILE,
+    c.BUNZZLE_POSTMASTER_REFRESH_TOKEN_FILE,
+  ];
+  if (postmaster.some(Boolean) && !postmaster.every(Boolean)) {
+    throw new ConfigError(
+      "invalid configuration:\n  Postmaster Tools needs BUNZZLE_POSTMASTER_CLIENT_ID, BUNZZLE_POSTMASTER_CLIENT_SECRET_FILE and BUNZZLE_POSTMASTER_REFRESH_TOKEN_FILE together",
     );
   }
   if ((c.BUNZZLE_RELAY_USERNAME || c.BUNZZLE_RELAY_PASSWORD_FILE) && !c.BUNZZLE_RELAY_HOST) {
@@ -384,6 +409,18 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
             accessKeyId: c.BUNZZLE_ROUTE53_ACCESS_KEY_ID,
             secretKeyFile: c.BUNZZLE_ROUTE53_SECRET_ACCESS_KEY_FILE,
             url: c.BUNZZLE_ROUTE53_API_URL.replace(/\/+$/, ""),
+          }
+        : null,
+    postmaster:
+      c.BUNZZLE_POSTMASTER_CLIENT_ID &&
+      c.BUNZZLE_POSTMASTER_CLIENT_SECRET_FILE &&
+      c.BUNZZLE_POSTMASTER_REFRESH_TOKEN_FILE
+        ? {
+            clientId: c.BUNZZLE_POSTMASTER_CLIENT_ID,
+            clientSecretFile: c.BUNZZLE_POSTMASTER_CLIENT_SECRET_FILE,
+            refreshTokenFile: c.BUNZZLE_POSTMASTER_REFRESH_TOKEN_FILE,
+            apiUrl: c.BUNZZLE_POSTMASTER_API_URL.replace(/\/+$/, ""),
+            tokenUrl: c.BUNZZLE_POSTMASTER_TOKEN_URL,
           }
         : null,
     desec: c.BUNZZLE_DESEC_TOKEN_FILE

@@ -3,6 +3,7 @@ import { allows, keyForHash } from "../accounts/api-keys.ts";
 import type { Config } from "../config.ts";
 import type { StorageState } from "../core/storage.ts";
 import { listDomains } from "../domains/domains.ts";
+import { latestPostmaster } from "../guards/gmail.ts";
 import { listHolds } from "../guards/guards.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import type { PathView } from "../shaping/shaper.ts";
@@ -163,6 +164,20 @@ export function doctorMethods(deps: DoctorDeps): Methods {
       const keys = await rotation.keys(d.name).catch(() => null);
       const fresh = keys ? await rotation.rebuild(d.name, keys).catch(() => null) : null;
       const records = (fresh ?? d).records;
+      const gmail = latestPostmaster(db, d.name);
+      if (gmail) {
+        const spam = gmail.spamRatio;
+        add(
+          "domains",
+          `${d.name} Gmail`,
+          (spam ?? 0) >= 0.003 || gmail.reputation === "BAD"
+            ? "fail"
+            : (spam ?? 0) >= 0.001 || gmail.reputation === "LOW"
+              ? "warn"
+              : "ok",
+          `${gmail.day}: spam rate ${spam === null ? "not reported" : `${(spam * 100).toFixed(2)}%`}, reputation ${gmail.reputation ?? "not reported"}`,
+        );
+      }
       for (const r of records) {
         const status: CheckStatus =
           r.status === "verified"

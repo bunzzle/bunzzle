@@ -4,6 +4,7 @@ import type { Logger } from "../core/log.ts";
 import { cachingResolver } from "../dns/cache.ts";
 import { createResolver, parseServer, systemServers } from "../dns/resolver.ts";
 import { method, serveRpc } from "../ipc/rpc.ts";
+import { Postmaster } from "../net/postmaster.ts";
 import { openDnsProvider } from "../net/providers.ts";
 import { guardedRequest } from "../net/request.ts";
 import { b } from "../validate/schema.ts";
@@ -27,7 +28,32 @@ export async function runDns(config: Config, log: Logger) {
   const provider = opened?.provider ?? null;
   const providerName = opened?.name ?? null;
 
+  const pm = config.postmaster;
+  const postmaster = pm
+    ? new Postmaster(
+        {
+          clientId: pm.clientId,
+          clientSecret: (await Bun.file(pm.clientSecretFile).text()).trim(),
+          refreshToken: (await Bun.file(pm.refreshTokenFile).text()).trim(),
+        },
+        api,
+        pm.apiUrl,
+        pm.tokenUrl,
+      )
+    : null;
+
   const server = await serveRpc(sockets(config.runDir).dns, {
+    postmaster: method(
+      b.object({ domains: b.array(b.string().min(1).max(253)).max(1000) }),
+      async ({ domains }) => {
+        if (!postmaster) return { enabled: false, results: [] };
+        const results = [];
+        for (const domain of domains) {
+          results.push({ domain, ...(await postmaster.trafficStats(domain)) });
+        }
+        return { enabled: true, results };
+      },
+    ),
     publish: method(
       b.object({
         op: b.enum(["status", "upsert", "remove"]),

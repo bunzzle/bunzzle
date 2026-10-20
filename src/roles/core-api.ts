@@ -35,6 +35,7 @@ import {
 } from "../domains/domains.ts";
 import { findIdempotent, rememberIdempotent } from "../emails/idempotency.ts";
 import { emailView } from "../emails/view.ts";
+import { latestPostmaster } from "../guards/gmail.ts";
 import {
   activeHold,
   anomalyThreshold,
@@ -526,7 +527,21 @@ export function coreMethods(deps: CoreDeps): {
       caller(p.tokenHash, "read");
       const d = getDomain(db, domainName(p.name));
       if (!d) throw new RpcError("not-found", "domain not found");
-      return domainView(d);
+      const gmail = latestPostmaster(db, d.name);
+      return {
+        ...domainView(d),
+        gmail: gmail
+          ? {
+              day: gmail.day,
+              spam_rate: gmail.spamRatio,
+              reputation: gmail.reputation,
+              spf_pass_rate: gmail.spfRatio,
+              dkim_pass_rate: gmail.dkimRatio,
+              dmarc_pass_rate: gmail.dmarcRatio,
+              tls_rate: gmail.encryptedRatio,
+            }
+          : null,
+      };
     }),
 
     listDomains: method(b.object({ tokenHash }), (p) => {
