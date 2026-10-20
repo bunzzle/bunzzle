@@ -115,8 +115,9 @@ export function startSink(total: number, o: { slowMs?: number; random?: () => nu
         sock.end();
         return;
       }
-      if (state.behavior === "greylist" && !greylist.has(state.from)) {
-        greylist.add(state.from);
+      const triplet = `${state.from}|${line.slice(8).trim().toLowerCase()}`;
+      if (state.behavior === "greylist" && !greylist.has(triplet)) {
+        greylist.add(triplet);
         s.greylisted++;
         sock.write("451 4.7.1 Greylisted, please try again in 60 seconds\r\n");
         return;

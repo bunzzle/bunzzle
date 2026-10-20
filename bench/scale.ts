@@ -5,6 +5,8 @@ import { behaviorOf, startSink } from "./sink.ts";
 const total = Number(Bun.argv[2] ?? 1_000_000);
 const destinations = Number(Bun.argv[3] ?? 1_000);
 const concurrency = Number(Bun.argv[4] ?? 8);
+const backlog = Bun.argv[5] === "backlog";
+const BACKLOG_MS = 8 * 60_000;
 const BATCH = 100;
 const SAMPLE_MS = 10_000;
 const STALL_MS = 40 * 60_000;
@@ -34,6 +36,7 @@ let intakeErrors = 0;
 let firstError: string | null = null;
 let intakeDone = 0;
 const started = performance.now();
+const releaseAt = new Date(Date.now() + BACKLOG_MS).toISOString();
 const intake = (async () => {
   let next = 0;
   const client = async () => {
@@ -43,7 +46,12 @@ const intake = (async () => {
       const count = next - from;
       const body = [];
       for (let i = from; i < from + count; i++) {
-        body.push(email(`u${i}@d${i % destinations}.example`, i, { lane: "bulk" }));
+        body.push(
+          email(`u${i}@d${i % destinations}.example`, i, {
+            lane: "bulk",
+            ...(backlog ? { scheduled_at: releaseAt } : {}),
+          }),
+        );
       }
       const res = await fetch(`${bench.url}/emails/batch`, {
         method: "POST",
@@ -170,7 +178,9 @@ console.log(
   `  delivered: ${st.unique} of ${total}; ${marks.map((m) => `${m * 100}% at ${secs(reached.get(m))}`).join(", ")}`,
 );
 console.log(
-  `  sustained rate to 90%: ${reached.has(0.9) ? Math.round((total * 0.9) / ((reached.get(0.9) as number) / 1_000)) : "-"}/s`,
+  backlog
+    ? `  backlog: all ${total} due at ${BACKLOG_MS / 1_000} s (intake done at ${((intakeDone - started) / 1_000).toFixed(0)} s); drain to 90% took ${reached.has(0.9) ? (((reached.get(0.9) as number) - BACKLOG_MS) / 1_000).toFixed(0) : "-"} s = ${reached.has(0.9) ? Math.round((total * 0.9) / (((reached.get(0.9) as number) - BACKLOG_MS) / 1_000)) : "-"}/s`
+    : `  sustained rate to 90%: ${reached.has(0.9) ? Math.round((total * 0.9) / ((reached.get(0.9) as number) / 1_000)) : "-"}/s`,
 );
 console.log(
   `  receivers: ${st.greylisted} greylisted, ${st.deferred} deferred with 421, ${st.dropped} connections dropped after the data, ${st.duplicates} duplicates`,
