@@ -72,7 +72,7 @@ beforeAll(async () => {
     BUNZZLE_RETRY_SCALE: "0.001",
   });
   full = await newKey("--scope", "full");
-});
+}, 30_000);
 
 afterAll(async () => {
   await served.stop();

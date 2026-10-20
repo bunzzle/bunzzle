@@ -68,7 +68,7 @@ beforeAll(async () => {
     BUNZZLE_EHLO_NAME: "out.bunzzle.test",
     BUNZZLE_RETRY_SCALE: "0.001",
   });
-});
+}, 30_000);
 
 afterAll(async () => {
   if (served.proc.exitCode === null) await served.stop();

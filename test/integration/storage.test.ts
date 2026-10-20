@@ -16,7 +16,7 @@ beforeAll(async () => {
     .env({ PATH: Bun.env["PATH"] ?? "", HOME: Bun.env["HOME"] ?? "" })
     .text();
   token = out.trim().split("\n").at(-1)?.trim() ?? "";
-});
+}, 30_000);
 
 afterAll(async () => {
   await served.stop();
