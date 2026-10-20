@@ -13,5 +13,7 @@ test.each([
   ],
 ])("under bunzzle serve the dns role reads the %s secret file", async (_name, env) => {
   const started = startServe({ BUNZZLE_MASTER_KEY: generateMasterKey(), ...env });
+  const served = await started.catch(() => null);
+  if (served) await served.stop();
   await expect(started).rejects.toThrow(/dns/);
 });
