@@ -14,7 +14,7 @@ export type Lane = "transactional" | "bulk";
 
 export type Admission =
   | { kind: "go"; connections: number; release(signal: Signal, reason: string): void }
-  | { kind: "requeue"; delayMs: number; reason: string };
+  | { kind: "requeue"; delayMs: number; reason: string; blocked?: boolean };
 
 interface Waiter {
   lane: Lane;
@@ -161,10 +161,16 @@ export class Shaper {
         kind: "requeue",
         delayMs: Math.max(MIN_REQUEUE_MS, (c.until ?? now) - now),
         reason: `${p.target} paused`,
+        blocked: true,
       });
     }
     if (c.mode === "probing" && (c.probeOut || this.#waitingCount(p) > 0)) {
-      return Promise.resolve({ kind: "requeue", delayMs: 30_000, reason: `${p.target} probing` });
+      return Promise.resolve({
+        kind: "requeue",
+        delayMs: 30_000,
+        reason: `${p.target} probing`,
+        blocked: true,
+      });
     }
     const waiting = this.#waitingCount(p);
     if (waiting >= this.#maxWaiting(p)) {

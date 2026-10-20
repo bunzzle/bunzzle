@@ -166,11 +166,13 @@ describe("POST /emails and GET /emails/:id", () => {
     ]);
     const attempt = (view["attempts"] as Record<string, unknown>[])[0] as {
       mx: string[];
+      via: string;
       tls_policy: string;
       sessions: { host: string; tls: { status: string; version: string; rule: string } }[];
       results: { email: string; reply: string }[];
     };
     expect(attempt.mx).toEqual(["mx.example.test"]);
+    expect(attempt.via).toBe("direct");
     expect(attempt.tls_policy).toBe("opportunistic");
     expect(attempt.sessions[0]?.tls).toMatchObject({ status: "unverified", rule: "opportunistic" });
     expect(attempt.sessions[0]?.tls.version).toMatch(/^TLSv1\.[23]$/);

@@ -167,6 +167,7 @@ export const deliverRequestWire = b.object({
   lane: b.enum(["transactional", "bulk"]).optional(),
   bounceDomain: b.string().max(253).nullable().optional(),
   source: b.string().max(64).optional(),
+  via: b.enum(["relay"]).optional(),
 });
 
 export const requestToWire = (r: DeliverRequest) => ({ ...r, body: toWire(r.body) });

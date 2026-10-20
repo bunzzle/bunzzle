@@ -102,6 +102,7 @@ export function emailView(db: Database, id: string, now: number) {
         domain: target,
         mx: d["mx"] ?? [],
         provider: d["provider"] ?? null,
+        via: d["via"] === "relay" ? "relay" : "direct",
         tls_policy: (d["policy"] as { rule?: string } | null)?.rule ?? null,
         reconciled: d["recalled"] === true,
         sessions: sessions.map((s) => {

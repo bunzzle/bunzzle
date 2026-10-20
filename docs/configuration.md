@@ -72,13 +72,16 @@ Bounces, complaints and unsubscribe replies. Off unless a port is set.
 
 ## Relay
 
-Only for servers whose provider blocks outbound port 25. All mail then goes to this relay instead of the recipients' mail servers, and the per-provider limits, MTA-STS and DANE no longer apply to the first hop. TLS with a valid certificate is always required before the password is sent.
+A relay takes all mail (for servers whose provider blocks outbound port 25), or only some of it while the rest goes straight to the recipients' mail servers. For mail sent through the relay, MTA-STS and DANE no longer apply to the first hop. TLS with a valid certificate is always required before the password is sent.
+
+With `BUNZZLE_RELAY_FOR` set to a list, the relay takes mail for the listed recipient domains and providers (`google`, `microsoft`, `yahoo`, `apple` and the others `bunzzle paths` shows). With `blocked` in the list, mail for a destination that has blocked every sending IP goes through the relay while direct delivery there is paused; one probe email still goes direct, and once it is accepted, direct delivery resumes. Emails sent with `require_tls` never go through the relay this way. Each attempt in `GET /emails/:id` shows `"via": "relay"` or `"via": "direct"`.
 
 | Variable | Default | |
 |---|---|---|
 | `BUNZZLE_RELAY_HOST` | | `host` or `host:port`. Port 587 (the default) uses STARTTLS, port 465 TLS from the first byte. |
 | `BUNZZLE_RELAY_USERNAME` | | User name for SMTP AUTH. |
 | `BUNZZLE_RELAY_PASSWORD_FILE` | | File with the password, readable only by the `bunzzle-delivery` user. |
+| `BUNZZLE_RELAY_FOR` | `all` | `all`, or a comma-separated list of recipient domains, providers and `blocked`: `microsoft,blocked`. |
 
 ## TLS reports
 

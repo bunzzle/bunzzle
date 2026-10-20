@@ -6,6 +6,7 @@ import {
   type DeliveryReport,
   deliverTo,
   findDestination,
+  relayDestination,
 } from "../smtp/deliver.ts";
 import type { StsPolicy } from "../smtp/mta-sts.ts";
 
@@ -24,6 +25,7 @@ export interface DeliverRequest {
   lane?: "transactional" | "bulk" | undefined;
   bounceDomain?: string | null | undefined;
   source?: string | undefined;
+  via?: "relay" | undefined;
   settled?: string[] | undefined;
 }
 
@@ -124,6 +126,7 @@ export interface LocalOptions extends DeliveryOptions {
   sts?: (domain: string) => Promise<StsPolicy | null>;
   sources?: string[];
   ehloFor?: (source: string) => string;
+  relayAll?: boolean;
 }
 
 function forSource(opts: LocalOptions, source: string | undefined): DeliveryOptions | string {
@@ -134,10 +137,19 @@ function forSource(opts: LocalOptions, source: string | undefined): DeliveryOpti
 
 export function localTransport(opts: LocalOptions, open: OpenBody): DeliveryTransport {
   return {
-    lookup: (domain) => findDestination(domain, opts),
+    lookup: (domain) =>
+      findDestination(domain, opts.relayAll === false ? { ...opts, relay: null } : opts),
     async deliver(req) {
-      const o = forSource(opts, req.source);
-      if (typeof o === "string") return unprepared(req, new Error(o));
+      const source = forSource(opts, req.source);
+      if (typeof source === "string") return unprepared(req, new Error(source));
+      const routed = opts.relayAll === false;
+      if (routed && req.via === "relay" && !opts.relay) {
+        return unprepared(req, new Error("no relay is configured"));
+      }
+      const relayed = routed && req.via === "relay";
+      const o = routed && !relayed ? { ...source, relay: null } : source;
+      const destination =
+        relayed && opts.relay ? await relayDestination(req.domain, opts.relay, o) : req.destination;
       let opened: OpenedBody;
       try {
         opened = await open(req.messageId, req.body, {
@@ -150,7 +162,7 @@ export function localTransport(opts: LocalOptions, open: OpenBody): DeliveryTran
       const from = req.bounceDomain ? `b-${opened.bounceToken}@${req.bounceDomain}` : req.from;
       const data = opened.data;
       return deliverTo(
-        req.destination,
+        destination,
         {
           domain: req.domain,
           from,
@@ -159,7 +171,10 @@ export function localTransport(opts: LocalOptions, open: OpenBody): DeliveryTran
           smtpUtf8: req.smtpUtf8,
           requireTls: req.requireTls,
           ...(req.connections !== undefined ? { connections: req.connections } : {}),
-          sts: req.destination.kind === "targets" ? ((await opts.sts?.(req.domain)) ?? null) : null,
+          sts:
+            destination.kind === "targets" && !relayed
+              ? ((await opts.sts?.(req.domain)) ?? null)
+              : null,
         },
         o,
       );

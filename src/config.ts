@@ -50,6 +50,7 @@ const schema = b.object({
   BUNZZLE_RELAY_HOST: optional,
   BUNZZLE_RELAY_USERNAME: optional,
   BUNZZLE_RELAY_PASSWORD_FILE: optional,
+  BUNZZLE_RELAY_FOR: b.string().default("all"),
   BUNZZLE_ACME_EMAIL: optional,
   BUNZZLE_ACME_DIRECTORY: b
     .string()
@@ -156,6 +157,7 @@ export interface Config {
     port: number;
     username: string | null;
     passwordFile: string | null;
+    for: { all: boolean; blocked: boolean; targets: string[] };
   } | null;
   acme: { email: string; directory: string; dir: string; hosts: string[] } | null;
   tlsrpt: { from: string | null; org: string; contact: string };
@@ -233,6 +235,21 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     : null;
   if (c.BUNZZLE_RELAY_HOST && !relayMatch) {
     throw new ConfigError("invalid configuration:\n  BUNZZLE_RELAY_HOST must be host or host:port");
+  }
+  const relayFor = c.BUNZZLE_RELAY_FOR.split(",")
+    .map((x) => x.trim().toLowerCase().replace(/\.$/, ""))
+    .filter(Boolean);
+  if (
+    relayFor.length === 0 ||
+    (relayFor.includes("all") && relayFor.length > 1) ||
+    relayFor.some((x) => !/^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/.test(x))
+  ) {
+    throw new ConfigError(
+      "invalid configuration:\n  BUNZZLE_RELAY_FOR is all, or a comma-separated list of domains, providers and blocked",
+    );
+  }
+  if (c.BUNZZLE_RELAY_FOR !== "all" && !c.BUNZZLE_RELAY_HOST) {
+    throw new ConfigError("invalid configuration:\n  BUNZZLE_RELAY_FOR needs BUNZZLE_RELAY_HOST");
   }
   const certsDir = c.BUNZZLE_CERTS_DIR.replace(/\/+$/, "");
   const acmeHosts = [
@@ -320,6 +337,11 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
           port: Number(relayMatch[2] ?? 587),
           username: c.BUNZZLE_RELAY_USERNAME,
           passwordFile: c.BUNZZLE_RELAY_PASSWORD_FILE,
+          for: {
+            all: relayFor.includes("all"),
+            blocked: relayFor.includes("blocked"),
+            targets: relayFor.filter((x) => x !== "all" && x !== "blocked"),
+          },
         }
       : null,
     tlsrpt: {

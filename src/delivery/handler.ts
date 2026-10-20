@@ -34,7 +34,10 @@ export interface DeliveryHandlerOptions {
   ips?: SourceIp[];
   holdRetryMs?: number;
   suspendRetryMs?: number;
+  relayRoutes?: { targets: string[]; blocked: boolean } | null;
 }
+
+const RELAY = "relay";
 
 interface Update {
   address: string;
@@ -260,14 +263,29 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       if (hold) return waitFor(`bulk mail on hold: ${hold.reason}`, holdRetryMs, true, null);
     }
 
-    const choice = o.ips?.length
-      ? choose(db, o.ips, lane, target, provider, pending.length, now, (ip) =>
-          o.shaper.pausedUntil(Shaper.key(ip, target)),
-        )
-      : { source: fixedSource };
-    if ("wait" in choice) return waitFor(choice.wait.reason, choice.wait.delayMs, true, null);
-    const source = choice.source;
-    const pathKey = Shaper.key(source, target);
+    const routes = destination.kind === "targets" ? (o.relayRoutes ?? null) : null;
+    const canFallback = routes?.blocked === true && !email.requireTls;
+    let via: typeof RELAY | null =
+      routes &&
+      (routes.targets.includes(job.target) ||
+        (provider !== null && routes.targets.includes(provider)))
+        ? RELAY
+        : null;
+    let source: string = RELAY;
+    if (!via) {
+      const choice = o.ips?.length
+        ? choose(db, o.ips, lane, target, provider, pending.length, now, (ip) =>
+            o.shaper.pausedUntil(Shaper.key(ip, target)),
+          )
+        : { source: fixedSource };
+      if ("wait" in choice) {
+        if (!(choice.wait.blocked && canFallback)) {
+          return waitFor(choice.wait.reason, choice.wait.delayMs, true, null);
+        }
+        via = RELAY;
+      } else source = choice.source;
+    }
+    let pathKey = Shaper.key(source, target);
     const setPath = (d: Database) =>
       d
         .query<unknown, [string, string]>("UPDATE jobs SET path = ? WHERE id = ?")
@@ -277,6 +295,12 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       destination.kind === "targets"
         ? await o.shaper.admit(source, target, provider, lane, o.maxWaitMs)
         : { kind: "go", connections: 1, release: () => {} };
+    if (admission.kind === "requeue" && admission.blocked && !via && canFallback) {
+      via = RELAY;
+      source = RELAY;
+      pathKey = Shaper.key(source, target);
+      admission = await o.shaper.admit(source, target, provider, lane, o.maxWaitMs);
+    }
     if (admission.kind === "requeue") {
       const reason = admission.reason;
       return waitFor(
@@ -311,7 +335,8 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         ...(destination.kind === "targets" ? { connections: ticket.connections } : {}),
         lane,
         bounceDomain: o.bounceDomainFor?.(domainOf(email.from)) ?? null,
-        source,
+        source: via ? fixedSource : source,
+        ...(via ? { via } : {}),
       });
     } catch (err) {
       ticket.release("neutral", "delivery role unreachable");
@@ -370,7 +395,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         { delivered: updates.filter((u) => u.status === "delivered").length, hardBounced: hard },
         at,
       );
-      if (source !== "default" && !o.ips?.find((x) => x.ip === source)?.established) {
+      if (!via && source !== "default" && !o.ips?.find((x) => x.ip === source)?.established) {
         countWarmup(
           d,
           source,
@@ -393,6 +418,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         lane,
         path: pathKey,
         source,
+        ...(via ? { via } : {}),
         sts: report.mtaSts ?? null,
         recalled: report.recalled ?? false,
         provider,
