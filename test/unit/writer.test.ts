@@ -42,6 +42,19 @@ describe("Writer", () => {
     expect(rows()).toEqual([1, 3]);
   });
 
+  test("when the whole batch is lost, the operation that broke it keeps its own error", async () => {
+    const { writer, rows } = setup();
+    const a = writer.run((db) => db.run("INSERT INTO t VALUES (1)"));
+    const b = writer.run((db) => {
+      db.run("ROLLBACK");
+      throw new Error("broke the batch");
+    });
+    const [ra, rb] = await Promise.allSettled([a, b]);
+    expect(ra.status).toBe("rejected");
+    expect(rb.status === "rejected" && (rb.reason as Error).message).toBe("broke the batch");
+    expect(rows()).toEqual([]);
+  });
+
   test("splits work into batches of maxBatch", async () => {
     const { writer, rows } = setup(2);
     let commits = 0;
