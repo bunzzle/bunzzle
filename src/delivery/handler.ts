@@ -312,6 +312,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
             now,
             (ip) => o.shaper.pausedUntil(Shaper.key(ip, target)),
             o.listed,
+            (job.metadata["pool"] as string | null | undefined) ?? null,
           )
         : { source: fixedSource };
       if ("wait" in choice) {

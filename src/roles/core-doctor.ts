@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { allows, keyForHash } from "../accounts/api-keys.ts";
 import type { Config } from "../config.ts";
 import type { StorageState } from "../core/storage.ts";
-import { listDomains } from "../domains/domains.ts";
+import { domainPool, listDomains } from "../domains/domains.ts";
 import { latestPostmaster } from "../guards/gmail.ts";
 import { listHolds } from "../guards/guards.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
@@ -164,6 +164,18 @@ export function doctorMethods(deps: DoctorDeps): Methods {
       const keys = await rotation.keys(d.name).catch(() => null);
       const fresh = keys ? await rotation.rebuild(d.name, keys).catch(() => null) : null;
       const records = (fresh ?? d).records;
+      const pool = domainPool(db, d.name);
+      if (pool) {
+        const has = config.sourceIps.filter((x) => x.pool === pool).map((x) => x.ip);
+        add(
+          "domains",
+          `${d.name} IP pool`,
+          has.length ? "ok" : "fail",
+          has.length
+            ? `sends only from the pool ${pool}: ${has.join(", ")}`
+            : `the pool ${pool} has no IPs in BUNZZLE_SOURCE_IPS: its email waits`,
+        );
+      }
       const gmail = latestPostmaster(db, d.name);
       if (gmail) {
         const spam = gmail.spamRatio;

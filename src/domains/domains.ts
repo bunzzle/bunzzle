@@ -258,3 +258,25 @@ export function listDomains(db: Database): Domain[] {
 export function isVerified(db: Database, name: string): boolean {
   return getDomain(db, name)?.status === "verified";
 }
+
+export function domainPool(db: Database, name: string): string | null {
+  return (
+    db.query<{ pool: string | null }, [string]>("SELECT pool FROM domains WHERE name = ?").get(name)
+      ?.pool ?? null
+  );
+}
+
+export function setDomainPool(
+  db: Database,
+  name: string,
+  pool: string | null,
+  now: number,
+): boolean {
+  return (
+    db
+      .query<unknown, [string | null, number, string]>(
+        "UPDATE domains SET pool = ?, updated_at = ? WHERE name = ?",
+      )
+      .run(pool, now, name).changes > 0
+  );
+}

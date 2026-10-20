@@ -1,0 +1,3 @@
+ALTER TABLE domains ADD COLUMN pool TEXT;
+
+ALTER TABLE api_keys ADD COLUMN pool TEXT;
