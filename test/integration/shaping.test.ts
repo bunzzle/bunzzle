@@ -96,7 +96,7 @@ async function pipeline(scenario: MxScenario, limits: Limits, tuning = {}, route
     shaper,
     busyRetryMs: 50,
     maxWaitMs: 30_000,
-    ...(routed ? { relayRoutes: routed.routes } : {}),
+    ...(routed ? { relayRoutes: () => routed.routes } : {}),
   });
   const scheduler = new Scheduler({
     db,

@@ -113,6 +113,8 @@ Settings go in `deploy/bunzzle.env`. `delivery` uses the host network, so mail l
 
 Run `install.sh` again (or pull the new image). The database migrates itself on start.
 
+To keep sending during an upgrade, restart the roles one at a time instead of the whole target: `sudo systemctl restart bunzzle-signer bunzzle-dns`, then `bunzzle-delivery`, `bunzzle-inbound`, `bunzzle-api` and `bunzzle-core` last, waiting for each to come back (`systemctl is-active`). Email that was being sent when a role stopped is checked and resent only if it did not go out; API calls during a restart get a 503 with `Retry-After: 1`.
+
 ## Backup and restore
 
 `bunzzle backup --to DIR` writes a consistent copy of the database and the key files into an empty directory, with a `manifest.json` that lists every file and its SHA-256. It is safe to run while Bunzzle is running.

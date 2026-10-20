@@ -141,7 +141,7 @@ export async function runCore(config: Config, log: Logger) {
         }
       })
       .catch(() => {});
-  const storage = new StorageWatch(config.dataDir, config.minFreeMb, log);
+  const storage = new StorageWatch(config.dataDir, () => config.minFreeMb, log);
   await storage.check();
   const handleEmail = deliveryHandler({
     db,
@@ -154,7 +154,7 @@ export async function runCore(config: Config, log: Logger) {
     suspendRetryMs: scaled(5 * MIN),
     maxWaitMs: Math.max(1_000, Math.floor(Math.max(2_000, scaled(45 * MIN)) / 3)),
     bounceDomainFor: (d) => (returnPathReady(getDomain(db, d)) ? bounceDomain(d) : null),
-    relayRoutes:
+    relayRoutes: () =>
       config.relay && !config.relay.for.all
         ? { targets: config.relay.for.targets, blocked: config.relay.for.blocked }
         : null,
@@ -200,7 +200,7 @@ export async function runCore(config: Config, log: Logger) {
     currentKey,
     sourceIp: config.sourceIps.map((x) => x.ip),
     inboundHost: config.inboundHostname,
-    anomalyFloor: config.anomalyFloor,
+    anomalyFloor: () => config.anomalyFloor,
     ips: config.sourceIps,
     paths: () => shaper.views(),
     storage: () => storage.state(),
@@ -225,7 +225,7 @@ export async function runCore(config: Config, log: Logger) {
     dns,
     sourceIp: config.sourceIps.map((x) => x.ip),
     inboundHost: config.inboundHostname,
-    rotateDays: config.dkimRotateDays,
+    rotateDays: () => config.dkimRotateDays,
   });
   const doctor = doctorMethods({
     db,

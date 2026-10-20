@@ -38,13 +38,16 @@ export class StorageWatch {
 
   constructor(
     private readonly dir: string,
-    private readonly minFreeMb: number,
+    private readonly minFree: () => number,
     private readonly log: Logger,
     private readonly probe: FreeSpace = freeMegabytes,
   ) {}
 
   async check(): Promise<StorageState> {
-    if (this.minFreeMb === 0) return this.state();
+    if (this.minFree() === 0) {
+      this.#low = false;
+      return this.state();
+    }
     const free = await this.probe(this.dir);
     this.#free = free;
     if (free === null) {
@@ -57,12 +60,12 @@ export class StorageWatch {
       this.#low = false;
       return this.state();
     }
-    const low = free < this.minFreeMb;
+    const low = free < this.minFree();
     if (low && !this.#low) {
       this.log.error("free disk space is low: new email is refused until space is freed", {
         dir: this.dir,
         free_mb: free,
-        min_free_mb: this.minFreeMb,
+        min_free_mb: this.minFree(),
       });
     } else if (!low && this.#low) {
       this.log.info("free disk space is back above the limit: new email is accepted", {
@@ -74,10 +77,11 @@ export class StorageWatch {
   }
 
   low(): boolean {
-    return this.#low;
+    const min = this.minFree();
+    return min > 0 && this.#free !== null && this.#free < min;
   }
 
   state(): StorageState {
-    return { freeMb: this.#free, minFreeMb: this.minFreeMb, low: this.#low };
+    return { freeMb: this.#free, minFreeMb: this.minFree(), low: this.low() };
   }
 }

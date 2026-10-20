@@ -38,7 +38,7 @@ export interface RotationDeps {
   dns: RpcClient;
   sourceIp: string | string[] | null;
   inboundHost: string | null;
-  rotateDays: number;
+  rotateDays: () => number;
   now?: () => number;
 }
 
@@ -201,7 +201,7 @@ export function rotation(deps: RotationDeps) {
     }
 
     const age = Math.min(...active.map((k) => k.createdAt ?? Number.POSITIVE_INFINITY));
-    const due = Number.isFinite(age) && t - age >= (deps.rotateDays - OVERLAP_DAYS) * DAY;
+    const due = Number.isFinite(age) && t - age >= (deps.rotateDays() - OVERLAP_DAYS) * DAY;
     if (!force && !due) return "keys are current";
     list = await signer.call(
       "rotateStart",

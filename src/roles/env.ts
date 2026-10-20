@@ -8,6 +8,7 @@ const COMMON = [
   "BUNZZLE_LOG_LEVEL",
   "BUNZZLE_RUN_DIR",
   "BUNZZLE_RETRY_SCALE",
+  "BUNZZLE_ENV_FILE",
 ];
 
 const BY_ROLE: Record<Role, string[]> = {

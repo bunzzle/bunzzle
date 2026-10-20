@@ -1,6 +1,8 @@
 # Configuration
 
-Bunzzle reads its settings from environment variables. With the systemd install they live in `/etc/bunzzle/bunzzle.env`; with Docker, pass them to the container. Restart after a change.
+Bunzzle reads its settings from environment variables. With the systemd install they live in `/etc/bunzzle/bunzzle.env`; with Docker, pass them to the container.
+
+After editing the file, `sudo systemctl reload 'bunzzle-*'` (or `kill -HUP` on `bunzzle serve` started with `BUNZZLE_ENV_FILE` pointing at the file) applies these settings without a restart: `BUNZZLE_LOG_LEVEL`, `BUNZZLE_RETENTION_DAYS`, `BUNZZLE_GUARD_MIN_VOLUME`, `BUNZZLE_ANOMALY_FLOOR`, `BUNZZLE_DKIM_ROTATE_DAYS`, `BUNZZLE_MIN_FREE_MB` and the destinations in `BUNZZLE_RELAY_FOR`. The log names every other changed setting; restart that role to apply it. A file with a mistake is not applied, and the running settings stay.
 
 [`.env.example`](../.env.example) has the defaults for running from a checkout.
 

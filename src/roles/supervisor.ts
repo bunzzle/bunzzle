@@ -149,4 +149,8 @@ export async function runSupervisor(
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGHUP", () => {
+    log.info("reloading the configuration in every role");
+    for (const child of children.values()) child.proc.kill("SIGHUP");
+  });
 }

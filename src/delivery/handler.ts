@@ -42,7 +42,7 @@ export interface DeliveryHandlerOptions {
   ips?: SourceIp[];
   holdRetryMs?: number;
   suspendRetryMs?: number;
-  relayRoutes?: { targets: string[]; blocked: boolean } | null;
+  relayRoutes?: () => { targets: string[]; blocked: boolean } | null;
   listed?: (ip: string) => boolean;
 }
 
@@ -275,7 +275,8 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       if (hold) return waitFor(`bulk mail on hold: ${hold.reason}`, holdRetryMs, true, null);
     }
 
-    const routes = destination.kind === "targets" && !simulated ? (o.relayRoutes ?? null) : null;
+    const routes =
+      destination.kind === "targets" && !simulated ? (o.relayRoutes?.() ?? null) : null;
     const canFallback = routes?.blocked === true && !email.requireTls;
     let via: typeof RELAY | null =
       routes &&
