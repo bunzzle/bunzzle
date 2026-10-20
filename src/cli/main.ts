@@ -25,6 +25,7 @@ import {
   keysCommand,
   pathsCommand,
   queueCommand,
+  routesCommand,
   statsCommand,
   suppressionsCommand,
   webhooksCommand,
@@ -47,6 +48,7 @@ Usage:
   bunzzle keys        create|list|revoke API keys (needs \`serve\` running)
   bunzzle paths       sending speed per destination and why it changed (needs \`serve\` running)
   bunzzle webhooks    add|list|remove event webhooks (needs \`serve\` running)
+  bunzzle routes      add|list|remove|retry inbound routes: mail for an address posted to a URL (needs \`serve\` running)
   bunzzle ips         source IPs, reverse DNS and warm-up progress (needs \`serve\` running)
   bunzzle doctor      check configuration, IPs, every DNS record and DKIM against live DNS
   bunzzle dns-test    DOMAIN: publish a test record through the DNS provider, check it, remove it
@@ -92,6 +94,7 @@ API (bunzzle serve):
   POST /emails            Idempotency-Key header; fields include expires_at, require_tls, lane
   GET  /paths             sending speed per destination, limits and recent changes
   GET|POST /webhooks, DELETE /webhooks/:id     signed in the Standard Webhooks format
+  GET|POST /routes, DELETE /routes/:id, POST /routes/:id/retry   inbound mail to a URL
   GET|POST /suppressions, DELETE /suppressions/:email
   GET|POST /u/:token      one-click unsubscribe (public, added to bulk email)
   GET  /emails            search: to, status, tag, domain, since, until, limit, cursor
@@ -197,6 +200,8 @@ async function main(argv: string[]) {
       return holdsCommand(argv.slice(1), loadConfig());
     case "webhooks":
       return webhooksCommand(argv.slice(1), loadConfig());
+    case "routes":
+      return routesCommand(argv.slice(1), loadConfig());
     case "suppressions":
       return suppressionsCommand(argv.slice(1), loadConfig());
     case "emails":

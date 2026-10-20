@@ -20,6 +20,7 @@ const BY_ROLE: Record<Role, string[]> = {
   ],
   core: [
     "BUNZZLE_DATA_DIR",
+    "BUNZZLE_ALLOW_PRIVATE_DESTINATIONS",
     "BUNZZLE_RETENTION_DAYS",
     "BUNZZLE_MIN_FREE_MB",
     "BUNZZLE_EVENT_LOG",
@@ -108,6 +109,7 @@ const BY_ROLE: Record<Role, string[]> = {
   inbound: [
     "BUNZZLE_INBOUND_HOST",
     "BUNZZLE_INBOUND_PORT",
+    "BUNZZLE_INBOUND_MAX_SIZE",
     "BUNZZLE_INBOUND_HOSTNAME",
     "BUNZZLE_EHLO_NAME",
     "BUNZZLE_INBOUND_TLS_CERT_FILE",

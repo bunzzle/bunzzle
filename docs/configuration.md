@@ -63,13 +63,14 @@ The log starts with the events that happen after it is turned on. `id` grows wit
 
 ## Inbound
 
-Bounces, complaints and unsubscribe replies. Off unless a port is set.
+Bounces, complaints, unsubscribe replies and mail for inbound routes. Off unless a port is set.
 
 | Variable | Default | |
 |---|---|---|
 | `BUNZZLE_INBOUND_PORT` | | Port for inbound mail. `25` in production. |
 | `BUNZZLE_INBOUND_HOST` | `0.0.0.0` | Address the inbound port listens on. |
 | `BUNZZLE_INBOUND_HOSTNAME` | `BUNZZLE_EHLO_NAME` | Name of this server in the bounce MX records. |
+| `BUNZZLE_INBOUND_MAX_SIZE` | `10485760` | Largest message accepted, in bytes. Bounces and reports stay under 2 MB. |
 | `BUNZZLE_INBOUND_TLS_CERT_FILE` | | Certificate for STARTTLS on the inbound port. |
 | `BUNZZLE_INBOUND_TLS_KEY_FILE` | | Private key for that certificate. |
 

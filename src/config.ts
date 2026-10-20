@@ -35,6 +35,12 @@ const schema = b.object({
   BUNZZLE_EVENT_LOG_DAYS: b.coerce.number().int().min(1).max(3650).default(30),
   BUNZZLE_INBOUND_HOST: b.string().min(1).default("0.0.0.0"),
   BUNZZLE_INBOUND_PORT: b.coerce.number().int().min(0).max(65535).optional(),
+  BUNZZLE_INBOUND_MAX_SIZE: b.coerce
+    .number()
+    .int()
+    .min(64 * 1024)
+    .max(40 * 1024 * 1024)
+    .default(10 * 1024 * 1024),
   BUNZZLE_RETRY_SCALE: b.coerce.number().positive().max(1).default(1),
   BUNZZLE_PUBLIC_URL: optional.refine((v) => v === null || /^https?:\/\/[^\s/]+/.test(v), {
     message: "must be an http(s) URL like https://mail.example.com",
@@ -150,6 +156,7 @@ export interface Config {
   eventLog: { dir: string; maxBytes: number; keepDays: number } | null;
   inboundHost: string;
   inboundPort: number | null;
+  inboundMaxSize: number;
   retryScale: number;
   publicUrl: string | null;
   inboundHostname: string | null;
@@ -344,6 +351,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
       : null,
     inboundHost: c.BUNZZLE_INBOUND_HOST,
     inboundPort: c.BUNZZLE_INBOUND_PORT ?? null,
+    inboundMaxSize: c.BUNZZLE_INBOUND_MAX_SIZE,
     retryScale: c.BUNZZLE_RETRY_SCALE,
     publicUrl: c.BUNZZLE_PUBLIC_URL?.replace(/\/+$/, "") ?? null,
     inboundHostname: c.BUNZZLE_INBOUND_HOSTNAME ?? c.BUNZZLE_EHLO_NAME,

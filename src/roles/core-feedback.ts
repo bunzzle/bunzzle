@@ -6,6 +6,7 @@ import { type EpochPublicKey, sealBody } from "../crypto/envelope.ts";
 import { dmarcSummary, saveDmarcReport } from "../dmarc/store.ts";
 import { getDomain } from "../domains/domains.ts";
 import { type Applied, applyInbound, applyUnsubscribe, type Via } from "../inbound/apply.ts";
+import { findRoute } from "../inbound/routes.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import { listSuppressions, removeSuppression, suppress } from "../suppressions/store.ts";
 import { b } from "../validate/schema.ts";
@@ -70,7 +71,10 @@ export function feedbackMethods(deps: FeedbackDeps) {
 
   const methods: Methods = {
     inboundRecipient: method(b.object({ address: b.string().max(320) }), async ({ address }) => ({
-      accept: dmarcDomain(address) !== null || (await route(address)) !== null,
+      accept:
+        findRoute(db, address) !== null ||
+        dmarcDomain(address) !== null ||
+        (await route(address)) !== null,
     })),
 
     inboundDmarc: method(

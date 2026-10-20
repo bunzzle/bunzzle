@@ -14,6 +14,7 @@ import testKeys from "./0013_test_keys.sql" with { type: "text" };
 import postmaster from "./0014_postmaster.sql" with { type: "text" };
 import search from "./0015_search.sql" with { type: "text" };
 import ipPools from "./0016_ip_pools.sql" with { type: "text" };
+import routes from "./0017_routes.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -38,4 +39,5 @@ export const migrations: readonly Migration[] = [
   { version: 14, name: "postmaster", sql: postmaster },
   { version: 15, name: "search and stats", sql: search },
   { version: 16, name: "ip pools", sql: ipPools },
+  { version: 17, name: "inbound routes", sql: routes },
 ];

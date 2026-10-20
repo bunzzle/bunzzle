@@ -208,7 +208,14 @@ describe("fuzz: network input", () => {
   test(
     "HTTP API",
     async () => {
-      const lists = new Set(["listDomains", "listWebhooks", "listSuppressions", "ips", "paths"]);
+      const lists = new Set([
+        "listDomains",
+        "listWebhooks",
+        "listRoutes",
+        "listSuppressions",
+        "ips",
+        "paths",
+      ]);
       const core = {
         async call(m: string, _p: unknown, opts?: { result?: b.Schema }) {
           const value =
@@ -238,6 +245,9 @@ describe("fuzz: network input", () => {
         "/domains/example.com/rotate",
         "/webhooks",
         "/webhooks/x",
+        "/routes",
+        "/routes/x",
+        "/routes/x/retry",
         "/suppressions",
         "/suppressions/a%40b.c",
         "/u/bae2kmxj4wl5wq3ru6gkfyzcjauwrwfqgbydiyc7zt",
@@ -255,6 +265,7 @@ describe("fuzz: network input", () => {
           JSON.stringify({ from: "a@example.com", to: ["b@example.org"], subject: "s", text: "t" }),
           JSON.stringify({ name: "example.com" }),
           JSON.stringify({ url: "https://hooks.example.com/x", events: ["email.bounced"] }),
+          JSON.stringify({ address: "*@example.com", endpoint: "https://app.example.com/in" }),
           JSON.stringify({ email: "a@b.c", scope: "bulk" }),
         ],
         dictionary: ['"', "{", "}", "[", "]", "null", "1e999", "\\u0000", " "],

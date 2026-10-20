@@ -2,8 +2,11 @@ import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { DmarcError, readDmarcReport } from "../dmarc/report.ts";
 import { classifyReport, type Report } from "../inbound/parse.ts";
+import { buildPayload } from "../inbound/payload.ts";
+import { ROUTE_FORMATS } from "../inbound/routes.ts";
 import { startInboundServer } from "../inbound/server.ts";
 import { RpcClient, RpcError } from "../ipc/rpc.ts";
+import { MimeParseError } from "../mime/parse.ts";
 import { b } from "../validate/schema.ts";
 import { onStop, ready, watchFile } from "./runtime.ts";
 import { sockets } from "./wire.ts";
@@ -28,6 +31,17 @@ async function loadTls(config: Config): Promise<{ cert: string; key: string } | 
   return { cert, key };
 }
 
+const routesResult = b.object({
+  routes: b.array(
+    b.object({
+      id: b.string(),
+      format: b.enum(ROUTE_FORMATS),
+      recipients: b.array(b.string()),
+    }),
+  ),
+  rest: b.array(b.string()),
+});
+
 export async function runInbound(config: Config, log: Logger) {
   const core = new RpcClient(sockets(config.runDir).core);
   const port = config.inboundPort;
@@ -40,6 +54,7 @@ export async function runInbound(config: Config, log: Logger) {
           port,
           name: config.inboundHostname ?? "bunzzle",
           tls,
+          maxSize: config.inboundMaxSize,
           handlers: {
             recipient: async (address) =>
               (
@@ -49,7 +64,45 @@ export async function runInbound(config: Config, log: Logger) {
                   { result: b.object({ accept: b.boolean() }), timeoutMs: 10_000 },
                 )
               ).accept,
-            message: async (recipients, raw) => {
+            message: async (all, raw, meta) => {
+              let recipients: string[];
+              try {
+                const split = await core.call(
+                  "inboundRoutes",
+                  { recipients: all },
+                  { result: routesResult, timeoutMs: 10_000 },
+                );
+                for (const r of split.routes) {
+                  const id = Bun.randomUUIDv7();
+                  const payload = buildPayload(
+                    raw,
+                    {
+                      id,
+                      receivedAt: Date.now(),
+                      mailFrom: meta.from,
+                      rcptTo: r.recipients,
+                      remoteIp: meta.remote,
+                      tls: meta.tls,
+                    },
+                    r.format,
+                  );
+                  await core.call(
+                    "inboundRouted",
+                    { routeId: r.id, id, payload },
+                    { timeoutMs: 60_000 },
+                  );
+                }
+                if (split.rest.length === 0) return "ok";
+                recipients = split.rest;
+              } catch (err) {
+                if (err instanceof MimeParseError) {
+                  log.warn("unreadable message for a route", { error: err.message });
+                  return "reject";
+                }
+                if (err instanceof RpcError && err.code === "invalid") return "reject";
+                log.warn("could not hand a message to core", { error: (err as Error).message });
+                return "retry";
+              }
               if (recipients.some((r) => /^dmarc@/i.test(r))) {
                 try {
                   const dmarc = await readDmarcReport(raw);

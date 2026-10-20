@@ -488,6 +488,48 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           );
         }),
       },
+      "/routes": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const data = await rpc("listRoutes", { tokenHash: caller.hash }, b.array(b.unknown()));
+          return Response.json({ object: "list", data });
+        }),
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          const parsed = b
+            .object({
+              address: b.string().max(320),
+              endpoint: b.string().max(2048),
+              format: b.string().max(20).optional(),
+            })
+            .safeParse(await json(req));
+          if (!parsed.success) throw invalid(parsed.error);
+          return Response.json(
+            await rpc("createRoute", {
+              tokenHash: caller.hash,
+              address: parsed.data.address,
+              url: parsed.data.endpoint,
+              ...(parsed.data.format ? { format: parsed.data.format } : {}),
+            }),
+          );
+        }),
+      },
+      "/routes/:id": {
+        DELETE: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(
+            await rpc("deleteRoute", { tokenHash: caller.hash, id: req.params["id"] }),
+          );
+        }),
+      },
+      "/routes/:id/retry": {
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(
+            await rpc("retryRoute", { tokenHash: caller.hash, id: req.params["id"] }),
+          );
+        }),
+      },
       "/stats": {
         GET: handle(async (req) => {
           const caller = await authenticate(req);

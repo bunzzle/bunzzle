@@ -16,7 +16,7 @@ import { StsCache } from "../smtp/mta-sts.ts";
 import { SessionPool } from "../smtp/pool.ts";
 import { b } from "../validate/schema.ts";
 import { every, onStop, ready } from "./runtime.ts";
-import { deliverRequestWire, requestFromWire, sockets, toWire } from "./wire.ts";
+import { deliverRequestWire, requestFromWire, sealedBodyWire, sockets, toWire } from "./wire.ts";
 
 export async function runDelivery(config: Config, log: Logger) {
   const sock = sockets(config.runDir);
@@ -168,6 +168,46 @@ export async function runDelivery(config: Config, log: Logger) {
           ...(ips.length ? { ownAddresses: ips } : {}),
           families: config.ipv6 ? [4, 6] : [4],
         }),
+    ),
+    postInbound: method(
+      b.object({
+        routeId: b.string().min(1).max(64),
+        id: b.string().min(1).max(64),
+        url: b.string().max(2048),
+        body: sealedBodyWire,
+      }),
+      async ({ routeId, id, url, body }) => {
+        const timestamp = Math.floor(Date.now() / 1000);
+        const msgId = `msg_${id}`;
+        const opened = await signer.call(
+          "openInbound",
+          { id, routeId, msgId, timestamp, body },
+          { result: b.object({ body: b.string(), signature: b.string() }), timeoutMs: 30_000 },
+        );
+        const r = await guardedRequest(
+          {
+            method: "POST",
+            url,
+            headers: {
+              "Content-Type": "application/json",
+              "webhook-id": msgId,
+              "webhook-timestamp": String(timestamp),
+              "webhook-signature": opened.signature,
+            },
+            body: opened.body,
+          },
+          {
+            resolver,
+            allowPrivate: config.allowPrivateDestinations,
+            ...(ips.length ? { ownAddresses: ips } : {}),
+            families: config.ipv6 ? [4, 6] : [4],
+            timeoutMs: 30_000,
+          },
+        );
+        if (!r.ok) return { ok: false, error: r.error };
+        const retryAfter = r.headers.get("retry-after");
+        return { ok: true, status: r.status, ...(retryAfter ? { retryAfter } : {}) };
+      },
     ),
     dnssec: method(b.object({}), () => dnssec),
     ips: method(b.object({}), () =>
