@@ -61,6 +61,22 @@ curl http://127.0.0.1:3000/emails/<id> -H "Authorization: Bearer bz_…"
 
 API keys are shown once and stored only as a hash. They have a scope (`send`, `read`, `full`), can be limited to some domains (`--domain`) and have a per-second rate limit.
 
+### Test mode
+
+`bunzzle keys create --name dev --test` creates a test key. Email sent with it goes through the same checks, gets an id, events and webhooks, and is never delivered: every recipient counts as delivered. A test key can send from a domain that is added but not verified yet.
+
+Addresses at `simulator.test` behave the same way with any key and never leave the server:
+
+| Address | What happens |
+|---|---|
+| `delivered@simulator.test` | delivered |
+| `bounced@simulator.test` | permanent bounce (5.1.1), the address is suppressed |
+| `deferred@simulator.test` | deferred once, delivered on the retry |
+| `complained@simulator.test` | delivered, then a complaint; the address is suppressed for bulk mail |
+| `suppressed@simulator.test` | refused at intake as suppressed |
+
+Simulated bounces and complaints do not count toward the reputation guards or IP warm-up.
+
 ### SMTP
 
 Apps that can only send through SMTP can use Bunzzle as their mail server. Set `BUNZZLE_SUBMISSION_PORT=587` (and `BUNZZLE_SUBMISSION_TLS_PORT=465` if the app wants TLS from the start) with a certificate, then give the app these settings:

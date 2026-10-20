@@ -13,6 +13,7 @@ export interface ApiKey {
   createdAt: number;
   lastUsedAt: number | null;
   revokedAt: number | null;
+  test: boolean;
 }
 
 export const TOKEN = /^bz_[A-Za-z0-9_-]{43}$/;
@@ -39,6 +40,7 @@ interface Row {
   created_at: number;
   last_used_at: number | null;
   revoked_at: number | null;
+  test: number;
 }
 
 const fromRow = (r: Row): ApiKey => ({
@@ -51,6 +53,7 @@ const fromRow = (r: Row): ApiKey => ({
   createdAt: r.created_at,
   lastUsedAt: r.last_used_at,
   revokedAt: r.revoked_at,
+  test: r.test === 1,
 });
 
 export interface NewKey {
@@ -58,16 +61,27 @@ export interface NewKey {
   scope: Scope;
   domains?: string[] | null;
   rateLimit?: number;
+  test?: boolean;
 }
 
 export function createKey(db: Database, k: NewKey, now: number): { key: ApiKey; token: string } {
   const token = newToken();
   const id = Bun.randomUUIDv7();
   const domains = k.domains?.length ? JSON.stringify([...new Set(k.domains)].sort()) : null;
-  db.query<unknown, [string, string, string, string, Scope, string | null, number, number]>(
-    `INSERT INTO api_keys (id, name, token_hash, prefix, scope, domains, rate_limit, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, k.name, hashToken(token), token.slice(0, 10), k.scope, domains, k.rateLimit ?? 20, now);
+  db.query<unknown, [string, string, string, string, Scope, string | null, number, number, number]>(
+    `INSERT INTO api_keys (id, name, token_hash, prefix, scope, domains, rate_limit, created_at, test)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    k.name,
+    hashToken(token),
+    token.slice(0, 10),
+    k.scope,
+    domains,
+    k.rateLimit ?? 20,
+    now,
+    k.test ? 1 : 0,
+  );
   return { key: getKey(db, id) as ApiKey, token };
 }
 

@@ -77,7 +77,7 @@ bunzzle domains:
   rotate DOMAIN     start or continue DKIM key rotation (automatic every BUNZZLE_DKIM_ROTATE_DAYS)
 
 bunzzle keys:
-  create --name NAME [--scope send|read|full] [--domain DOMAIN] [--rate-limit N]
+  create --name NAME [--scope send|read|full] [--domain DOMAIN] [--rate-limit N] [--test]
   list | revoke ID
 
 API (bunzzle serve):

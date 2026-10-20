@@ -22,6 +22,7 @@ import {
   rescheduleEmail,
   scheduledEmail,
 } from "../delivery/queue.ts";
+import { suppressedAtIntake } from "../delivery/simulator.ts";
 import {
   type Domain,
   type DomainRecord,
@@ -93,6 +94,7 @@ const OPERATOR: ApiKey = {
   createdAt: 0,
   lastUsedAt: null,
   revokedAt: null,
+  test: false,
 };
 
 const publicKeyInfo = b.array(
@@ -191,7 +193,7 @@ export function coreMethods(deps: CoreDeps): {
       throw new RpcError("forbidden", `this API key cannot send from ${headerDomain}`);
     }
     const domain = getDomain(db, headerDomain);
-    if (domain?.status !== "verified") {
+    if (domain?.status !== "verified" && !(key.test && domain)) {
       throw new RpcError(
         "unverified-domain",
         domain
@@ -266,7 +268,9 @@ export function coreMethods(deps: CoreDeps): {
       } catch (err) {
         throw new RpcError("invalid", (err as Error).message);
       }
-      const s = suppressionFor(db, address, lane, t);
+      const s = suppressedAtIntake(address)
+        ? { reason: "simulated", scope: "all" }
+        : suppressionFor(db, address, lane, t);
       if (s) suppressed.set(address, { reason: s.reason, scope: s.scope });
     }
     const body = await sealBody(await deps.currentKey(), id, p.data);
@@ -300,6 +304,7 @@ export function coreMethods(deps: CoreDeps): {
               ...(p.meta ?? {}),
               apiKeyId: key.id === "operator" ? null : key.id,
               scheduledAt: p.scheduledAt ?? null,
+              ...(key.test ? { test: true } : {}),
             },
             ...(p.expiresAt !== undefined ? { expiresAt: p.expiresAt } : {}),
             ...(p.scheduledAt !== undefined ? { runAfter: p.scheduledAt } : {}),
@@ -531,6 +536,7 @@ export function coreMethods(deps: CoreDeps): {
         scope: b.enum(["send", "read", "full"]),
         domains: b.array(b.string().max(253)).max(100).optional(),
         rateLimit: b.number().int().min(1).max(10_000).optional(),
+        test: b.boolean().optional(),
       }),
       async (p) => {
         const domains = p.domains?.map(domainName);
@@ -542,6 +548,7 @@ export function coreMethods(deps: CoreDeps): {
               scope: p.scope,
               ...(domains ? { domains } : {}),
               ...(p.rateLimit ? { rateLimit: p.rateLimit } : {}),
+              ...(p.test ? { test: true } : {}),
             },
             now(),
           ),

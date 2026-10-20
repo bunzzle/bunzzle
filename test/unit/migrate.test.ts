@@ -63,7 +63,7 @@ describe("migrate", () => {
     );
     db.run(`INSERT INTO jobs (message_id, state, run_after, attempt, last_error, updated_at)
             VALUES ('m1', 'ready', 10, 2, 'busy', 7), ('m2', 'unknown', 11, 1, NULL, 8)`);
-    expect(migrate(db, migrations)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(migrate(db, migrations)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
     const rows = db
       .query<Record<string, unknown>, []>(
         "SELECT id, message_id, target, state, run_after, attempt, last_error, expires_at, notices FROM jobs ORDER BY id",

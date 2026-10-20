@@ -365,6 +365,7 @@ interface KeyView {
   rateLimit: number;
   lastUsedAt: number | null;
   revokedAt: number | null;
+  test: boolean;
   token?: string;
 }
 
@@ -375,11 +376,12 @@ export async function keysCommand(argv: string[], config: Config) {
       const args = parseArgs(rest, {
         strings: ["name", "scope", "rate-limit"],
         lists: ["domain"],
+        flags: ["test"],
       });
       const name = args.strings.get("name");
       if (!name)
         throw new UsageError(
-          "usage: bunzzle keys create --name NAME [--scope send|read|full] [--domain D]",
+          "usage: bunzzle keys create --name NAME [--scope send|read|full] [--domain D] [--test]",
         );
       const scope = args.strings.get("scope") ?? "send";
       if (!["send", "read", "full"].includes(scope))
@@ -391,9 +393,10 @@ export async function keysCommand(argv: string[], config: Config) {
         scope,
         ...(domains ? { domains } : {}),
         ...(rateLimit ? { rateLimit: Number(rateLimit) } : {}),
+        ...(args.flags.has("test") ? { test: true } : {}),
       });
       console.log(
-        `Created API key "${key.name}" (${key.scope}${key.domains ? `, only ${key.domains.join(", ")}` : ""}).`,
+        `Created ${key.test ? "test " : ""}API key "${key.name}" (${key.scope}${key.domains ? `, only ${key.domains.join(", ")}` : ""}).${key.test ? " Email sent with it is recorded but never delivered." : ""}`,
       );
       console.log("Copy it now, it is shown only once:\n");
       console.log(key.token);
@@ -404,7 +407,7 @@ export async function keysCommand(argv: string[], config: Config) {
       if (keys.length === 0)
         console.log("No API keys yet. Create one with `bunzzle keys create --name NAME`.");
       for (const k of keys) {
-        const state = k.revokedAt ? "revoked" : "active";
+        const state = k.revokedAt ? "revoked" : k.test ? "test" : "active";
         const used = k.lastUsedAt ? new Date(k.lastUsedAt).toISOString() : "never used";
         console.log(
           `${k.id}  ${k.prefix}…  ${state.padEnd(7)}  ${k.scope.padEnd(4)}  ${k.name}  (${used})`,
