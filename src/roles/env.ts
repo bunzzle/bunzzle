@@ -20,6 +20,7 @@ const BY_ROLE: Record<Role, string[]> = {
   core: [
     "BUNZZLE_DATA_DIR",
     "BUNZZLE_RETENTION_DAYS",
+    "BUNZZLE_MIN_FREE_MB",
     "BUNZZLE_EVENT_LOG",
     "BUNZZLE_EVENT_LOG_DIR",
     "BUNZZLE_EVENT_LOG_MAX_MB",

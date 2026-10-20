@@ -29,11 +29,19 @@ const FROM_RPC: Record<string, [number, string]> = {
   started: [409, "invalid_state"],
 };
 
+const RETRY_LATER: Record<string, [number, string, string]> = {
+  "storage-low": [503, "insufficient_storage", "60"],
+};
+
 export function fromRpc(err: unknown): ApiError {
   if (err instanceof ApiError) return err;
   if (err instanceof RpcError) {
     const mapped = FROM_RPC[err.code];
     if (mapped) return new ApiError(mapped[0], mapped[1], err.message);
+    const later = RETRY_LATER[err.code];
+    if (later) {
+      return new ApiError(later[0], later[1], err.message, { "Retry-After": later[2] });
+    }
     if (err.code === "unavailable" || err.code === "lost" || err.code === "timeout") {
       return new ApiError(
         503,

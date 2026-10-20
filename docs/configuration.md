@@ -38,6 +38,7 @@ Bunzzle reads its settings from environment variables. With the systemd install 
 | `BUNZZLE_DKIM_KEY_FILE` | | One more DKIM key file to load, next to the ones in `BUNZZLE_KEYS_DIR`. |
 | `BUNZZLE_DKIM_ROTATE_DAYS` | `90` | DKIM keys rotate after this many days. 7 to 3650. |
 | `BUNZZLE_RETENTION_DAYS` | `30` | Email bodies become unreadable after this many days, backups included. 7 to 3650. |
+| `BUNZZLE_MIN_FREE_MB` | `1024` | Below this much free space for `BUNZZLE_DATA_DIR`, new email is refused with a temporary error (HTTP 503 with `Retry-After`, SMTP 452 4.3.1) while queued email keeps being delivered. `0` turns the check off. |
 
 The master key encrypts the DKIM keys and every email body. Keep it in a file only Bunzzle can read. If it is lost, stored keys and queued email cannot be read again.
 

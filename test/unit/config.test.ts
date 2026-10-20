@@ -21,6 +21,7 @@ describe("loadConfig", () => {
       keysDir: "./keys",
       runDir: "./run",
       retentionDays: 30,
+      minFreeMb: 1024,
       inboundHost: "0.0.0.0",
       inboundPort: null,
       retryScale: 1,

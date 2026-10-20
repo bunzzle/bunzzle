@@ -28,6 +28,7 @@ const schema = b.object({
   BUNZZLE_KEYS_DIR: b.string().min(1).default("./keys"),
   BUNZZLE_RUN_DIR: b.string().min(1).default("./run"),
   BUNZZLE_RETENTION_DAYS: b.coerce.number().int().min(7).max(3650).default(30),
+  BUNZZLE_MIN_FREE_MB: b.coerce.number().int().min(0).default(1024),
   BUNZZLE_EVENT_LOG: bool,
   BUNZZLE_EVENT_LOG_DIR: b.string().min(1).default("./logs/events"),
   BUNZZLE_EVENT_LOG_MAX_MB: b.coerce.number().int().min(1).max(100_000).default(100),
@@ -137,6 +138,7 @@ export interface Config {
   keysDir: string;
   runDir: string;
   retentionDays: number;
+  minFreeMb: number;
   eventLog: { dir: string; maxBytes: number; keepDays: number } | null;
   inboundHost: string;
   inboundPort: number | null;
@@ -307,6 +309,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     keysDir: c.BUNZZLE_KEYS_DIR.replace(/\/+$/, ""),
     runDir: c.BUNZZLE_RUN_DIR.replace(/\/+$/, ""),
     retentionDays: c.BUNZZLE_RETENTION_DAYS,
+    minFreeMb: c.BUNZZLE_MIN_FREE_MB,
     eventLog: c.BUNZZLE_EVENT_LOG
       ? {
           dir: c.BUNZZLE_EVENT_LOG_DIR,
