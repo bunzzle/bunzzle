@@ -180,3 +180,29 @@ export function pruneConversations(db: Database, before: number): number {
   return db.query<unknown, [number]>("DELETE FROM conversations WHERE attempt_at < ?").run(before)
     .changes;
 }
+
+export function emailSummary(db: Database, id: string, now: number) {
+  const msg = db
+    .query<{ id: string; metadata: string; created_at: number }, [string]>(
+      "SELECT id, metadata, created_at FROM messages WHERE id = ? AND type = 'email'",
+    )
+    .get(id);
+  if (!msg) return null;
+  const meta = JSON.parse(msg.metadata) as Partial<EmailMeta>;
+  const scheduled = (meta.scheduledAt ?? 0) > now;
+  const recipients = recipientsOf(db, id).map((r) => ({
+    email: r.address,
+    status: recipientStatus(r.status, r.class, scheduled),
+  }));
+  return {
+    object: "email",
+    id: msg.id,
+    from: meta.from ?? null,
+    to: meta.to ?? [],
+    tags: meta.tags ?? [],
+    lane: meta.lane ?? "transactional",
+    created_at: iso(msg.created_at),
+    last_event: emailStatus(recipients.map((r) => r.status)),
+    recipients,
+  };
+}

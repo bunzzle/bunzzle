@@ -18,11 +18,13 @@ import { VERSION } from "../version.ts";
 import {
   doctorCommand,
   domainsCommand,
+  emailsCommand,
   holdsCommand,
   ipsCommand,
   keysCommand,
   pathsCommand,
   queueCommand,
+  statsCommand,
   suppressionsCommand,
   webhooksCommand,
 } from "./admin.ts";
@@ -50,6 +52,8 @@ Usage:
   bunzzle postmaster  auth: sign in once to read Gmail spam rates from Postmaster Tools
   bunzzle holds       bulk mail paused by the reputation or anomaly guard; release ID (needs \`serve\` running)
   bunzzle suppressions list|add|remove suppressed addresses (needs \`serve\` running)
+  bunzzle emails      list: search emails by recipient, status, tag or domain (needs \`serve\` running)
+  bunzzle stats       sent, delivered, deferred, bounced and complaints per day (needs \`serve\` running)
   bunzzle queue       what is waiting per destination; suspend|resume a destination; fail|cancel queued email (needs \`serve\` running)
   bunzzle backup      --to DIR: copy the database and keys, safe while Bunzzle runs
   bunzzle restore     --from DIR: put a backup back (stop \`serve\` first, needs the same master key)
@@ -88,7 +92,9 @@ API (bunzzle serve):
   GET|POST /webhooks, DELETE /webhooks/:id     signed in the Standard Webhooks format
   GET|POST /suppressions, DELETE /suppressions/:email
   GET|POST /u/:token      one-click unsubscribe (public, added to bulk email)
+  GET  /emails            search: to, status, tag, domain, since, until, limit, cursor
   GET  /emails/:id        status per recipient, every attempt with MX, TLS and the reply
+  GET  /stats             per day: since, until, domain, tag
   GET|POST /domains, GET /domains/:name, POST /domains/:name/verify
 
 bunzzle dkim:
@@ -189,6 +195,10 @@ async function main(argv: string[]) {
       return webhooksCommand(argv.slice(1), loadConfig());
     case "suppressions":
       return suppressionsCommand(argv.slice(1), loadConfig());
+    case "emails":
+      return emailsCommand(argv.slice(1), loadConfig());
+    case "stats":
+      return statsCommand(argv.slice(1), loadConfig());
     case "queue":
       return queueCommand(argv.slice(1), loadConfig());
     case "backup":

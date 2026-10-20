@@ -7,6 +7,7 @@ import type { Logger } from "../core/log.ts";
 import { type Apply, defer, fail, type Outcome, ok, requeue, unknown } from "../core/outcome.ts";
 import { clampHint } from "../core/retry.ts";
 import type { Destination } from "../dns/mx.ts";
+import { countEmail } from "../emails/search.ts";
 import { activeHold, countSender } from "../guards/guards.ts";
 import { applyInbound } from "../inbound/apply.ts";
 import { bucketOf, choose, countWarmup } from "../ips/warmup.ts";
@@ -134,6 +135,17 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
           u.address,
         );
         if (!u.attempted) continue;
+        const metric =
+          u.status === "delivered"
+            ? "delivered"
+            : u.status === "bounced"
+              ? "bounced"
+              : u.status === "deferred"
+                ? "deferred"
+                : u.status === "failed"
+                  ? "failed"
+                  : null;
+        if (metric) countEmail(db, job.messageId, metric, 1, now);
         event("recipient", {
           address: u.address,
           status: u.status,
@@ -174,11 +186,14 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       if (settled === "dead") {
         const expired = job.expiresAt !== null && now >= job.expiresAt;
         const why = deadClass ?? (expired ? "expired" : "retries-exhausted");
-        db.query<unknown, [string, string, number, string]>(
-          `UPDATE recipients SET status = 'failed', class = ?, reply = coalesce(reply, ?),
-             updated_at = ?
-           WHERE job_id = ? AND status IN ('queued', 'deferred', 'unknown')`,
-        ).run(why, why, now, job.id);
+        const failed = db
+          .query<unknown, [string, string, number, string]>(
+            `UPDATE recipients SET status = 'failed', class = ?, reply = coalesce(reply, ?),
+               updated_at = ?
+             WHERE job_id = ? AND status IN ('queued', 'deferred', 'unknown')`,
+          )
+          .run(why, why, now, job.id).changes;
+        countEmail(db, job.messageId, "failed", failed, now);
       }
     };
 

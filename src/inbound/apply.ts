@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { appendEvent } from "../core/events.ts";
 import type { SealedBody } from "../crypto/envelope.ts";
+import { countEmail } from "../emails/search.ts";
 import { attributionOf, countSender } from "../guards/guards.ts";
 import { countWarmup } from "../ips/warmup.ts";
 import { classify } from "../replies/classify.ts";
@@ -62,6 +63,7 @@ export function applyUnsubscribe(
     at: now,
     data: { address, via },
   });
+  countEmail(db, messageId, "unsubscribed", 1, now);
   return address;
 }
 
@@ -138,6 +140,7 @@ export function applyInbound(db: Database, input: InboundInput, now: number): Ap
       now,
     );
     event("complained", { address: target.address, feedback_type: report.feedbackType });
+    countEmail(db, messageId, "complained", 1, now);
     attribute({ complained: 1 });
     return { kind: "complaint", recipients: [target.address] };
   }
@@ -203,6 +206,7 @@ export function applyInbound(db: Database, input: InboundInput, now: number): Ap
       f.row.job_id,
       f.row.address,
     );
+    if (f.row.status !== "bounced") countEmail(db, messageId, "bounced", 1, now);
     event("bounced", {
       address: f.row.address,
       async: true,
