@@ -5,10 +5,18 @@ import { startServe } from "../test/support/serve.ts";
 const MAIN = `${import.meta.dir}/../src/cli/main.ts`;
 export const SENDER = "bench.test";
 
+export interface BenchSink {
+  port: number;
+  received(): number;
+  tlsSessions(): number;
+  stop(): void;
+}
+
 export interface Bench {
   url: string;
   token: string;
   recipients: string[];
+  dir: string;
   received(): number;
   tlsSessions(): number;
   pids(): number[];
@@ -16,7 +24,10 @@ export interface Bench {
   stop(): Promise<void>;
 }
 
-export async function startBench(destinations: number): Promise<Bench> {
+export async function startBench(
+  destinations: number,
+  o: { sink?: BenchSink; env?: Record<string, string> } = {},
+): Promise<Bench> {
   const zone: Zone = {};
   const recipients: string[] = [];
   for (let i = 0; i < destinations; i++) {
@@ -25,13 +36,24 @@ export async function startBench(destinations: number): Promise<Bench> {
     recipients.push(`user@d${i}.example`);
   }
   const dns = await startFakeDns(zone);
-  const sink = startFakeMx();
+  const sink: BenchSink =
+    o.sink ??
+    (() => {
+      const mx = startFakeMx();
+      return {
+        port: mx.port,
+        received: () => mx.sessions.reduce((n, s) => n + s.messages.length, 0),
+        tlsSessions: () => mx.sessions.filter((s) => s.tls).length,
+        stop: () => mx.stop(),
+      };
+    })();
   const served = await startServe({
     BUNZZLE_MASTER_KEY: (await Bun.$`bun ${MAIN} master-key`.text()).trim(),
     BUNZZLE_DNS_SERVERS: `127.0.0.1:${dns.port}`,
     BUNZZLE_SMTP_PORT: String(sink.port),
     BUNZZLE_ALLOW_PRIVATE_DESTINATIONS: "true",
     BUNZZLE_EHLO_NAME: "mail.bench.test",
+    ...o.env,
   });
   const cli = async (...args: string[]) =>
     (
@@ -62,8 +84,9 @@ export async function startBench(destinations: number): Promise<Bench> {
     url: served.url,
     token,
     recipients,
-    received: () => sink.sessions.reduce((n, s) => n + s.messages.length, 0),
-    tlsSessions: () => sink.sessions.filter((s) => s.tls).length,
+    dir: served.dir,
+    received: () => sink.received(),
+    tlsSessions: () => sink.tlsSessions(),
     pids: () => [served.proc.pid, ...served.pids.values()],
     roles: () => new Map([["supervisor", served.proc.pid], ...served.pids]),
     async stop() {
