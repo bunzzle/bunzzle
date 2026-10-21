@@ -5,12 +5,14 @@ bun bench/intake.ts [emails] [clients]
 bun bench/delivery.ts [emails] [destinations] [clients]
 bun bench/queue.ts [messages] [producers]
 bun bench/crash.ts [messages] [kills]
+bun bench/ns-slip.ts [seconds] [flood rates]
 ```
 
 - `intake`: `POST /emails` into the queue, nothing sent.
 - `delivery`: API to a local SMTP sink, with STARTTLS and DKIM.
 - `queue`: the queue alone.
 - `crash`: kills roles with SIGKILL during work and counts lost and duplicate emails.
+- `ns-slip`: a spoofed UDP query flood against the `ns` rate limit, with limited answers dropped and with every second one sent as a truncated reply: bytes reflected to the spoofed address, and answers a real resolver in the same and in another network still gets.
 
 The intake and delivery benchmarks start a full `bunzzle serve` (five roles), a fake DNS server and a fake MX, and print throughput, latency, CPU per email by role and memory. The load generator runs on the same machine, so the numbers are a lower bound.
 

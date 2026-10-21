@@ -137,6 +137,7 @@ const BY_ROLE: Record<Role, string[]> = {
     "BUNZZLE_NS_PORT",
     "BUNZZLE_NS_RRL_V4_PREFIX",
     "BUNZZLE_NS_RRL_V6_PREFIX",
+    "BUNZZLE_NS_RRL_SLIP",
   ],
 };
 

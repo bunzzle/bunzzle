@@ -216,6 +216,7 @@ describe("ns", () => {
       port: 53,
       v4Prefix: 24,
       v6Prefix: 48,
+      slip: 0,
     });
   });
 

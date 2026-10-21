@@ -3,7 +3,7 @@ import { createResolver } from "../../src/dns/resolver.ts";
 import { decodeMessage, encodeQuery, Rcode, RRType } from "../../src/dns/wire.ts";
 import { respond } from "../../src/ns/answer.ts";
 import { DEFAULT_LIMITS, networkOf, ResponseLimiter } from "../../src/ns/limits.ts";
-import { NsServer } from "../../src/ns/server.ts";
+import { limitSummary, NsServer } from "../../src/ns/server.ts";
 import { buildZone, type ZoneWire } from "../../src/ns/zone.ts";
 
 const APEX = "dz.mail.test";
@@ -179,17 +179,23 @@ describe("response rate limit", () => {
     expect(networkOf("2001:db8:0:100::1", 24, 56)).not.toBe(networkOf("2001:db8::1", 24, 56));
   });
 
-  test("burst, then slip and drop in turn, refill over time, kinds apart", () => {
+  test("burst, then drop by default, refill over time, kinds apart", () => {
     let t = 0;
     const lim = new ResponseLimiter(DEFAULT_LIMITS, () => t);
     const seen = Array.from({ length: 44 }, () => lim.check("192.0.2.1", "answer"));
     expect(seen.slice(0, 40).every((v) => v === "send")).toBe(true);
-    expect(seen.slice(40)).toEqual(["slip", "drop", "slip", "drop"]);
+    expect(seen.slice(40)).toEqual(["drop", "drop", "drop", "drop"]);
     expect(lim.check("192.0.2.77", "negative")).toBe("send");
     t += 100;
     expect(lim.check("192.0.2.5", "answer")).toBe("send");
     expect(lim.check("192.0.2.5", "answer")).toBe("send");
-    expect(lim.check("192.0.2.5", "answer")).not.toBe("send");
+    expect(lim.check("192.0.2.5", "answer")).toBe("drop");
+  });
+
+  test("with slip 2 every second limited answer is a truncated reply", () => {
+    const lim = new ResponseLimiter({ ...DEFAULT_LIMITS, slip: 2 }, () => 0);
+    const seen = Array.from({ length: 44 }, () => lim.check("192.0.2.1", "answer"));
+    expect(seen.slice(40)).toEqual(["slip", "drop", "slip", "drop"]);
   });
 
   test("global cap and bounded table", () => {
@@ -199,6 +205,21 @@ describe("response rate limit", () => {
     );
     expect(out).toEqual(["send", "send", "send", "global"]);
     expect(lim.size).toBe(2);
+  });
+});
+
+describe("limit summary", () => {
+  test("is empty without limit hits and counts only the last interval", () => {
+    const server = new NsServer({ apex: APEX, names: NAMES });
+    server.load(WIRE);
+    const a = server.snapshot();
+    server.answerUdp(query(`nope.${APEX}`, RRType.A), "192.0.2.1");
+    const b = server.snapshot();
+    expect(limitSummary(a, b)).toBeNull();
+    for (let i = 0; i < 45; i++) server.answerUdp(query(`k3j9.${APEX}`, RRType.MX), "192.0.2.1");
+    const c = server.snapshot();
+    expect(limitSummary(b, c)).toMatchObject({ limited: 5, slipped: 0 });
+    expect(limitSummary(c, server.snapshot())).toBeNull();
   });
 });
 
