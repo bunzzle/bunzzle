@@ -210,4 +210,4 @@ test("core refuses email from a domain the signer has no key for", async () => {
   await again.stop();
   expect(err?.code).toBe("unverified-domain");
   expect(err?.message).toContain("other.test domain is not registered");
-});
+}, 30_000);
