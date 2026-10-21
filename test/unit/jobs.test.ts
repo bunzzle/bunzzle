@@ -298,4 +298,29 @@ describe("retry schedule", () => {
     expect(clampHint(300_000)).toBe(300_000);
     expect(clampHint(86_400_000)).toBe(3_600_000);
   });
+
+  test("within a priority, each project gets a share before one project takes the rest", () => {
+    const db = openDatabase({ path: ":memory:" });
+    db.run("INSERT INTO projects (id, name, created_at) VALUES ('small', 'small', 0)");
+    for (let i = 0; i < 10; i++) {
+      enqueue(
+        db,
+        { project: "default", id: `big${i}`, type: "t", payload: i, runAfter: T0 - 100 + i },
+        T0,
+      );
+    }
+    enqueue(db, { project: "small", id: "s1", type: "t", payload: 1, runAfter: T0 }, T0);
+    const first = claim(db, T0, 2, 60_000).map((j) => j.id);
+    expect(first.sort()).toEqual(["big0", "s1"]);
+    enqueue(db, { project: "small", id: "s2", type: "t", payload: 1, runAfter: T0 }, T0);
+    expect(claim(db, T0, 1, 60_000).map((j) => j.id)).toEqual(["big1"]);
+    expect(claim(db, T0, 1, 60_000).map((j) => j.id)).toEqual(["s2"]);
+    expect(claim(db, T0, 20, 60_000).map((j) => j.id)).toHaveLength(8);
+  });
+
+  test("a project not in the projects table still gets claimed", () => {
+    const db = openDatabase({ path: ":memory:" });
+    enqueue(db, { project: "elsewhere", id: "x", type: "t", payload: 1 }, T0);
+    expect(claim(db, T0, 5, 60_000).map((j) => j.id)).toEqual(["x"]);
+  });
 });
