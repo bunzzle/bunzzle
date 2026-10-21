@@ -4326,7 +4326,8 @@
                       "email.failed",
                       "email.canceled",
                       "email.opened",
-                      "email.clicked"
+                      "email.clicked",
+                      "project.limit_approaching"
                     ]
                   }
                 },
@@ -4375,7 +4376,8 @@
                 "email.failed",
                 "email.canceled",
                 "email.opened",
-                "email.clicked"
+                "email.clicked",
+                "project.limit_approaching"
               ]
             }
           }
@@ -4410,7 +4412,8 @@
                 "email.failed",
                 "email.canceled",
                 "email.opened",
-                "email.clicked"
+                "email.clicked",
+                "project.limit_approaching"
               ]
             }
           },

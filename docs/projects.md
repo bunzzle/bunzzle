@@ -38,6 +38,21 @@ sudo bunzzle domains add shop.example --project shop
 
 `--project NAME` works with `domains`, `keys`, `webhooks`, `routes`, `suppressions`, `emails` and `stats`. Without it they work on `default`.
 
+## Send limits
+
+```sh
+sudo bunzzle projects limits shop --per-hour 1000 --per-day 10000
+sudo bunzzle projects limits shop --per-day none
+```
+
+Or `PATCH /projects/shop` with `{"per_hour": 1000, "per_day": 10000}`; `null` removes a limit.
+
+Limits count recipients that will be sent to: suppressed addresses and email sent with a test key do not count. The hour is the last 60 minutes, counted per minute; the day is the current hour and the 23 before it. Counting starts when a project gets its first limit.
+
+Email over a limit is refused when it is sent, never held later: the API answers 429 `project_limit` with a `Retry-After` header in seconds, and SMTP submission answers `451 4.7.1`. A batch is accepted whole or not at all. Refused email does not count. An email with more recipients than the limit itself answers 422.
+
+When a project reaches 90 % of a limit, its webhooks get one `project.limit_approaching` event per hour or day, with `window`, `limit` and `used`.
+
 ## Suspending a project
 
 ```sh

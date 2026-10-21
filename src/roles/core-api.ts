@@ -8,7 +8,9 @@ import {
   touchKey,
 } from "../accounts/api-keys.ts";
 import { findProject, projectOfMessage, SYSTEM_PROJECT } from "../accounts/projects.ts";
+import { type Over, takeQuota } from "../accounts/usage.ts";
 import type { SourceIp } from "../config.ts";
+import { appendEvent } from "../core/events.ts";
 import { countByState } from "../core/jobs.ts";
 import type { Logger } from "../core/log.ts";
 import type { StorageState } from "../core/storage.ts";
@@ -187,12 +189,14 @@ export function coreMethods(deps: CoreDeps): {
         `free disk space is below ${storage.minFreeMb} MB; new email is accepted again once space is freed`,
       );
     }
-    if (findProject(db, project)?.suspendedAt != null) {
+    const settings = findProject(db, project);
+    if (settings?.suspendedAt != null) {
       throw new RpcError(
         "project-suspended",
         "This project is suspended. Sending is paused until it is resumed.",
       );
     }
+    const limits = { perHour: settings?.perHour ?? null, perDay: settings?.perDay ?? null };
     const id = p.id ?? Bun.randomUUIDv7();
     if (p.id !== undefined) {
       const owner = projectOfMessage(db, id);
@@ -286,6 +290,7 @@ export function coreMethods(deps: CoreDeps): {
       }
     }
     const suppressed = new Map<string, { reason: string; scope: string }>();
+    const sending = new Set<string>();
     for (const raw of p.recipients) {
       let address: string;
       try {
@@ -297,7 +302,9 @@ export function coreMethods(deps: CoreDeps): {
         ? { reason: "simulated", scope: "all" }
         : suppressionFor(db, project, address, lane, t);
       if (s) suppressed.set(address, { reason: s.reason, scope: s.scope });
+      else sending.add(address);
     }
+    const counted = key?.test ? 0 : sending.size;
     await deps.scan?.(p.data, envelopeFrom, p.recipients);
     const body = await sealBody(await deps.currentKey(), id, p.data);
     return {
@@ -316,6 +323,8 @@ export function coreMethods(deps: CoreDeps): {
             return { id: prev.messageId, existed: true };
           }
         }
+        const quota = takeQuota(d, project, limits, counted, t);
+        if (!quota.ok) throw limitError(quota.over);
         enqueueEmail(
           d,
           project,
@@ -343,9 +352,34 @@ export function coreMethods(deps: CoreDeps): {
           t,
         );
         if (idem) rememberIdempotent(d, idemOwner, idem.key, idem.hash, id, t);
+        for (const near of quota.near) {
+          appendEvent(d, {
+            messageId: id,
+            kind: "limit_approaching",
+            source: "intake",
+            at: t,
+            data: { window: near.window, limit: near.limit, used: near.used },
+          });
+        }
         return { id, existed: false };
       },
     };
+  };
+
+  const limitError = (o: Over): RpcError => {
+    const span = o.window === "hour" ? "hourly" : "daily";
+    if (o.retryAfterMs === null) {
+      return new RpcError(
+        "invalid",
+        `this email has more recipients than the project's ${span} limit of ${o.limit}`,
+      );
+    }
+    const seconds = Math.ceil(o.retryAfterMs / 1000);
+    return new RpcError(
+      "project-limit",
+      `The project's ${span} limit of ${o.limit} recipients is reached. Try again in ${seconds} seconds.`,
+      seconds,
+    );
   };
 
   const enqueueFailed = (err: unknown): never => {

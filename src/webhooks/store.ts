@@ -13,6 +13,7 @@ export const EVENT_TYPES = [
   "email.canceled",
   "email.opened",
   "email.clicked",
+  "project.limit_approaching",
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];
