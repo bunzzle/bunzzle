@@ -117,3 +117,23 @@ jobs:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+  sdk:
+    runs-on: ubuntu-latest
+    needs: binaries
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    container:
+      image: node:24-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Tag matches the SDK version
+        working-directory: sdk/typescript
+        run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+      - name: Publish with provenance
+        working-directory: sdk/typescript
+        run: npx --yes npm@11.20.0 publish --provenance

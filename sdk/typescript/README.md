@@ -1,6 +1,14 @@
 # Bunzzle SDK for TypeScript and JavaScript
 
-A client for the Bunzzle API. It uses `fetch` and has no dependencies, so it runs in Bun, Deno, Node.js 18+ and browsers. It needs Bunzzle 0.2.0 or later. The code and types are generated from [openapi.json](../../openapi.json), so every API operation is here.
+A client for the Bunzzle API. It uses `fetch` and has no dependencies, and is tested on Bun, Node.js 22 and 24 and Deno 2. It is for code that runs on a server: an API key in a web page can be read by anyone who opens it, and the API does not accept calls from web pages. It needs Bunzzle 0.2.0 or later. The code and types are generated from [openapi.json](../../openapi.json), so every API operation is here.
+
+## Install
+
+```sh
+bun add @bunzzle/sdk
+```
+
+Or `npm install @bunzzle/sdk`.
 
 ## Use
 
