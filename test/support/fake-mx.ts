@@ -11,6 +11,7 @@ export interface MxScenario {
   ehlo?: string;
   starttls?: string;
   injectAfterStarttls?: boolean;
+  breakTls?: boolean;
   mail?: string;
   rcpt?: (address: string) => string;
   data?: string;
@@ -80,6 +81,13 @@ export function startFakeMx(scenario: MxScenario = {}, port = 0): FakeMx {
       const reply = scenario.starttls ?? "220 2.0.0 Ready to start TLS\r\n";
       s.write(scenario.injectAfterStarttls ? `${reply}250 injected\r\n` : reply);
       if (!reply.startsWith("220")) return;
+      if (scenario.breakTls) {
+        setTimeout(() => {
+          s.write("not a TLS record\r\n");
+          s.end();
+        }, 50);
+        return;
+      }
       const [, tls] = s.upgradeTLS({
         tls: scenario.tls ?? { key: KEY, cert: CERT },
         socket: tlsHandlers,
