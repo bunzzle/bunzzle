@@ -70,10 +70,7 @@ describe("core sockets", () => {
       { mode: "600" },
     );
     try {
-      const mode = (
-        await Bun.$`stat -f %Lp ${path} 2>/dev/null || stat -c %a ${path}`.text()
-      ).trim();
-      expect(mode).toBe("600");
+      expect((await Bun.file(path).stat()).mode & 0o777).toBe(0o600);
       const client = new RpcClient(path);
       expect(await client.call("ping", {})).toBe("pong");
       client.close();
