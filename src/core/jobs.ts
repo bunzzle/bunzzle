@@ -32,6 +32,8 @@ export function jobId(messageId: string, target: string): string {
 }
 
 export function enqueue(db: Database, m: NewMessage, now: number): string {
+  const known = served.get(db);
+  if (known && !known.listed.has(m.project)) known.listedAt = Number.NEGATIVE_INFINITY;
   const id = m.id ?? Bun.randomUUIDv7();
   const targets = m.targets?.length ? [...new Set(m.targets)] : [""];
   db.query<unknown, [string, string, string, string, string, number]>(
@@ -103,7 +105,9 @@ interface Fairness {
   tick: number;
   at: Map<string, number>;
   projects: string[];
+  listed: Set<string>;
   listedAt: number;
+  scanAll: boolean;
 }
 
 const served = new WeakMap<Database, Fairness>();
@@ -111,7 +115,14 @@ const served = new WeakMap<Database, Fairness>();
 function fairnessOf(db: Database): Fairness {
   let s = served.get(db);
   if (!s) {
-    s = { tick: 0, at: new Map(), projects: [], listedAt: Number.NEGATIVE_INFINITY };
+    s = {
+      tick: 0,
+      at: new Map(),
+      projects: [],
+      listed: new Set(),
+      listedAt: Number.NEGATIVE_INFINITY,
+      scanAll: true,
+    };
     served.set(db, s);
   }
   const t = performance.now();
@@ -120,7 +131,9 @@ function fairnessOf(db: Database): Fairness {
       .query<{ id: string }, []>("SELECT id FROM projects UNION SELECT '_system'")
       .all()
       .map((r) => r.id);
+    s.listed = new Set(s.projects);
     s.listedAt = t;
+    s.scanAll = true;
   }
   return s;
 }
@@ -189,6 +202,7 @@ export function claim(
     if (next === null || next === undefined) break;
     priority = next;
     const active = projects.filter((p) => due.get(p, priority, now) !== null);
+    let more = false;
     for (let i = 0; i < active.length && leased.length < limit; i++) {
       const share = Math.ceil((limit - leased.length) / (active.length - i));
       const got = leaseFor.all(
@@ -201,14 +215,16 @@ export function claim(
         share,
         active[i] as string,
       );
+      if (got.length === share) more = true;
       leased.push(...got);
     }
-    if (leased.length < limit) {
+    if ((more || state.scanAll) && leased.length < limit) {
       leased.push(
         ...lease.all(now + leaseMs, now, priority, now, paused, full, limit - leased.length),
       );
     }
   }
+  if (leased.length < limit) state.scanAll = false;
   if (leased.length === 0) return [];
   for (const r of leased) state.at.set(r.project_id, ++state.tick);
 
@@ -266,6 +282,7 @@ export function settle(
   opts: SettleOptions,
 ): Settled {
   const guard = "WHERE id = ? AND attempt = ? AND state IN ('leased', 'unknown')";
+  const path = outcome.path ?? null;
   const event = (kind: string, data?: Record<string, unknown>) =>
     appendEvent(db, {
       messageId: job.messageId,
@@ -283,17 +300,17 @@ export function settle(
     case "continue":
     case "done": {
       const r = db
-        .query<unknown, [number, string, number]>(
-          `UPDATE jobs SET state = 'done', lease_until = NULL, check_after = NULL,
-             last_error = NULL, unresolved_attempt = NULL, updated_at = ? ${guard}`,
+        .query<unknown, [string | null, number, string, number]>(
+          `UPDATE jobs SET state = 'done', path = coalesce(?, path), lease_until = NULL,
+             check_after = NULL, last_error = NULL, unresolved_attempt = NULL, updated_at = ? ${guard}`,
         )
-        .run(now, job.id, job.attempt);
+        .run(path, now, job.id, job.attempt);
       if (r.changes === 0) return "stale";
       event("done");
       return finish("done");
     }
     case "fail": {
-      const dead = toDead(db, job, now, `${outcome.code}: ${outcome.reason}`, guard, () =>
+      const dead = toDead(db, job, now, `${outcome.code}: ${outcome.reason}`, path, guard, () =>
         event("dead", { code: outcome.code, reason: outcome.reason }),
       );
       return dead === "stale" ? dead : finish(dead);
@@ -306,7 +323,7 @@ export function settle(
         const why = expired
           ? `expired after ${job.attempt} attempts: ${outcome.reason}`
           : `retries exhausted after ${job.attempt} attempts: ${outcome.reason}`;
-        const dead = toDead(db, job, now, why, guard, () =>
+        const dead = toDead(db, job, now, why, path, guard, () =>
           event("dead", { code, reason: outcome.reason }),
         );
         return dead === "stale" ? dead : finish(dead);
@@ -329,31 +346,34 @@ export function settle(
         due.push(retry.noticesMs[notices] as number);
         notices++;
       }
-      db.query<unknown, [number, string, number, number, string, number]>(
+      db.query<unknown, [number, string, number, string | null, number, string, number]>(
         `UPDATE jobs SET state = 'ready', run_after = ?, last_error = ?, notices = ?,
-           lease_until = NULL, check_after = NULL, unresolved_attempt = NULL, updated_at = ? ${guard}`,
-      ).run(now + delay, outcome.reason, notices, now, job.id, job.attempt);
+           path = coalesce(?, path), lease_until = NULL, check_after = NULL,
+           unresolved_attempt = NULL, updated_at = ? ${guard}`,
+      ).run(now + delay, outcome.reason, notices, path, now, job.id, job.attempt);
       event("deferred", { reason: outcome.reason, delay_ms: delay });
       for (const after of due) event("delayed", { after_ms: after, reason: outcome.reason });
       return finish("retry");
     }
     case "requeue": {
       const r = db
-        .query<unknown, [number, number, string, number]>(
+        .query<unknown, [number, string | null, number, string, number]>(
           `UPDATE jobs SET state = 'ready', run_after = ?, attempt = attempt - 1,
-             lease_until = NULL, updated_at = ? WHERE id = ? AND attempt = ? AND state = 'leased'`,
+             path = coalesce(?, path), lease_until = NULL, updated_at = ?
+           WHERE id = ? AND attempt = ? AND state = 'leased'`,
         )
-        .run(now + Math.max(0, outcome.delayMs), now, job.id, job.attempt);
+        .run(now + Math.max(0, outcome.delayMs), path, now, job.id, job.attempt);
       if (r.changes === 0) return "stale";
       return finish("requeued");
     }
     case "unknown": {
       const r = db
-        .query<unknown, [number, string, number, string, number]>(
-          `UPDATE jobs SET state = 'unknown', check_after = ?, last_error = ?, lease_until = NULL,
-             updated_at = ? WHERE id = ? AND attempt = ? AND state = 'leased'`,
+        .query<unknown, [number, string, string | null, number, string, number]>(
+          `UPDATE jobs SET state = 'unknown', check_after = ?, last_error = ?,
+             path = coalesce(?, path), lease_until = NULL, updated_at = ?
+           WHERE id = ? AND attempt = ? AND state = 'leased'`,
         )
-        .run(now + opts.reconcileMs, outcome.reason, now, job.id, job.attempt);
+        .run(now + opts.reconcileMs, outcome.reason, path, now, job.id, job.attempt);
       if (r.changes === 0) return "stale";
       event("unknown", { reason: outcome.reason });
       return finish("unknown");
@@ -366,15 +386,16 @@ function toDead(
   job: Pick<ClaimedJob, "id" | "attempt">,
   now: number,
   why: string,
+  path: string | null,
   guard: string,
   record: () => void,
 ): "dead" | "stale" {
   const r = db
-    .query<unknown, [string, number, string, number]>(
-      `UPDATE jobs SET state = 'dead', last_error = ?, lease_until = NULL, check_after = NULL,
-         unresolved_attempt = NULL, updated_at = ? ${guard}`,
+    .query<unknown, [string, string | null, number, string, number]>(
+      `UPDATE jobs SET state = 'dead', last_error = ?, path = coalesce(?, path), lease_until = NULL,
+         check_after = NULL, unresolved_attempt = NULL, updated_at = ? ${guard}`,
     )
-    .run(why, now, job.id, job.attempt);
+    .run(why, path, now, job.id, job.attempt);
   if (r.changes === 0) return "stale";
   record();
   return "dead";

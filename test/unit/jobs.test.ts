@@ -193,6 +193,18 @@ describe("settle", () => {
     expect(seen).toEqual([`retry@${T0 + 7}`]);
   });
 
+  test("the path from the outcome is written with the state, and not when stale", () => {
+    const j = leased();
+    expect(settle(db, j, { ...defer("busy", 0), path: "1.2.3.4|gmail" }, T0, opts)).toBe("retry");
+    expect(job("m")["path"]).toBe("1.2.3.4|gmail");
+    expect(settle(db, j, { ...ok.done, path: "5.6.7.8|gmail" }, T0, opts)).toBe("stale");
+    expect(job("m")["path"]).toBe("1.2.3.4|gmail");
+    const [again] = claim(db, T0, 1, 30_000);
+    if (!again) throw new Error("nothing claimed");
+    expect(settle(db, again, ok.done, T0, opts)).toBe("done");
+    expect(job("m")["path"]).toBe("1.2.3.4|gmail");
+  });
+
   test("unknown waits for reconciliation", () => {
     const j = leased();
     expect(settle(db, j, unknown("timeout"), T0, opts)).toBe("unknown");
@@ -316,6 +328,15 @@ describe("retry schedule", () => {
     expect(claim(db, T0, 1, 60_000).map((j) => j.id)).toEqual(["big1"]);
     expect(claim(db, T0, 1, 60_000).map((j) => j.id)).toEqual(["s2"]);
     expect(claim(db, T0, 20, 60_000).map((j) => j.id)).toHaveLength(8);
+  });
+
+  test("a job for an unlisted project enqueued after a claim is claimed at once", () => {
+    const db = openDatabase({ path: ":memory:" });
+    enqueue(db, { project: "default", id: "a", type: "t", payload: 1 }, T0);
+    expect(claim(db, T0, 5, 60_000).map((j) => j.id)).toEqual(["a"]);
+    expect(claim(db, T0, 5, 60_000)).toEqual([]);
+    enqueue(db, { project: "elsewhere", id: "x", type: "t", payload: 1 }, T0);
+    expect(claim(db, T0, 5, 60_000).map((j) => j.id)).toEqual(["x"]);
   });
 
   test("a project not in the projects table still gets claimed", () => {

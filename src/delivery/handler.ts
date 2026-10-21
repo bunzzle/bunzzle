@@ -271,13 +271,8 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       path: string | null,
     ): Outcome => ({
       ...requeue(reason, delayMs),
+      ...(path ? { path } : {}),
       apply: (d, settled, at) => {
-        if (path) {
-          d.query<unknown, [string, string]>("UPDATE jobs SET path = ? WHERE id = ?").run(
-            path,
-            job.id,
-          );
-        }
         if (!visible || settled !== "requeued") return;
         d.query<unknown, [string, number, string]>(
           `UPDATE recipients SET status = 'deferred', reply = ?, updated_at = ?
@@ -327,10 +322,6 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       } else source = choice.source;
     }
     let pathKey = Shaper.key(source, target);
-    const setPath = (d: Database) =>
-      d
-        .query<unknown, [string, string]>("UPDATE jobs SET path = ? WHERE id = ?")
-        .run(pathKey, job.id);
 
     let admission: Admission =
       destination.kind === "targets" && !simulated
@@ -387,7 +378,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       if (code === "unavailable" || code === "invalid") {
         return {
           ...requeue(`delivery unavailable: ${(err as Error).message}`, busyRetryMs),
-          apply: (d) => setPath(d),
+          path: pathKey,
         };
       }
       throw err;
@@ -426,7 +417,6 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
     const effects = (d: Database, at: number) => {
       const event = (kind: string, data: Record<string, unknown>) =>
         appendEvent(d, { messageId: job.messageId, kind, source: SOURCE, at, data });
-      setPath(d);
       const reached = updates.filter(
         (u) => u.result && (u.result.phase === "rcpt" || u.result.phase === "dot"),
       );
@@ -530,6 +520,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         ...unknown(`no reply after the end of data: ${summary("unknown")}`),
         apply,
         committed,
+        path: pathKey,
       };
     }
     if (updates.some((u) => u.status === "deferred")) {
@@ -539,9 +530,9 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         const hints = verdicts.flatMap((v) => (v.hintMs !== null ? [v.hintMs] : []));
         if (hints.length > 0) delay = clampHint(Math.max(...hints));
       }
-      return { ...defer(summary("deferred"), delay), apply, committed };
+      return { ...defer(summary("deferred"), delay), apply, committed, path: pathKey };
     }
-    if (delivered) return { ...ok.done, apply, committed };
-    return { ...fail("bounced", summary("bounced")), apply, committed };
+    if (delivered) return { ...ok.done, apply, committed, path: pathKey };
+    return { ...fail("bounced", summary("bounced")), apply, committed, path: pathKey };
   };
 }

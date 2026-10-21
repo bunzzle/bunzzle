@@ -9,6 +9,7 @@ import { openDatabase } from "../core/store/db.ts";
 import { Writer } from "../core/store/writer.ts";
 import { type EpochPublicKey, epochOf } from "../crypto/envelope.ts";
 import { deliveryHandler } from "../delivery/handler.ts";
+import { cachingLookups } from "../delivery/lookups.ts";
 import { shredBodies } from "../delivery/queue.ts";
 import type { DeliveryTransport } from "../delivery/transport.ts";
 import { pruneDmarc } from "../dmarc/store.ts";
@@ -83,7 +84,7 @@ export async function runCore(config: Config, log: Logger) {
 
   let settled: string[] = [];
   const takeSettled = () => settled.splice(0, 5000);
-  const transport: DeliveryTransport = {
+  const transport: DeliveryTransport = cachingLookups({
     lookup: (domain) =>
       delivery.call("lookup", { domain }, { result: destinationWire, timeoutMs: 2 * MIN }),
     deliver: (req) => {
@@ -102,7 +103,7 @@ export async function runCore(config: Config, log: Logger) {
       settled.push(...keys);
       if (settled.length > MAX_SETTLED) settled.splice(0, settled.length - MAX_SETTLED);
     },
-  };
+  });
   const flushSettled = async () => {
     const keys = takeSettled();
     if (keys.length === 0) return;
