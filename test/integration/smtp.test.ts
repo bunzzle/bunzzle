@@ -113,6 +113,31 @@ describe("SMTP session", () => {
     expect(r.tls.status).toBe("none");
   });
 
+  test("a failed TLS handshake defers and never falls back to plain text", async () => {
+    const r = await session({ breakTls: true });
+    expect(r.phase).toBe("starttls");
+    expect(r.tryNext).toBe(true);
+    expect(r.recipients[0]).toMatchObject({ status: "deferred", enhanced: "4.7.5" });
+    expect(mx?.sessions.length).toBe(1);
+    expect(commandsOf().some((c) => c.startsWith("MAIL"))).toBe(false);
+  });
+
+  test("STARTTLS refused with 454 under the opportunistic policy goes on in plain text", async () => {
+    const r = await session({ starttls: "454 4.7.0 TLS not available\r\n" });
+    expect(r.phase).toBe("done");
+    expect(r.tls.status).toBe("none");
+    expect(mx?.sessions[0]?.tls).toBe(false);
+  });
+
+  test("STARTTLS refused with 454 when TLS is required defers before MAIL", async () => {
+    const r = await session(
+      { starttls: "454 4.7.0 TLS not available\r\n" },
+      { policy: { rule: "provider", required: true } },
+    );
+    expect(r.recipients[0]?.status).toBe("deferred");
+    expect(commandsOf().some((c) => c.startsWith("MAIL"))).toBe(false);
+  });
+
   test("data injected after the STARTTLS reply aborts the session", async () => {
     const r = await session({ injectAfterStarttls: true });
     expect(r.phase).toBe("starttls");

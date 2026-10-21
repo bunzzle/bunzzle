@@ -274,7 +274,7 @@ export class SmtpConnection {
         }
         const s = this.socket;
         const version = s.getTLSVersion() || null;
-        if (!version) {
+        if (!version || (!ok && !s.getCipher()?.name)) {
           reject(new SmtpError("tls", `TLS handshake failed: ${err?.message ?? "no session"}`));
           return;
         }

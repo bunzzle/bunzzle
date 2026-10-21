@@ -48,6 +48,8 @@ Every one of these is fuzzed (`test/fuzz`): a few thousand inputs per target in 
 
 One private-network filter covers SMTP, webhooks, inbound routes, MTA-STS and DNS provider requests. Delivery resolves names itself and connects to the vetted IP, while TLS still checks the name. This stops DNS rebinding. Redirects are never followed.
 
+Outbound TLS: delivery always tries STARTTLS when the receiving server offers it. If the TLS handshake fails, the attempt is deferred (4.7.5) and tried again later or on the next MX host, again with STARTTLS; it never falls back to plain text. If the server answers STARTTLS with an error reply, the email goes on in plain text only when nothing requires TLS for that destination (no MTA-STS policy in enforce mode, DANE, provider rule, relay or REQUIRETLS); the delivery record then shows TLS `none`. Otherwise it is deferred.
+
 ## Abuse
 
 - Only verified domains can send.
