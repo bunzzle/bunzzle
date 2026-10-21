@@ -197,6 +197,9 @@ describe("API responses match openapi.json", () => {
     const shopDomains = await call("GET", "/domains", undefined, key["token"] as string);
     expect(shopDomains["data"]).toEqual([]);
     expect(await cli("domains", "list", "--project", "shop")).not.toContain("acme.test");
+    expect(await cli("domains", "move", "acme.test", "shop")).toContain("now belongs to shop");
+    const moved = await call("GET", "/domains", undefined, key["token"] as string);
+    expect((moved["data"] as { name: string }[]).map((d) => d.name)).toEqual(["acme.test"]);
     await call("DELETE", "/projects/default", undefined, adminToken);
     await call("DELETE", "/projects/shop", undefined, adminToken);
     const again = await call("DELETE", "/projects/shop", undefined, adminToken);

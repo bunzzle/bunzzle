@@ -38,6 +38,7 @@ import {
   findDomain,
   getDomain,
   listDomains,
+  moveDomain,
   releaseProjectDomains,
   saveDomain,
   setDomainPool,
@@ -46,7 +47,13 @@ import { countEmail, searchEmails, statsFor } from "../../src/emails/search.ts";
 import { emailSummary, emailView } from "../../src/emails/view.ts";
 import { nextAdminBatch } from "../../src/eventlog/export.ts";
 import { createHold, listHolds, releaseHold } from "../../src/guards/guards.ts";
-import { createRoute, deleteRoute, listRoutes } from "../../src/inbound/routes.ts";
+import {
+  createRoute,
+  deleteRoute,
+  findRoute,
+  listRoutes,
+  moveDomainRoutes,
+} from "../../src/inbound/routes.ts";
 import type { RpcClient } from "../../src/ipc/rpc.ts";
 import { collect, render } from "../../src/metrics/metrics.ts";
 import { cancelProjectQueue, queueSummary, removeQueued } from "../../src/queue/control.ts";
@@ -499,5 +506,23 @@ describe("projects", () => {
     await batch({ emails: [email(rcpts(1, "d")), email(rcpts(1, "e"))] });
     expect(events()).toEqual([{ window: "hour", limit: 10, used: 9 }]);
     await expect(enqueue(email(rcpts(11, "f")))).rejects.toMatchObject({ code: "invalid" });
+  });
+
+  test("moving a domain takes its inbound routes; queued email and stats stay", () => {
+    const { db, id } = setup();
+    countEmail(db, id, "delivered", 1, T0);
+    const r = createRoute(db, A, "in@a.test", "https://a.test/in", "raw", T0);
+    createRoute(db, A, "in@other.test", "https://a.test/o", "raw", T0);
+    expect(moveDomain(db, "a.test", B, T0 + 1)).toBe(true);
+    expect(moveDomain(db, "a.test", B, T0 + 1)).toBe(false);
+    expect(moveDomainRoutes(db, "a.test", B)).toBe(1);
+    expect(getDomain(db, B, "a.test")?.name).toBe("a.test");
+    expect(getDomain(db, A, "a.test")).toBeNull();
+    expect(listRoutes(db, B).map((x) => x.id)).toEqual([r?.id as string]);
+    expect(findRoute(db, "in@a.test")?.id).toBe(r?.id as string);
+    expect(projectOfMessage(db, id)).toBe(A);
+    const day = new Date(T0).toISOString().slice(0, 10);
+    expect(statsFor(db, A, { since: day, until: day })[0]?.delivered).toBe(1);
+    expect(statsFor(db, B, { since: day, until: day })[0]?.delivered).toBe(0);
   });
 });

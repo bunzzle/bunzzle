@@ -24,8 +24,8 @@ import type { SourceIp } from "../config.ts";
 import { holdProjectJobs, releaseProjectJobs } from "../core/jobs.ts";
 import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
-import { releaseProjectDomains } from "../domains/domains.ts";
-import { disableProjectRoutes } from "../inbound/routes.ts";
+import { findDomain, moveDomain, releaseProjectDomains } from "../domains/domains.ts";
+import { disableProjectRoutes, moveDomainRoutes } from "../inbound/routes.ts";
 import { type Methods, method, RpcError } from "../ipc/rpc.ts";
 import { cancelProjectQueue } from "../queue/control.ts";
 import { b } from "../validate/schema.ts";
@@ -302,6 +302,37 @@ export function projectMethods(deps: ProjectDeps): Methods {
       if (done) log.warn("project removed", { id: t.id, name: t.name, ...done });
       return { object: "project", id: t.id, deleted: true };
     }),
+
+    moveDomain: method(
+      b.object({ name: b.string().max(253), to: b.string().max(64) }),
+      async (p) => {
+        const name = domainName(p.name);
+        const to = target(p.to);
+        const d = findDomain(db, name);
+        if (!d) throw new RpcError("not-found", `domain ${name} is not registered`);
+        if (d.project === to.id) return { name, project: to.name, moved: false };
+        const routes = await writer.run((w) => {
+          if (!moveDomain(w, name, to.id, now())) return null;
+          const moved = moveDomainRoutes(w, name, to.id);
+          for (const project of [d.project, to.id]) {
+            recordAdminEvent(
+              w,
+              {
+                kind: "project.domain_moved",
+                project,
+                actor: "operator",
+                data: { domain: name, from: d.project, to: to.id, routes: moved },
+              },
+              now(),
+            );
+          }
+          return moved;
+        });
+        if (routes === null) return { name, project: to.name, moved: false };
+        log.info("domain moved", { domain: name, from: d.project, to: to.id, routes });
+        return { name, project: to.name, moved: true, routes };
+      },
+    ),
 
     createProjectKey: method(
       b.object({ tokenHash, id: b.string().max(64), ...projectKey }),
