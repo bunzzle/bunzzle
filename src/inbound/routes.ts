@@ -253,3 +253,12 @@ export function disableProjectRoutes(db: Database, project: ProjectId, now: numb
     )
     .run(now, project).changes;
 }
+
+export function moveDomainRoutes(db: Database, domain: string, to: ProjectId): number {
+  return db
+    .query<unknown, [string, string]>(
+      `UPDATE routes SET project_id = ? WHERE disabled_at IS NULL
+         AND substr(address, instr(address, '@') + 1) = ?`,
+    )
+    .run(to, domain).changes;
+}

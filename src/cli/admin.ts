@@ -139,6 +139,23 @@ export async function domainsCommand(argv: string[], config: Config) {
     );
     return;
   }
+  if (sub === "move") {
+    const [to] = rest;
+    if (!name || !to || rest.length > 1) {
+      throw new UsageError("usage: bunzzle domains move DOMAIN PROJECT");
+    }
+    const r = await call<{ name: string; project: string; moved: boolean; routes?: number }>(
+      config,
+      "moveDomain",
+      { name, to },
+    );
+    console.log(
+      r.moved
+        ? `${r.name} now belongs to ${r.project}${r.routes ? `, with ${r.routes} inbound route${r.routes === 1 ? "" : "s"}` : ""}. Email already queued is still sent.`
+        : `${r.name} already belongs to ${r.project}.`,
+    );
+    return;
+  }
   if (sub === "tracking") {
     const [host, ...flags] = rest;
     if (!name || !host) {
@@ -195,7 +212,7 @@ export async function domainsCommand(argv: string[], config: Config) {
       return;
     }
     default:
-      throw new UsageError("usage: bunzzle domains add|verify|show|rotate|list|reports");
+      throw new UsageError("usage: bunzzle domains add|verify|show|rotate|list|reports|move");
   }
 }
 

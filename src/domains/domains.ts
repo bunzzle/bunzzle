@@ -311,3 +311,14 @@ export function releaseProjectDomains(db: Database, project: ProjectId): string[
   for (const name of names) c.delete(name);
   return names;
 }
+
+export function moveDomain(db: Database, name: string, to: ProjectId, now: number): boolean {
+  domainCache(db).delete(name);
+  return (
+    db
+      .query<unknown, [string, number, string]>(
+        "UPDATE domains SET project_id = ?1, updated_at = ?2 WHERE name = ?3 AND project_id <> ?1",
+      )
+      .run(to, now, name).changes > 0
+  );
+}

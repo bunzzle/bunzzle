@@ -38,6 +38,16 @@ sudo bunzzle domains add shop.example --project shop
 
 `--project NAME` works with `domains`, `keys`, `webhooks`, `routes`, `suppressions`, `emails` and `stats`. Without it they work on `default`.
 
+## Domains
+
+A domain belongs to one project. Adding a domain that another project already has answers 409 `domain_taken`. The operator moves a domain, with its inbound routes, to another project:
+
+```sh
+sudo bunzzle domains move shop.example shop
+```
+
+Email already queued for the old project is still sent. Its stats and suppressions stay with the old project.
+
 ## Send limits
 
 ```sh
