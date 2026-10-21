@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
-import { type EpochPublicKey, sealBody } from "../crypto/envelope.ts";
+import { BodySealer, type EpochPublicKey } from "../crypto/envelope.ts";
 import { dmarcSummary, saveDmarcReport } from "../dmarc/store.ts";
 import { findDomain, getDomain } from "../domains/domains.ts";
 import { type Applied, applyInbound, applyUnsubscribe, type Via } from "../inbound/apply.ts";
@@ -45,6 +45,7 @@ const tokenResult = b
 
 export function feedbackMethods(deps: FeedbackDeps) {
   const { db, writer, log, signer, delivery } = deps;
+  const sealer = new BodySealer();
   const now = deps.now ?? Date.now;
 
   const readToken = (token: string) =>
@@ -132,7 +133,7 @@ export function feedbackMethods(deps: FeedbackDeps) {
         }
         if (routes.size === 0) throw new RpcError("invalid", "no valid recipient");
         const sealedId = Bun.randomUUIDv7();
-        const sealed = await sealBody(await deps.currentKey(), sealedId, raw);
+        const sealed = await sealer.seal(await deps.currentKey(), sealedId, raw);
         const results: Applied[] = [];
         let first = true;
         for (const r of routes.values()) {

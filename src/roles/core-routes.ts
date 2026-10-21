@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { Logger } from "../core/log.ts";
 import type { StorageState } from "../core/storage.ts";
 import type { Writer } from "../core/store/writer.ts";
-import { type EpochPublicKey, sealBody } from "../crypto/envelope.ts";
+import { BodySealer, type EpochPublicKey } from "../crypto/envelope.ts";
 import { getDomain } from "../domains/domains.ts";
 import {
   claimRouted,
@@ -49,6 +49,7 @@ const view = (r: Route) => ({
 });
 
 export function routeMethods(deps: RouteDeps) {
+  const sealer = new BodySealer();
   const { db, writer, log, signer, delivery } = deps;
   const now = deps.now ?? Date.now;
 
@@ -83,7 +84,7 @@ export function routeMethods(deps: RouteDeps) {
         if (storage?.low) {
           throw new RpcError("storage-low", `free disk space is below ${storage.minFreeMb} MB`);
         }
-        const sealed = await sealBody(await deps.currentKey(), id, payload);
+        const sealed = await sealer.seal(await deps.currentKey(), id, payload);
         await writer.run((d) => queueRouted(d, routeId, id, sealed, payload.length, now()));
         return { id };
       },
