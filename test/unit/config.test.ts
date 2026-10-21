@@ -45,6 +45,7 @@ describe("loadConfig", () => {
       sourceIps: [],
       guardMinVolume: 300,
       anomalyFloor: 500,
+      sharedBounces: true,
       dkimRotateDays: 90,
       cloudflareToken: null,
       cloudflareTokenFile: null,

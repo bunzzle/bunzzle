@@ -7,7 +7,12 @@ import { findDomain, getDomain } from "../domains/domains.ts";
 import { type Applied, applyInbound, applyUnsubscribe, type Via } from "../inbound/apply.ts";
 import { findRoute } from "../inbound/routes.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
-import { listSuppressions, removeSuppression, suppress } from "../suppressions/store.ts";
+import {
+  listSuppressions,
+  removeSuppression,
+  sharedSuppression,
+  suppress,
+} from "../suppressions/store.ts";
 import { b } from "../validate/schema.ts";
 import { projectEvents } from "../webhooks/project.ts";
 import {
@@ -31,6 +36,7 @@ export interface FeedbackDeps {
   currentKey: () => Promise<EpochPublicKey>;
   scale?: number;
   now?: () => number;
+  sharedBounces?: () => boolean;
 }
 
 const tokenResult = b
@@ -156,16 +162,18 @@ export function feedbackMethods(deps: FeedbackDeps) {
 
     listSuppressions: method(b.object({ tokenHash, project }), (p) => {
       const actor = resolveActor(db, p, "read");
-      return listSuppressions(db, actor.project, now()).map((s) => ({
-        object: "suppression",
-        email: s.address,
-        scope: s.scope,
-        reason: s.reason,
-        detail: s.detail,
-        email_id: s.sourceMessageId,
-        created_at: new Date(s.createdAt).toISOString(),
-        expires_at: s.expiresAt === null ? null : new Date(s.expiresAt).toISOString(),
-      }));
+      return listSuppressions(db, actor.project, now(), deps.sharedBounces?.() ?? false).map(
+        (s) => ({
+          object: "suppression",
+          email: s.address,
+          scope: s.scope,
+          reason: s.reason,
+          detail: s.detail,
+          email_id: s.sourceMessageId,
+          created_at: new Date(s.createdAt).toISOString(),
+          expires_at: s.expiresAt === null ? null : new Date(s.expiresAt).toISOString(),
+        }),
+      );
     }),
 
     addSuppression: method(
@@ -194,6 +202,16 @@ export function feedbackMethods(deps: FeedbackDeps) {
       async (p) => {
         const actor = resolveActor(db, p, "full");
         const n = await writer.run((d) => removeSuppression(d, actor.project, p.email, p.scope));
+        if (
+          n === 0 &&
+          deps.sharedBounces?.() &&
+          sharedSuppression(db, actor.project, p.email, now())
+        ) {
+          throw new RpcError(
+            "invalid",
+            "this address bounced as not existing; it is on the server's shared list, which only the operator can turn off",
+          );
+        }
         if (n === 0) throw new RpcError("not-found", "that address is not suppressed");
         return { email: p.email.toLowerCase(), removed: n };
       },

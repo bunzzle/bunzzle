@@ -10,6 +10,11 @@ const bool = b
   .default("false")
   .transform((v) => v === "true" || v === "1");
 
+const boolOn = b
+  .enum(["true", "false", "1", "0"])
+  .default("true")
+  .transform((v) => v === "true" || v === "1");
+
 const optional = b
   .string()
   .optional()
@@ -34,6 +39,7 @@ const schema = b.object({
   BUNZZLE_RETENTION_DAYS: b.coerce.number().int().min(7).max(3650).default(30),
   BUNZZLE_MIN_FREE_MB: b.coerce.number().int().min(0).default(1024),
   BUNZZLE_EVENT_LOG: bool,
+  BUNZZLE_SHARED_BOUNCES: boolOn,
   BUNZZLE_EVENT_LOG_DIR: b.string().min(1).default("./logs/events"),
   BUNZZLE_EVENT_LOG_MAX_MB: b.coerce.number().int().min(1).max(100_000).default(100),
   BUNZZLE_EVENT_LOG_DAYS: b.coerce.number().int().min(1).max(3650).default(30),
@@ -202,6 +208,7 @@ export interface Config {
   sourceIps: SourceIp[];
   guardMinVolume: number;
   anomalyFloor: number;
+  sharedBounces: boolean;
   dkimRotateDays: number;
   cloudflareToken: string | null;
   cloudflareTokenFile: string | null;
@@ -444,6 +451,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     sourceIps: sourceIps(c.BUNZZLE_SOURCE_IPS, c.BUNZZLE_SOURCE_IP, c.BUNZZLE_ESTABLISHED_IPS),
     guardMinVolume: c.BUNZZLE_GUARD_MIN_VOLUME,
     anomalyFloor: c.BUNZZLE_ANOMALY_FLOOR,
+    sharedBounces: c.BUNZZLE_SHARED_BOUNCES,
     dkimRotateDays: c.BUNZZLE_DKIM_ROTATE_DAYS,
     cloudflareToken: c.BUNZZLE_CLOUDFLARE_API_TOKEN,
     cloudflareTokenFile: c.BUNZZLE_CLOUDFLARE_API_TOKEN_FILE,

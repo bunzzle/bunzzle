@@ -7,7 +7,17 @@ export type SuppressionReason =
   | "no-domain"
   | "complaint"
   | "unsubscribe"
-  | "manual";
+  | "manual"
+  | "invalid";
+
+const SHARED_REASONS = "('hard-bounce', 'no-domain')";
+
+const shared = (s: Suppression): Suppression => ({
+  ...s,
+  reason: "invalid",
+  detail: null,
+  sourceMessageId: null,
+});
 
 export interface Suppression {
   address: string;
@@ -98,26 +108,71 @@ export function suppressionFor(
   address: string,
   lane: "transactional" | "bulk",
   now: number,
+  sharedBounces = false,
 ): Suppression | null {
   const r = db
-    .query<Row, [string, string, number, string]>(
+    .query<Row & { project_id: string }, [string, string, number, string, number]>(
       `SELECT * FROM suppressions
-       WHERE project_id = ? AND address = ? AND (expires_at IS NULL OR expires_at > ?)
-         AND (scope = 'all' OR scope = ?)
-       ORDER BY scope = 'all' DESC LIMIT 1`,
+       WHERE address = ?2 AND (expires_at IS NULL OR expires_at > ?3)
+         AND (scope = 'all' OR scope = ?4)
+         AND (project_id = ?1 OR (?5 AND reason IN ${SHARED_REASONS}))
+       ORDER BY project_id = ?1 DESC, scope = 'all' DESC LIMIT 1`,
     )
-    .get(project, address.toLowerCase(), now, lane === "bulk" ? "bulk" : "all");
-  return r ? fromRow(r) : null;
+    .get(
+      project,
+      address.toLowerCase(),
+      now,
+      lane === "bulk" ? "bulk" : "all",
+      sharedBounces ? 1 : 0,
+    );
+  if (!r) return null;
+  return r.project_id === project ? fromRow(r) : shared(fromRow(r));
 }
 
-export function listSuppressions(db: Database, project: ProjectId, now: number): Suppression[] {
-  return db
+export function listSuppressions(
+  db: Database,
+  project: ProjectId,
+  now: number,
+  sharedBounces = false,
+): Suppression[] {
+  const own = db
     .query<Row, [string, number]>(
       `SELECT * FROM suppressions WHERE project_id = ? AND (expires_at IS NULL OR expires_at > ?)
        ORDER BY created_at DESC`,
     )
     .all(project, now)
     .map(fromRow);
+  if (!sharedBounces) return own;
+  const others = db
+    .query<Row, [string, number]>(
+      `SELECT address, scope, min(reason) AS reason, NULL AS detail, NULL AS source_message_id,
+         min(created_at) AS created_at, max(expires_at) AS expires_at
+       FROM suppressions
+       WHERE project_id <> ?1 AND reason IN ${SHARED_REASONS}
+         AND (expires_at IS NULL OR expires_at > ?2)
+         AND address NOT IN (SELECT address FROM suppressions WHERE project_id = ?1)
+       GROUP BY address, scope`,
+    )
+    .all(project, now)
+    .map((r) => shared(fromRow(r)));
+  return [...own, ...others].sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export function sharedSuppression(
+  db: Database,
+  project: ProjectId,
+  address: string,
+  now: number,
+): boolean {
+  return (
+    db
+      .query<{ n: number }, [string, string, number]>(
+        `SELECT 1 AS n FROM suppressions
+         WHERE address = ?2 AND project_id <> ?1 AND reason IN ${SHARED_REASONS}
+           AND (expires_at IS NULL OR expires_at > ?3) LIMIT 1`,
+      )
+      .get(project, address.toLowerCase(), now) !== null
+  );
 }
 
 export function removeSuppression(

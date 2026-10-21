@@ -96,6 +96,7 @@ export interface CoreDeps {
   sourceIp: string | string[] | null;
   inboundHost?: string | null;
   anomalyFloor?: () => number;
+  sharedBounces?: () => boolean;
   ips?: SourceIp[];
   tracking?: (domain: string) => unknown;
   scan?: (data: string, from: string, recipients: string[]) => Promise<void>;
@@ -301,7 +302,7 @@ export function coreMethods(deps: CoreDeps): {
       }
       const s = suppressedAtIntake(address)
         ? { reason: "simulated", scope: "all" }
-        : suppressionFor(db, project, address, lane, t);
+        : suppressionFor(db, project, address, lane, t, deps.sharedBounces?.() ?? false);
       if (s) suppressed.set(address, { reason: s.reason, scope: s.scope });
       else sending.add(address);
     }

@@ -212,6 +212,7 @@ export async function runCore(config: Config, log: Logger) {
     sourceIp: config.sourceIps.map((x) => x.ip),
     inboundHost: config.inboundHostname,
     anomalyFloor: () => config.anomalyFloor,
+    sharedBounces: () => config.sharedBounces,
     ips: config.sourceIps,
     paths: () => shaper.views(),
     storage: () => storage.state(),
@@ -228,6 +229,7 @@ export async function runCore(config: Config, log: Logger) {
     delivery,
     currentKey,
     scale,
+    sharedBounces: () => config.sharedBounces,
   });
   await feedback.recover();
   const routes = routeMethods({

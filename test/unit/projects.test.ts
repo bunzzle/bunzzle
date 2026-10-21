@@ -69,6 +69,7 @@ import { coreMethods } from "../../src/roles/core-api.ts";
 import {
   listSuppressions,
   removeSuppression,
+  sharedSuppression,
   suppress,
   suppressionFor,
 } from "../../src/suppressions/store.ts";
@@ -590,5 +591,51 @@ describe("projects", () => {
     expect(pool(b.id)).toBe("acme");
     expect(sharePool(db, "acme")).toBe(true);
     expect(poolUsableBy(db, "acme", A)).toBe(true);
+  });
+
+  test("addresses that do not exist are shared across projects, without saying who saw them", () => {
+    const { db } = setup();
+    suppress(
+      db,
+      B,
+      {
+        address: "gone@dest.test",
+        scope: "all",
+        reason: "hard-bounce",
+        detail: "550 5.1.1 no such user",
+        messageId: "m-b",
+        ttlMs: 86_400_000,
+      },
+      T0,
+    );
+    suppress(db, B, { address: "angry@dest.test", scope: "bulk", reason: "complaint" }, T0);
+    expect(suppressionFor(db, A, "gone@dest.test", "transactional", T0, true)).toMatchObject({
+      reason: "invalid",
+      detail: null,
+      sourceMessageId: null,
+    });
+    expect(suppressionFor(db, A, "gone@dest.test", "transactional", T0, false)).toBeNull();
+    expect(suppressionFor(db, A, "angry@dest.test", "bulk", T0, true)).toBeNull();
+    expect(suppressionFor(db, B, "gone@dest.test", "transactional", T0, true)?.reason).toBe(
+      "hard-bounce",
+    );
+    expect(listSuppressions(db, A, T0, true)).toEqual([
+      {
+        address: "gone@dest.test",
+        scope: "all",
+        reason: "invalid",
+        detail: null,
+        sourceMessageId: null,
+        createdAt: T0,
+        expiresAt: T0 + 86_400_000,
+      },
+    ]);
+    expect(listSuppressions(db, A, T0, false)).toEqual([]);
+    expect(removeSuppression(db, A, "gone@dest.test", null)).toBe(0);
+    expect(sharedSuppression(db, A, "gone@dest.test", T0)).toBe(true);
+    suppress(db, A, { address: "gone@dest.test", scope: "all", reason: "manual" }, T0);
+    expect(suppressionFor(db, A, "gone@dest.test", "transactional", T0, true)?.reason).toBe(
+      "manual",
+    );
   });
 });
