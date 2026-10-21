@@ -1,12 +1,5 @@
 import type { Database } from "bun:sqlite";
-import {
-  createKey,
-  keyForHash,
-  listKeys,
-  revokeKey,
-  type Scope,
-  touchKey,
-} from "../accounts/api-keys.ts";
+import { keyForHash, type Scope, touchKey } from "../accounts/api-keys.ts";
 import { poolUsableBy } from "../accounts/pools.ts";
 import { findProject, projectOfMessage, SYSTEM_PROJECT } from "../accounts/projects.ts";
 import { type Over, takeQuota } from "../accounts/usage.ts";
@@ -54,7 +47,7 @@ import {
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import { dayOf, estimatedDays, listWarmup } from "../ips/warmup.ts";
 import { collect, render } from "../metrics/metrics.ts";
-import { AddressError, asciiDomain, domainOf, normalizeAddress } from "../mime/address.ts";
+import { AddressError, domainOf, normalizeAddress } from "../mime/address.ts";
 import { senderDomainOf } from "../mime/from.ts";
 import { queueSummary, removeQueued, resume, type Suspension, suspend } from "../queue/control.ts";
 import type { PathView } from "../shaping/shaper.ts";
