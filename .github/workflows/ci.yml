@@ -59,7 +59,7 @@ jobs:
       - name: Deno 2
         run: |
           docker run --rm -v "$PWD/sdk:/sdk:ro" -v "$RUNNER_TEMP/sdk/package:/pkg:ro" "$DENO_2" \
-            deno run /sdk/smoke.mjs /pkg/index.js
+            deno run --allow-read=/pkg /sdk/smoke.mjs /pkg/index.js
       - name: npm publish dry run
         run: |
           docker run --rm -v "$PWD/sdk/typescript:/pkg:ro" -w /pkg "$NODE_24" \
