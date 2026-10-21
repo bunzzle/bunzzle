@@ -64,7 +64,7 @@ describe("migrate", () => {
     db.run(`INSERT INTO jobs (message_id, state, run_after, attempt, last_error, updated_at)
             VALUES ('m1', 'ready', 10, 2, 'busy', 7), ('m2', 'unknown', 11, 1, NULL, 8)`);
     expect(migrate(db, migrations)).toEqual([
-      3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+      3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
     ]);
     const rows = db
       .query<Record<string, unknown>, []>(
@@ -96,6 +96,69 @@ describe("migrate", () => {
       },
     ]);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+
+  test("upgrading to projects puts every existing row and key in the default project", () => {
+    const db = new Database(":memory:", { strict: true });
+    db.run("PRAGMA foreign_keys = ON");
+    migrate(db, migrations.slice(0, 20));
+    db.run("INSERT INTO messages (id, type, payload, created_at) VALUES ('m1', 't', '1', 5)");
+    db.run(
+      "INSERT INTO jobs (id, message_id, state, run_after, updated_at) VALUES ('j1', 'm1', 'ready', 1, 1)",
+    );
+    db.run("INSERT INTO email_index (message_id, domain) VALUES ('m1', 'a.test')");
+    db.run(`INSERT INTO api_keys (id, name, token_hash, prefix, scope, rate_limit, created_at)
+            VALUES ('k1', 'k', 'h', 'p', 'full', 10, 1)`);
+    db.run(`INSERT INTO domains (name, status, records, created_at, updated_at)
+            VALUES ('a.test', 'verified', '[]', 1, 1)`);
+    db.run(
+      "INSERT INTO stats_daily (day, domain, tag, metric, n) VALUES ('2026-10-21', 'a.test', '', 'sent', 1)",
+    );
+    db.run(
+      "INSERT INTO webhooks (id, url, events, created_at) VALUES ('w1', 'https://h.test', '[]', 1)",
+    );
+    db.run(
+      "INSERT INTO routes (id, address, url, format, created_at) VALUES ('r1', 'in@a.test', 'https://h.test', 'raw', 1)",
+    );
+    db.run(
+      "INSERT INTO templates (id, name, version, created_at, updated_at) VALUES ('t1', 'welcome', 1, 1, 1)",
+    );
+    db.run(
+      "INSERT INTO suppressions (address, scope, reason, created_at) VALUES ('x@b.test', 'all', 'bounce', 1)",
+    );
+
+    expect(migrate(db, migrations)).toEqual([21]);
+    expect(db.query("SELECT id, name, suspended_at, deleted_at FROM projects").all()).toEqual([
+      { id: "default", name: "default", suspended_at: null, deleted_at: null },
+    ]);
+    for (const table of [
+      "messages",
+      "jobs",
+      "email_index",
+      "api_keys",
+      "domains",
+      "stats_daily",
+      "webhooks",
+      "routes",
+      "templates",
+      "suppressions",
+    ]) {
+      expect(db.query(`SELECT DISTINCT project_id FROM ${table}`).all()).toEqual([
+        { project_id: "default" },
+      ]);
+    }
+    expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+
+  test("template names are unique per project", () => {
+    const db = openDatabase({ path: ":memory:" });
+    db.run("INSERT INTO projects (id, name, created_at) VALUES ('p2', 'other', 1)");
+    const add = db.query<unknown, [string, string]>(
+      "INSERT INTO templates (id, name, version, created_at, updated_at, project_id) VALUES (?, 'welcome', 1, 1, 1, ?)",
+    );
+    add.run("t1", "default");
+    add.run("t2", "p2");
+    expect(() => add.run("t3", "p2")).toThrow(/UNIQUE/);
   });
 
   test("rejects gaps in version numbers", () => {

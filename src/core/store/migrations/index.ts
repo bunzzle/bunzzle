@@ -18,6 +18,7 @@ import routes from "./0017_routes.sql" with { type: "text" };
 import templates from "./0018_templates.sql" with { type: "text" };
 import tracking from "./0019_tracking.sql" with { type: "text" };
 import hooks from "./0020_hooks.sql" with { type: "text" };
+import projects from "./0021_projects.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -46,4 +47,5 @@ export const migrations: readonly Migration[] = [
   { version: 18, name: "templates", sql: templates },
   { version: 19, name: "tracking", sql: tracking },
   { version: 20, name: "hooks", sql: hooks },
+  { version: 21, name: "projects", sql: projects },
 ];
