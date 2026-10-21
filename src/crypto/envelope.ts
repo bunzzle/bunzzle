@@ -200,6 +200,83 @@ export class BodySealer {
   }
 }
 
+export class BodyOpener {
+  readonly #max: number;
+  readonly #bases = new Map<string, Promise<CryptoKey>>();
+
+  constructor({ max = 256 }: { max?: number } = {}) {
+    this.#max = max;
+  }
+
+  async open(key: EpochKeyPair, messageId: string, sealed: SealedBody): Promise<string> {
+    if (sealed.epoch !== key.epoch) throw new CryptoError("body belongs to another epoch");
+    const ephRaw = sealed.wrapped.subarray(0, PUB);
+    const salt = new Uint8Array(PUB * 2);
+    salt.set(ephRaw);
+    salt.set(key.publicKey, PUB);
+    const k = await crypto.subtle.deriveKey(
+      { name: "HKDF", hash: "SHA-256", salt, info: enc.encode(keyInfo(sealed.epoch, messageId)) },
+      await this.#base(key, ephRaw),
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["decrypt"],
+    );
+    const dekBytes = await openWith(
+      k,
+      sealed.wrapped.subarray(PUB),
+      keyInfo(sealed.epoch, messageId),
+    );
+    const dek = await crypto.subtle.importKey(
+      "raw",
+      dekBytes as Uint8Array<ArrayBuffer>,
+      { name: "AES-GCM" },
+      false,
+      ["decrypt"],
+    );
+    dekBytes.fill(0);
+    return dec.decode(await openWith(dek, sealed.body, bodyContext(messageId)));
+  }
+
+  forget(): void {
+    this.#bases.clear();
+  }
+
+  #base(key: EpochKeyPair, ephRaw: Uint8Array): Promise<CryptoKey> {
+    const id = `${key.epoch}:${ephRaw.toBase64()}`;
+    const hit = this.#bases.get(id);
+    if (hit) {
+      this.#bases.delete(id);
+      this.#bases.set(id, hit);
+      return hit;
+    }
+    const made = (async () => {
+      const shared = new Uint8Array(
+        await crypto.subtle.deriveBits(
+          { name: "X25519", public: await x25519Public(ephRaw) },
+          key.privateKey,
+          256,
+        ),
+      );
+      const base = await crypto.subtle.importKey(
+        "raw",
+        shared as Uint8Array<ArrayBuffer>,
+        "HKDF",
+        false,
+        ["deriveKey"],
+      );
+      shared.fill(0);
+      return base;
+    })();
+    made.catch(() => this.#bases.delete(id));
+    this.#bases.set(id, made);
+    if (this.#bases.size > this.#max) {
+      const oldest = this.#bases.keys().next().value;
+      if (oldest !== undefined) this.#bases.delete(oldest);
+    }
+    return made;
+  }
+}
+
 export async function openBody(
   key: EpochKeyPair,
   messageId: string,

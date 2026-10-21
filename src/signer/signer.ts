@@ -1,5 +1,5 @@
 import { type Clock, systemClock } from "../core/clock.ts";
-import { type EpochPublicKey, epochOf, openBody, type SealedBody } from "../crypto/envelope.ts";
+import { BodyOpener, type EpochPublicKey, epochOf, type SealedBody } from "../crypto/envelope.ts";
 import type { MasterKey } from "../crypto/master.ts";
 import { splitMessage } from "../dkim/canonicalize.ts";
 import {
@@ -90,6 +90,7 @@ async function dirExists(dir: string): Promise<boolean> {
 
 export class Signer {
   readonly #keystore: Keystore;
+  readonly #opener = new BodyOpener();
   readonly #domains = new Map<string, DomainKeys>();
   readonly #creating = new Map<string, Promise<PublicKeyInfo[]>>();
   readonly #o: SignerOptions;
@@ -289,7 +290,7 @@ export class Signer {
     }
     let raw: string;
     try {
-      raw = await openBody(pair, messageId, body);
+      raw = await this.#opener.open(pair, messageId, body);
     } catch {
       throw new SignerError("unreadable", "the body cannot be decrypted with its key");
     }
@@ -370,7 +371,7 @@ export class Signer {
     }
     let payload: string;
     try {
-      payload = await openBody(pair, id, body);
+      payload = await this.#opener.open(pair, id, body);
     } catch {
       throw new SignerError("unreadable", "the body cannot be decrypted with its key");
     }
@@ -397,6 +398,7 @@ export class Signer {
   }
 
   async shred(retentionDays: number): Promise<number[]> {
+    this.#opener.forget();
     return this.#keystore.shred(epochOf(this.#clock.now()) - retentionDays);
   }
 }
