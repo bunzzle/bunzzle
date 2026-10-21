@@ -91,7 +91,7 @@ jobs:
           chmod 0444 master.key cloudflare-token
           printf 'BUNZZLE_EHLO_NAME=mail.bunzzle.test\nBUNZZLE_DNS_SERVERS=127.0.0.1:5354\nBUNZZLE_SMTP_PORT=2526\nBUNZZLE_ALLOW_PRIVATE_DESTINATIONS=true\n' >> bunzzle.env
           BUNZZLE_IMAGE=bunzzle:ci BUNZZLE_INBOUND_PUBLISH=2525 docker compose up -d --wait
-          BUNZZLE_E2E_CLI="docker compose -f $PWD/compose.yaml exec -T api bunzzle" bun ../test/system/e2e.ts
+          BUNZZLE_E2E_CLI="docker compose -f $PWD/compose.yaml exec -T core bunzzle" bun ../test/system/e2e.ts
       - name: Container logs
         if: failure()
         working-directory: deploy
