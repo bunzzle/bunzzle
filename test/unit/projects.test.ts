@@ -7,6 +7,7 @@ import {
   listKeys,
   revokeKey,
 } from "../../src/accounts/api-keys.ts";
+import { ownPool, poolOwner, poolUsableBy, sharePool } from "../../src/accounts/pools.ts";
 import {
   createProject,
   DEFAULT_PROJECT,
@@ -524,5 +525,70 @@ describe("projects", () => {
     const day = new Date(T0).toISOString().slice(0, 10);
     expect(statsFor(db, A, { since: day, until: day })[0]?.delivered).toBe(1);
     expect(statsFor(db, B, { since: day, until: day })[0]?.delivered).toBe(0);
+  });
+
+  test("an owned pool is used only by its project", async () => {
+    const db = openDatabase({ path: ":memory:" });
+    db.run("INSERT INTO projects (id, name, created_at) VALUES (?, 'other', ?)", [B, T0]);
+    for (const [project, name] of [
+      [A, "a.test"],
+      [B, "b.test"],
+    ] as const) {
+      saveDomain(
+        db,
+        { project, name, status: "verified", records: [], createdAt: T0, checkedAt: null },
+        T0,
+      );
+    }
+    db.run("UPDATE domains SET pool = 'acme'");
+    expect(ownPool(db, "acme", B, T0)).toEqual({ cleared: 1 });
+    expect(poolOwner(db, "acme")).toBe(B);
+    expect(poolUsableBy(db, "acme", A)).toBe(false);
+    expect(db.query("SELECT name, pool FROM domains ORDER BY name").all()).toEqual([
+      { name: "a.test", pool: null },
+      { name: "b.test", pool: "acme" },
+    ]);
+
+    const epoch = await epochKeyPair(1, newEpochSeed());
+    const stub = {
+      call: async (m: string) => (m === "domains" ? ["a.test", "b.test"] : null),
+    } as unknown as RpcClient;
+    const { methods } = coreMethods({
+      db,
+      writer: new Writer(db),
+      log: createLogger("error", {}, () => {}),
+      signer: stub,
+      delivery: stub,
+      currentKey: async () => epoch,
+      sourceIp: null,
+      ips: [
+        { ip: "192.0.2.1", pool: "main", established: true },
+        { ip: "192.0.2.2", pool: "acme", established: true },
+      ],
+    });
+    const setPool = methods["setDomainPool"]?.handle({ name: "a.test", pool: "acme" });
+    await expect(setPool).rejects.toThrow("belongs to another project");
+    db.run("UPDATE domains SET pool = 'acme' WHERE name = 'a.test'");
+    const send = (from: string, project?: string) =>
+      methods["enqueue"]?.handle({
+        ...(project ? { project } : {}),
+        from,
+        recipients: ["r@dest.test"],
+        data: `From: ${from}\r\nSubject: s\r\n\r\nhi\r\n`,
+        smtpUtf8: false,
+        requireTls: false,
+      }) as Promise<{ id: string }>;
+    const a = await send("x@a.test");
+    const b = await send("x@b.test", "other");
+    const pool = (id: string) =>
+      db
+        .query<{ pool: string | null }, [string]>(
+          "SELECT json_extract(metadata, '$.pool') AS pool FROM messages WHERE id = ?",
+        )
+        .get(id)?.pool;
+    expect(pool(a.id)).toBeNull();
+    expect(pool(b.id)).toBe("acme");
+    expect(sharePool(db, "acme")).toBe(true);
+    expect(poolUsableBy(db, "acme", A)).toBe(true);
   });
 });

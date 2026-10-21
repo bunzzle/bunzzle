@@ -92,7 +92,7 @@ Spamhaus refuses queries that come through large public resolvers. Run a local r
 
 ## IP pools
 
-Transactional mail goes out from the `main` pool and `"lane": "bulk"` mail from the `bulk` pool, when there is one. Any other pool name is for dedicated IPs: `bunzzle domains pool acme.test acme` (or `PATCH /domains/acme.test` with `{"ip_pool": "acme"}`) sends all of that domain's mail, both lanes, only from the IPs in `acme`, and `bunzzle keys create --pool acme` does the same for one API key, ahead of the domain's pool. If the pool has no usable IP, the mail waits instead of going out from shared IPs; `bunzzle doctor` shows it. `none` puts the domain back on the shared IPs. Warm-up and per-destination limits stay per IP.
+Transactional mail goes out from the `main` pool and `"lane": "bulk"` mail from the `bulk` pool, when there is one. Any other pool name is for dedicated IPs: `bunzzle domains pool acme.test acme` (or `PATCH /domains/acme.test` with `{"ip_pool": "acme"}`) sends all of that domain's mail, both lanes, only from the IPs in `acme`, and `bunzzle keys create --pool acme` does the same for one API key, ahead of the domain's pool. If the pool has no usable IP, the mail waits instead of going out from shared IPs; `bunzzle doctor` shows it. `none` puts the domain back on the shared IPs. Warm-up and per-destination limits stay per IP. With several projects, `bunzzle pools own POOL PROJECT` keeps a pool for one project (see [projects.md](projects.md)).
 
 ## Relay
 

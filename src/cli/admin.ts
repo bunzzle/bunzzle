@@ -562,6 +562,46 @@ export async function keysCommand(argv: string[], config: Config) {
   }
 }
 
+export async function poolsCommand(argv: string[], config: Config) {
+  const [sub, pool, to, ...extra] = argv;
+  switch (sub) {
+    case undefined:
+    case "list": {
+      const pools = await call<{ pool: string; ips: string[]; owner: string | null }[]>(
+        config,
+        "listPools",
+        {},
+      );
+      if (pools.length === 0) console.log("No pools: set BUNZZLE_SOURCE_IPS.");
+      for (const p of pools) {
+        console.log(`${p.pool.padEnd(16)} ${(p.owner ?? "shared").padEnd(16)} ${p.ips.join(", ")}`);
+      }
+      return;
+    }
+    case "own": {
+      if (!pool || !to || extra.length > 0) {
+        throw new UsageError("usage: bunzzle pools own POOL PROJECT");
+      }
+      const r = await call<{ pool: string; owner: string; cleared: number }>(config, "ownPool", {
+        pool,
+        to,
+      });
+      console.log(
+        `${r.pool} is now used only by ${r.owner}.${r.cleared ? ` ${r.cleared} domain, key or project setting${r.cleared === 1 ? "" : "s"} of other projects went back to the shared IPs.` : ""}`,
+      );
+      return;
+    }
+    case "share": {
+      if (!pool || to) throw new UsageError("usage: bunzzle pools share POOL");
+      const r = await call<{ pool: string; changed: boolean }>(config, "sharePool", { pool });
+      console.log(r.changed ? `${r.pool} is shared again.` : `${r.pool} is already shared.`);
+      return;
+    }
+    default:
+      throw new UsageError("usage: bunzzle pools list|own|share");
+  }
+}
+
 interface ProjectView {
   id: string;
   name: string;

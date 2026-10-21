@@ -6,6 +6,7 @@ import {
   listKeys,
   revokeKey,
 } from "../accounts/api-keys.ts";
+import { listPoolOwners, ownPool, poolOwner, SHARED_POOLS, sharePool } from "../accounts/pools.ts";
 import {
   createProject,
   DEFAULT_PROJECT,
@@ -31,7 +32,7 @@ import { cancelProjectQueue } from "../queue/control.ts";
 import { b } from "../validate/schema.ts";
 import { disableProjectWebhooks } from "../webhooks/store.ts";
 import { actorName, type Caller, resolveActor, resolveAdmin } from "./actor.ts";
-import { domainName, knownPool } from "./checks.ts";
+import { domainName, knownPool, usablePool } from "./checks.ts";
 import { project, tokenHash } from "./wire.ts";
 
 export interface ProjectDeps {
@@ -102,7 +103,7 @@ export function projectMethods(deps: ProjectDeps): Methods {
   };
 
   const newKey = (caller: Caller, projectId: ProjectId, p: b.infer<typeof projectKeySchema>) => {
-    if (p.pool !== undefined) knownPool(deps.ips, p.pool);
+    if (p.pool !== undefined) usablePool(db, deps.ips, projectId, p.pool);
     const domains = p.domains?.map(domainName);
     return writer.run((d) => {
       const made = createKey(
@@ -232,7 +233,7 @@ export function projectMethods(deps: ProjectDeps): Methods {
             throw new RpcError("invalid", `a project named ${p.name} already exists`);
           }
         }
-        if (p.pool !== undefined && p.pool !== null) knownPool(deps.ips, p.pool);
+        if (p.pool !== undefined && p.pool !== null) usablePool(db, deps.ips, before.id, p.pool);
         const after = await writer.run((d) => {
           const next = updateProject(
             d,
@@ -301,6 +302,63 @@ export function projectMethods(deps: ProjectDeps): Methods {
       });
       if (done) log.warn("project removed", { id: t.id, name: t.name, ...done });
       return { object: "project", id: t.id, deleted: true };
+    }),
+
+    listPools: method(b.object({}), () => {
+      const owners = listPoolOwners(db);
+      const names = new Map(listProjects(db).map((x) => [x.id, x.name]));
+      const pools = new Map<string, string[]>();
+      for (const ip of deps.ips ?? []) pools.set(ip.pool, [...(pools.get(ip.pool) ?? []), ip.ip]);
+      return [...pools.entries()].map(([pool, ips]) => {
+        const owner = owners.get(pool) ?? null;
+        return { pool, ips, owner: owner === null ? null : (names.get(owner) ?? owner) };
+      });
+    }),
+
+    ownPool: method(b.object({ pool: b.string().max(32), to: b.string().max(64) }), async (p) => {
+      knownPool(deps.ips, p.pool);
+      if (SHARED_POOLS.includes(p.pool)) {
+        throw new RpcError("invalid", `${p.pool} is shared by every project`);
+      }
+      const to = target(p.to);
+      const before = poolOwner(db, p.pool);
+      const { cleared } = await writer.run((d) => {
+        const r = ownPool(d, p.pool, to.id, now());
+        for (const project of new Set([to.id, ...(before && before !== to.id ? [before] : [])])) {
+          recordAdminEvent(
+            d,
+            {
+              kind: "project.pool_owned",
+              project,
+              actor: "operator",
+              data: { pool: p.pool, owner: to.id, cleared: r.cleared },
+            },
+            now(),
+          );
+        }
+        return r;
+      });
+      log.info("pool owned", { pool: p.pool, project: to.id, cleared });
+      return { pool: p.pool, owner: to.name, cleared };
+    }),
+
+    sharePool: method(b.object({ pool: b.string().max(32) }), async (p) => {
+      const before = poolOwner(db, p.pool);
+      if (!before) return { pool: p.pool, owner: null, changed: false };
+      await writer.run((d) => {
+        sharePool(d, p.pool);
+        recordAdminEvent(
+          d,
+          {
+            kind: "project.pool_shared",
+            project: before,
+            actor: "operator",
+            data: { pool: p.pool },
+          },
+          now(),
+        );
+      });
+      return { pool: p.pool, owner: null, changed: true };
     }),
 
     moveDomain: method(
