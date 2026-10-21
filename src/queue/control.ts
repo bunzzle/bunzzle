@@ -177,6 +177,22 @@ export function removeQueued(
     where.push("j.project_id = ?");
     args.push(project);
   }
+  return removeWhere(db, where, args, action, reason, now, dryRun);
+}
+
+export function cancelProjectQueue(db: Database, project: ProjectId, now: number): Bulk {
+  return removeWhere(db, ["j.project_id = ?"], [project], "cancel", "project removed", now, false);
+}
+
+function removeWhere(
+  db: Database,
+  where: string[],
+  args: (string | number)[],
+  action: "fail" | "cancel",
+  reason: string,
+  now: number,
+  dryRun: boolean,
+): Bulk {
   const cond = where.join(" AND ");
   const jobs = db
     .query<{ id: string; message_id: string; state: string }, (string | number)[]>(

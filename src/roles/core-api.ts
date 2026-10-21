@@ -7,7 +7,7 @@ import {
   type Scope,
   touchKey,
 } from "../accounts/api-keys.ts";
-import { DEFAULT_PROJECT, projectOfMessage } from "../accounts/projects.ts";
+import { DEFAULT_PROJECT, findProject, projectOfMessage } from "../accounts/projects.ts";
 import type { SourceIp } from "../config.ts";
 import { countByState } from "../core/jobs.ts";
 import type { Logger } from "../core/log.ts";
@@ -185,6 +185,12 @@ export function coreMethods(deps: CoreDeps): {
       throw new RpcError(
         "storage-low",
         `free disk space is below ${storage.minFreeMb} MB; new email is accepted again once space is freed`,
+      );
+    }
+    if (findProject(db, project)?.suspendedAt != null) {
+      throw new RpcError(
+        "project-suspended",
+        "This project is suspended. Sending is paused until it is resumed.",
       );
     }
     const id = p.id ?? Bun.randomUUIDv7();

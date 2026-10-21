@@ -185,6 +185,13 @@ describe("API responses match openapi.json", () => {
       { name: "app", scope: "full" },
       adminToken,
     );
+    const paused = await call(
+      "POST",
+      "/emails",
+      { from: "a@shop.test", to: "b@example.test", subject: "s", text: "t" },
+      key["token"] as string,
+    );
+    expect(paused["name"]).toBe("project_suspended");
     const refused = await call("GET", "/domains", undefined, adminToken);
     expect(refused["name"]).toBe("restricted_api_key");
     const shopDomains = await call("GET", "/domains", undefined, key["token"] as string);
@@ -192,6 +199,8 @@ describe("API responses match openapi.json", () => {
     expect(await cli("domains", "list", "--project", "shop")).not.toContain("acme.test");
     await call("DELETE", "/projects/default", undefined, adminToken);
     await call("DELETE", "/projects/shop", undefined, adminToken);
+    const again = await call("DELETE", "/projects/shop", undefined, adminToken);
+    expect(again["deleted"]).toBe(true);
     const gone = await call("GET", "/domains", undefined, key["token"] as string);
     expect(gone["name"]).toBe("invalid_api_key");
 

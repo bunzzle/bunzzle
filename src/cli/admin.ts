@@ -631,7 +631,9 @@ export async function projectsCommand(argv: string[], config: Config) {
     case "remove": {
       const name = one("remove NAME");
       await call(config, "deleteProject", { id: name });
-      console.log(`Removed project ${name}; its API keys no longer work.`);
+      console.log(
+        `Removed project ${name}: API keys revoked, queued email canceled, domains released. Its data is deleted in the background.`,
+      );
       return;
     }
     default:

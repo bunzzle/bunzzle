@@ -17,13 +17,16 @@ import {
   recordAdminEvent,
   updateProject,
 } from "../../src/accounts/projects.ts";
+import { purgeDeletedProject } from "../../src/accounts/purge.ts";
 import { appendEvent } from "../../src/core/events.ts";
+import { claim, HELD_OFFSET, holdProjectJobs, releaseProjectJobs } from "../../src/core/jobs.ts";
 import { openDatabase } from "../../src/core/store/db.ts";
 import { cancelEmail, enqueueEmail, scheduledEmail } from "../../src/delivery/queue.ts";
 import {
   findDomain,
   getDomain,
   listDomains,
+  releaseProjectDomains,
   saveDomain,
   setDomainPool,
 } from "../../src/domains/domains.ts";
@@ -33,7 +36,7 @@ import { nextAdminBatch } from "../../src/eventlog/export.ts";
 import { createHold, listHolds, releaseHold } from "../../src/guards/guards.ts";
 import { createRoute, deleteRoute, listRoutes } from "../../src/inbound/routes.ts";
 import { collect, render } from "../../src/metrics/metrics.ts";
-import { queueSummary, removeQueued } from "../../src/queue/control.ts";
+import { cancelProjectQueue, queueSummary, removeQueued } from "../../src/queue/control.ts";
 import {
   requireServerWide,
   resolveActor,
@@ -266,5 +269,81 @@ describe("projects", () => {
         data: { name: "other" },
       },
     ]);
+  });
+
+  function withMail(project: ProjectId) {
+    const db = openDatabase({ path: ":memory:" });
+    if (project !== A) {
+      db.run("INSERT INTO projects (id, name, created_at) VALUES (?, 'other', ?)", [project, T0]);
+    }
+    const id = Bun.randomUUIDv7();
+    enqueueEmail(
+      db,
+      project,
+      {
+        id,
+        body: sealed,
+        from: "x@a.test",
+        recipients: ["r@dest.test"],
+        smtpUtf8: false,
+        requireTls: false,
+      },
+      T0,
+    );
+    return { db, id };
+  }
+
+  test("a suspended project's queued mail waits and goes out after resume", () => {
+    const { db } = withMail(B);
+    db.run("UPDATE projects SET suspended_at = ? WHERE id = ?", [T0, B]);
+    expect(holdProjectJobs(db, B, T0)).toBe(1);
+    expect(holdProjectJobs(db, B, T0)).toBe(0);
+    expect(claim(db, T0 + 1_000, 10, 60_000)).toEqual([]);
+    db.run("UPDATE jobs SET run_after = ? WHERE project_id = ?", [T0, B]);
+    expect(claim(db, T0 + 1_000, 10, 60_000)).toEqual([]);
+    db.run("UPDATE jobs SET run_after = run_after + ? WHERE project_id = ?", [HELD_OFFSET, B]);
+    db.run("UPDATE projects SET suspended_at = NULL WHERE id = ?", [B]);
+    expect(releaseProjectJobs(db, B, T0 + 2)).toBe(1);
+    expect(releaseProjectJobs(db, B, T0 + 2)).toBe(0);
+    expect(claim(db, T0 + 1_000, 10, 60_000).length).toBe(1);
+  });
+
+  test("a removed project's queue is canceled, its domains freed, its data purged", () => {
+    const { db, id } = withMail(B);
+    saveDomain(
+      db,
+      {
+        project: B,
+        name: "b.test",
+        status: "verified",
+        records: [],
+        createdAt: T0,
+        checkedAt: null,
+      },
+      T0,
+    );
+    createKey(db, B, { name: "k", scope: "full" }, T0);
+    createTemplate(db, B, "welcome", { subject: "Hi", html: null, text: "Hi" }, T0);
+    suppress(db, B, { address: "r@dest.test", scope: "all", reason: "manual" }, T0);
+    deleteProject(db, B, T0 + 1);
+    expect(cancelProjectQueue(db, B, T0 + 1).emails).toBe(1);
+    expect(releaseProjectDomains(db, B)).toEqual(["b.test"]);
+    expect(findDomain(db, "b.test")).toBeNull();
+    expect(purgeDeletedProject(db)).toEqual({ project: B, messages: 1, finished: false });
+    expect(db.query("SELECT 1 FROM messages WHERE id = ?").get(id)).toBeNull();
+    expect(purgeDeletedProject(db)).toEqual({ project: B, messages: 0, finished: true });
+    for (const t of ["api_keys", "templates", "suppressions", "projects WHERE id = 'p-other'"]) {
+      expect(db.query(`SELECT 1 FROM ${t}`).all()).toEqual([]);
+    }
+    expect(purgeDeletedProject(db)).toEqual({ project: null, messages: 0, finished: false });
+    expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+
+  test("purge waits for mail that is being sent", () => {
+    const { db } = withMail(B);
+    db.run("UPDATE jobs SET state = 'leased' WHERE project_id = ?", [B]);
+    deleteProject(db, B, T0);
+    expect(purgeDeletedProject(db)).toEqual({ project: null, messages: 0, finished: false });
+    expect(db.query("SELECT 1 FROM projects WHERE id = ?").get(B)).not.toBeNull();
   });
 });

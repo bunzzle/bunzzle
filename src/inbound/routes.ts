@@ -245,3 +245,11 @@ export function pruneRouted(db: Database, before: number): void {
     "DELETE FROM route_deliveries WHERE state IN ('done', 'failed') AND updated_at < ?",
   ).run(before);
 }
+
+export function disableProjectRoutes(db: Database, project: ProjectId, now: number): number {
+  return db
+    .query<unknown, [number, string]>(
+      "UPDATE routes SET disabled_at = ? WHERE project_id = ? AND disabled_at IS NULL",
+    )
+    .run(now, project).changes;
+}
