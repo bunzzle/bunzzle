@@ -11,6 +11,7 @@ const SOURCE = "queue";
 
 export interface NewMessage {
   id?: string;
+  project: string;
   type: string;
   payload: unknown;
   metadata?: Record<string, unknown>;
@@ -27,16 +28,20 @@ export function jobId(messageId: string, target: string): string {
 export function enqueue(db: Database, m: NewMessage, now: number): string {
   const id = m.id ?? Bun.randomUUIDv7();
   const targets = m.targets?.length ? [...new Set(m.targets)] : [""];
-  db.query<unknown, [string, string, string, string, number]>(
-    "INSERT INTO messages (id, type, payload, metadata, created_at) VALUES (?, ?, ?, ?, ?)",
-  ).run(id, m.type, JSON.stringify(m.payload), JSON.stringify(m.metadata ?? {}), now);
-  const insert = db.query<unknown, [string, string, string, number, number, number | null, number]>(
-    `INSERT INTO jobs (id, message_id, target, state, priority, run_after, expires_at, updated_at)
-     VALUES (?, ?, ?, 'ready', ?, ?, ?, ?)`,
+  db.query<unknown, [string, string, string, string, string, number]>(
+    "INSERT INTO messages (id, project_id, type, payload, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(id, m.project, m.type, JSON.stringify(m.payload), JSON.stringify(m.metadata ?? {}), now);
+  const insert = db.query<
+    unknown,
+    [string, string, string, string, number, number, number | null, number]
+  >(
+    `INSERT INTO jobs (id, project_id, message_id, target, state, priority, run_after, expires_at, updated_at)
+     VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?)`,
   );
   for (const target of targets) {
     insert.run(
       jobId(id, target),
+      m.project,
       id,
       target,
       m.priority ?? 0,

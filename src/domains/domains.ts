@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { ProjectId } from "../accounts/projects.ts";
 import { b } from "../validate/schema.ts";
 
 export type RecordKind =
@@ -23,6 +24,7 @@ export interface DomainRecord {
 }
 
 export interface Domain {
+  project: ProjectId;
   name: string;
   status: DomainStatus;
   records: DomainRecord[];
@@ -192,6 +194,7 @@ export function returnPathReady(
 }
 
 interface Row {
+  project_id: string;
   name: string;
   status: DomainStatus;
   records: string;
@@ -200,6 +203,7 @@ interface Row {
 }
 
 const fromRow = (r: Row): Domain => ({
+  project: r.project_id as ProjectId,
   name: r.name,
   status: r.status,
   records: b.array(recordSchema).parse(JSON.parse(r.records)),
@@ -220,21 +224,22 @@ function domainCache(db: Database): Map<string, Domain> {
 
 export function saveDomain(db: Database, d: Domain, now: number): void {
   domainCache(db).delete(d.name);
-  db.query<unknown, [string, DomainStatus, string, number, number | null, number]>(
-    `INSERT INTO domains (name, status, records, created_at, checked_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)
+  db.query<unknown, [string, string, DomainStatus, string, number, number | null, number]>(
+    `INSERT INTO domains (project_id, name, status, records, created_at, checked_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (name) DO UPDATE SET status = excluded.status, records = excluded.records,
-       checked_at = excluded.checked_at, updated_at = excluded.updated_at`,
-  ).run(d.name, d.status, JSON.stringify(d.records), d.createdAt, d.checkedAt, now);
+       checked_at = excluded.checked_at, updated_at = excluded.updated_at
+     WHERE domains.project_id = excluded.project_id`,
+  ).run(d.project, d.name, d.status, JSON.stringify(d.records), d.createdAt, d.checkedAt, now);
 }
 
-export function getDomain(db: Database, name: string): Domain | null {
+export function findDomain(db: Database, name: string): Domain | null {
   const c = domainCache(db);
   const hit = c.get(name);
   if (hit) return hit;
   const r = db
     .query<Row, [string]>(
-      "SELECT name, status, records, created_at, checked_at FROM domains WHERE name = ?",
+      "SELECT project_id, name, status, records, created_at, checked_at FROM domains WHERE name = ?",
     )
     .get(name);
   if (!r) return null;
@@ -246,17 +251,32 @@ export function getDomain(db: Database, name: string): Domain | null {
   return d;
 }
 
-export function listDomains(db: Database): Domain[] {
+export function getDomain(db: Database, project: ProjectId, name: string): Domain | null {
+  const d = findDomain(db, name);
+  return d?.project === project ? d : null;
+}
+
+export function allDomains(db: Database): Domain[] {
   return db
     .query<Row, []>(
-      "SELECT name, status, records, created_at, checked_at FROM domains ORDER BY name",
+      "SELECT project_id, name, status, records, created_at, checked_at FROM domains ORDER BY name",
     )
     .all()
     .map(fromRow);
 }
 
+export function listDomains(db: Database, project: ProjectId): Domain[] {
+  return db
+    .query<Row, [string]>(
+      `SELECT project_id, name, status, records, created_at, checked_at FROM domains
+       WHERE project_id = ? ORDER BY name`,
+    )
+    .all(project)
+    .map(fromRow);
+}
+
 export function isVerified(db: Database, name: string): boolean {
-  return getDomain(db, name)?.status === "verified";
+  return findDomain(db, name)?.status === "verified";
 }
 
 export function domainPool(db: Database, name: string): string | null {
@@ -268,15 +288,16 @@ export function domainPool(db: Database, name: string): string | null {
 
 export function setDomainPool(
   db: Database,
+  project: ProjectId,
   name: string,
   pool: string | null,
   now: number,
 ): boolean {
   return (
     db
-      .query<unknown, [string | null, number, string]>(
-        "UPDATE domains SET pool = ?, updated_at = ? WHERE name = ?",
+      .query<unknown, [string | null, number, string, string]>(
+        "UPDATE domains SET pool = ?, updated_at = ? WHERE name = ? AND project_id = ?",
       )
-      .run(pool, now, name).changes > 0
+      .run(pool, now, name, project).changes > 0
   );
 }

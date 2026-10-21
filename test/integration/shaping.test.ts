@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+import { DEFAULT_PROJECT } from "../../src/accounts/projects.ts";
 import { countByState } from "../../src/core/jobs.ts";
 import { createLogger } from "../../src/core/log.ts";
 import { defaultRetryPolicy } from "../../src/core/retry.ts";
@@ -127,6 +128,7 @@ async function pipeline(scenario: MxScenario, limits: Limits, tuning = {}, route
       for (const e of emails) {
         enqueueEmail(
           d,
+          DEFAULT_PROJECT,
           {
             ...e,
             from: "a@bunzzle.test",

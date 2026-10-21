@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { DEFAULT_PROJECT } from "../../src/accounts/projects.ts";
 import { manualClock } from "../../src/core/clock.ts";
 import { eventsFor } from "../../src/core/events.ts";
 import { type ClaimedJob, claim, resendUnresolved, settle } from "../../src/core/jobs.ts";
@@ -87,6 +88,7 @@ async function setup(scenario: MxScenario = {}) {
     const body = await sealBody(await signer.epochKey(), id, DATA);
     return enqueueEmail(
       db,
+      DEFAULT_PROJECT,
       {
         id,
         body,
@@ -339,6 +341,7 @@ describe("delivery: encryption at rest and crypto-shredding", () => {
     const body = await sealBody(await t.signer.epochKey(), id, DATA.replace("Hello", marker));
     enqueueEmail(
       db,
+      DEFAULT_PROJECT,
       {
         id,
         body,
@@ -406,6 +409,7 @@ describe("delivery: encryption at rest and crypto-shredding", () => {
     );
     enqueueEmail(
       t.db,
+      DEFAULT_PROJECT,
       {
         id,
         body,

@@ -10,7 +10,7 @@ import { deliveryHandler } from "../delivery/handler.ts";
 import { shredBodies } from "../delivery/queue.ts";
 import type { DeliveryTransport } from "../delivery/transport.ts";
 import { pruneDmarc } from "../dmarc/store.ts";
-import { bounceDomain, getDomain, listDomains, returnPathReady } from "../domains/domains.ts";
+import { allDomains, bounceDomain, findDomain, returnPathReady } from "../domains/domains.ts";
 import { pruneIdempotency } from "../emails/idempotency.ts";
 import { pruneConversations } from "../emails/view.ts";
 import { beginAtEnd, exportEvents } from "../eventlog/export.ts";
@@ -160,7 +160,7 @@ export async function runCore(config: Config, log: Logger) {
     holdRetryMs: scaled(15 * MIN),
     suspendRetryMs: scaled(5 * MIN),
     maxWaitMs: Math.max(1_000, Math.floor(Math.max(2_000, scaled(45 * MIN)) / 3)),
-    bounceDomainFor: (d) => (returnPathReady(getDomain(db, d)) ? bounceDomain(d) : null),
+    bounceDomainFor: (d) => (returnPathReady(findDomain(db, d)) ? bounceDomain(d) : null),
     relayRoutes: () =>
       config.relay && !config.relay.for.all
         ? { targets: config.relay.for.targets, blocked: config.relay.for.blocked }
@@ -349,7 +349,7 @@ export async function runCore(config: Config, log: Logger) {
     ),
   });
   const readPostmaster = async () => {
-    const domains = listDomains(db)
+    const domains = allDomains(db)
       .filter((d) => d.status === "verified")
       .map((d) => d.name);
     if (domains.length === 0) return;

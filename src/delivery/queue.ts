@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { ProjectId } from "../accounts/projects.ts";
 import { appendEvent } from "../core/events.ts";
 import { enqueue, jobId } from "../core/jobs.ts";
 import type { SealedBody } from "../crypto/envelope.ts";
@@ -40,7 +41,12 @@ export interface RecipientRow {
   updated_at: number;
 }
 
-export function enqueueEmail(db: Database, email: NewEmail, now: number): string {
+export function enqueueEmail(
+  db: Database,
+  project: ProjectId,
+  email: NewEmail,
+  now: number,
+): string {
   const byDomain = new Map<string, string[]>();
   for (const raw of email.recipients) {
     const address = normalizeAddress(raw);
@@ -59,6 +65,7 @@ export function enqueueEmail(db: Database, email: NewEmail, now: number): string
     db,
     {
       id: email.id,
+      project,
       type: "email",
       payload,
       targets: [...byDomain.keys()],
@@ -79,6 +86,7 @@ export function enqueueEmail(db: Database, email: NewEmail, now: number): string
   const meta = email.metadata ?? {};
   indexEmail(db, {
     id,
+    project,
     domain: domainOf(email.from),
     keyId: (meta["apiKeyId"] as string | null | undefined) ?? null,
     test: meta["test"] === true,
@@ -187,32 +195,41 @@ export interface ScheduledEmail {
   scheduledAt: number | null;
 }
 
-export function scheduledEmail(db: Database, id: string): ScheduledEmail | null {
+export function scheduledEmail(
+  db: Database,
+  project: ProjectId,
+  id: string,
+): ScheduledEmail | null {
   const row = db
-    .query<{ payload: string; metadata: string }, [string]>(
-      "SELECT payload, metadata FROM messages WHERE id = ? AND type = 'email'",
+    .query<{ payload: string; metadata: string }, [string, string]>(
+      "SELECT payload, metadata FROM messages WHERE id = ? AND project_id = ? AND type = 'email'",
     )
-    .get(id);
+    .get(id, project);
   if (!row) return null;
   const payload = JSON.parse(row.payload) as Partial<EmailPayload>;
   const meta = JSON.parse(row.metadata) as { scheduledAt?: number | null };
   return { from: payload.from ?? "", scheduledAt: meta.scheduledAt ?? null };
 }
 
-function notStarted(db: Database, id: string): boolean {
+function notStarted(db: Database, project: ProjectId, id: string): boolean {
   const jobs = db
-    .query<{ state: string; attempt: number }, [string]>(
-      "SELECT state, attempt FROM jobs WHERE message_id = ?",
+    .query<{ state: string; attempt: number }, [string, string]>(
+      "SELECT state, attempt FROM jobs WHERE message_id = ? AND project_id = ?",
     )
-    .all(id);
+    .all(id, project);
   return (
     jobs.some((j) => j.state === "ready") &&
     jobs.every((j) => j.attempt === 0 && j.state !== "leased" && j.state !== "unknown")
   );
 }
 
-export function cancelEmail(db: Database, id: string, now: number): "ok" | "started" {
-  if (!notStarted(db, id)) return "started";
+export function cancelEmail(
+  db: Database,
+  project: ProjectId,
+  id: string,
+  now: number,
+): "ok" | "started" {
+  if (!notStarted(db, project, id)) return "started";
   db.query<unknown, [number, string]>(
     "UPDATE jobs SET state = 'dead', last_error = 'canceled', updated_at = ? WHERE message_id = ? AND state = 'ready'",
   ).run(now, id);
@@ -227,11 +244,12 @@ export function cancelEmail(db: Database, id: string, now: number): "ok" | "star
 
 export function rescheduleEmail(
   db: Database,
+  project: ProjectId,
   id: string,
   at: number,
   now: number,
 ): "ok" | "started" | "expires" {
-  if (!notStarted(db, id)) return "started";
+  if (!notStarted(db, project, id)) return "started";
   const exp = db
     .query<{ t: number | null }, [string]>(
       "SELECT min(expires_at) AS t FROM jobs WHERE message_id = ? AND state = 'ready'",

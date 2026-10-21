@@ -1,13 +1,14 @@
 import type { Database } from "bun:sqlite";
-import { allows, keyForHash } from "../accounts/api-keys.ts";
+import type { ProjectId } from "../accounts/projects.ts";
 import type { Config } from "../config.ts";
 import type { StorageState } from "../core/storage.ts";
-import { domainPool, listDomains } from "../domains/domains.ts";
+import { domainPool, getDomain, listDomains } from "../domains/domains.ts";
 import { latestPostmaster } from "../guards/gmail.ts";
 import { listHolds } from "../guards/guards.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import type { PathView } from "../shaping/shaper.ts";
 import { b } from "../validate/schema.ts";
+import { resolveActor } from "./actor.ts";
 import type { rotation } from "./core-rotation.ts";
 import { tokenHash } from "./wire.ts";
 
@@ -58,14 +59,7 @@ export function doctorMethods(deps: DoctorDeps): Methods {
   const { db, config, delivery, rotation } = deps;
   const now = deps.now ?? Date.now;
 
-  const caller = (hash: string | undefined) => {
-    if (hash === undefined) return;
-    const key = keyForHash(db, hash);
-    if (!key) throw new RpcError("unauthenticated", "API key is invalid");
-    if (!allows(key.scope, "full")) throw new RpcError("forbidden", "this API key cannot do this");
-  };
-
-  const run = async (): Promise<Check[]> => {
+  const run = async (project: ProjectId): Promise<Check[]> => {
     const checks: Check[] = [];
     const add = (area: string, item: string, status: CheckStatus, detail: string) =>
       checks.push({ area, item, status, detail });
@@ -158,7 +152,7 @@ export function doctorMethods(deps: DoctorDeps): Methods {
       }
     }
 
-    const domains = listDomains(db);
+    const domains = listDomains(db, project);
     if (domains.length === 0) add("domains", "sending domains", "warn", "no domain added yet");
     for (const d of domains) {
       const keys = await rotation.keys(d.name).catch(() => null);
@@ -250,8 +244,8 @@ export function doctorMethods(deps: DoctorDeps): Methods {
 
   return {
     doctor: method(b.object({ tokenHash }), async (p) => {
-      caller(p.tokenHash);
-      const checks = await run();
+      const { project } = resolveActor(db, p.tokenHash, "full");
+      const checks = await run(project);
       return {
         checks,
         summary: {
@@ -262,8 +256,10 @@ export function doctorMethods(deps: DoctorDeps): Methods {
       };
     }),
     rotateDomain: method(b.object({ tokenHash, name: b.string().max(253) }), async (p) => {
-      caller(p.tokenHash);
-      return { result: await rotation.step(p.name.toLowerCase(), true) };
+      const { project } = resolveActor(db, p.tokenHash, "full");
+      const name = p.name.toLowerCase();
+      if (!getDomain(db, project, name)) throw new RpcError("not-found", "domain not found");
+      return { result: await rotation.step(name, true) };
     }),
   };
 }

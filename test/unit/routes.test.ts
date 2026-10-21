@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { DEFAULT_PROJECT as P } from "../../src/accounts/projects.ts";
 import { openDatabase } from "../../src/core/store/db.ts";
 import { buildPayload } from "../../src/inbound/payload.ts";
 import {
@@ -20,8 +21,8 @@ const sealed = { epoch: 1, wrapped: new Uint8Array([1]), body: new Uint8Array([2
 
 function setup() {
   const db = openDatabase({ path: ":memory:" });
-  const exact = createRoute(db, "support@acme.test", "https://a.test/x", "parsed", 1);
-  const any = createRoute(db, "*@acme.test", "https://a.test/any", "raw", 1);
+  const exact = createRoute(db, P, "support@acme.test", "https://a.test/x", "parsed", 1);
+  const any = createRoute(db, P, "*@acme.test", "https://a.test/any", "raw", 1);
   return { db, exact: exact?.id as string, any: any?.id as string };
 }
 
@@ -33,17 +34,17 @@ describe("route addresses", () => {
     expect(findRoute(db, "sales@acme.test")?.id).toBe(any);
     expect(findRoute(db, "support@other.test")).toBeNull();
     expect(findRoute(db, "*@acme.test")).toBeNull();
-    createRoute(db, "support+vip@acme.test", "https://a.test/vip", "parsed", 1);
+    createRoute(db, P, "support+vip@acme.test", "https://a.test/vip", "parsed", 1);
     expect(findRoute(db, "support+vip@acme.test")?.address).toBe("support+vip@acme.test");
   });
 
   test("one active route per address; a removed route frees it and stops matching", () => {
     const { db, exact } = setup();
-    expect(createRoute(db, "support@acme.test", "https://b.test", "raw", 2)).toBeNull();
-    expect(deleteRoute(db, exact, 3)).toBe(true);
-    expect(deleteRoute(db, exact, 3)).toBe(false);
+    expect(createRoute(db, P, "support@acme.test", "https://b.test", "raw", 2)).toBeNull();
+    expect(deleteRoute(db, P, exact, 3)).toBe(true);
+    expect(deleteRoute(db, P, exact, 3)).toBe(false);
     expect(findRoute(db, "support@acme.test")?.address).toBe("*@acme.test");
-    expect(createRoute(db, "support@acme.test", "https://b.test", "raw", 4)).not.toBeNull();
+    expect(createRoute(db, P, "support@acme.test", "https://b.test", "raw", 4)).not.toBeNull();
   });
 
   test("only plain local parts or * are routes", () => {
@@ -110,7 +111,7 @@ describe("route deliveries", () => {
     const refused = { ok: false as const, error: "400", retry: false, retryAfterMs: null };
     expect(settleRouted(db, again[0] as never, refused, 63_000)).toBe("failed");
     expect(body.get("d2")?.body).not.toBeNull();
-    expect(retryFailed(db, exact, 64_000)).toBe(1);
+    expect(retryFailed(db, P, exact, 64_000)).toBe(1);
     expect(claimRouted(db, 64_000, 10).map((d) => [d.id, d.attempt])).toEqual([["d2", 1]]);
   });
 
@@ -131,7 +132,7 @@ describe("route deliveries", () => {
     expect(db.query("SELECT 1 FROM route_deliveries").all()).toEqual([]);
 
     queueRouted(db, any, "d3", sealed, 10, 0);
-    deleteRoute(db, any, 1);
+    deleteRoute(db, P, any, 1);
     expect(claimRouted(db, 10, 10)).toEqual([]);
   });
 });

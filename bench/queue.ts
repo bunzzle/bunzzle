@@ -29,7 +29,7 @@ async function client() {
   while (next < total) {
     next++;
     const t = performance.now();
-    await writer.run((d) => enqueue(d, { type: "email", payload }, Date.now()));
+    await writer.run((d) => enqueue(d, { project: "default", type: "email", payload }, Date.now()));
     latencies.push(performance.now() - t);
   }
 }

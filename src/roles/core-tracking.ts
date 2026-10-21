@@ -1,5 +1,4 @@
 import type { Database } from "bun:sqlite";
-import { allows, keyForHash, type Scope } from "../accounts/api-keys.ts";
 import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
 import { emailExists } from "../delivery/queue.ts";
@@ -15,6 +14,7 @@ import {
   trackingView,
 } from "../tracking/store.ts";
 import { b } from "../validate/schema.ts";
+import { resolveActor } from "./actor.ts";
 import { DOMAIN, MESSAGE_ID, tokenHash } from "./wire.ts";
 
 export interface TrackingDeps {
@@ -35,14 +35,6 @@ export function trackingMethods(deps: TrackingDeps) {
   const { db, writer, log, signer, delivery, dns } = deps;
   const now = deps.now ?? Date.now;
   const target = deps.publicUrl ? new URL(deps.publicUrl).hostname.toLowerCase() : null;
-
-  const caller = (hash: string | undefined, needed: Scope) => {
-    if (hash === undefined) return null;
-    const key = keyForHash(db, hash);
-    if (!key) throw new RpcError("unauthenticated", "API key is invalid");
-    if (!allows(key.scope, needed)) throw new RpcError("forbidden", "this API key cannot do this");
-    return key;
-  };
 
   const check = async (domain: string): Promise<Tracking | null> => {
     const t = getTracking(db, domain);
@@ -97,9 +89,9 @@ export function trackingMethods(deps: TrackingDeps) {
           .nullable(),
       }),
       async (p) => {
-        caller(p.tokenHash, "full");
+        const { project } = resolveActor(db, p.tokenHash, "full");
         const name = p.name.toLowerCase();
-        if (!getDomain(db, name)) throw new RpcError("not-found", "domain not found");
+        if (!getDomain(db, project, name)) throw new RpcError("not-found", "domain not found");
         let next: Tracking | null = null;
         if (p.tracking) {
           if (!target) {
@@ -139,8 +131,9 @@ export function trackingMethods(deps: TrackingDeps) {
         clicks: b.boolean().optional(),
       }),
       async (p) => {
-        const key = caller(p.tokenHash, "send");
+        const { project, key } = resolveActor(db, p.tokenHash, "send");
         if (key?.domains && !key.domains.includes(p.domain)) return null;
+        if (!getDomain(db, project, p.domain)) return null;
         const t = getTracking(db, p.domain);
         const opens = p.opens ?? t?.opens ?? false;
         const clicks = p.clicks ?? t?.clicks ?? false;

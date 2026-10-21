@@ -33,7 +33,11 @@ beforeEach(() => {
 
 describe("enqueue", () => {
   test("stores message, ready job and queued event", () => {
-    const id = enqueue(db, { type: "email", payload: { to: "a@b.c" }, metadata: { k: 1 } }, T0);
+    const id = enqueue(
+      db,
+      { project: "default", type: "email", payload: { to: "a@b.c" }, metadata: { k: 1 } },
+      T0,
+    );
     expect(id).toMatch(/^[0-9a-f-]{36}$/);
     expect(job(id)).toMatchObject({ state: "ready", attempt: 0, run_after: T0, priority: 0 });
     expect(kinds(id)).toEqual(["queued"]);
@@ -42,7 +46,13 @@ describe("enqueue", () => {
   test("one job per target, all sharing the message", () => {
     const id = enqueue(
       db,
-      { id: "m", type: "email", payload: 1, targets: ["a.test", "b.test", "a.test"] },
+      {
+        project: "default",
+        id: "m",
+        type: "email",
+        payload: 1,
+        targets: ["a.test", "b.test", "a.test"],
+      },
       T0,
     );
     const rows = db
@@ -62,17 +72,19 @@ describe("enqueue", () => {
   });
 
   test("rejects a duplicate id", () => {
-    enqueue(db, { id: "m1", type: "t", payload: 1 }, T0);
-    expect(() => enqueue(db, { id: "m1", type: "t", payload: 1 }, T0)).toThrow();
+    enqueue(db, { project: "default", id: "m1", type: "t", payload: 1 }, T0);
+    expect(() =>
+      enqueue(db, { project: "default", id: "m1", type: "t", payload: 1 }, T0),
+    ).toThrow();
   });
 });
 
 describe("claim", () => {
   test("leases runnable jobs by priority then age and returns their messages", () => {
-    enqueue(db, { id: "late", type: "t", payload: "x", runAfter: T0 + 1 }, T0);
-    enqueue(db, { id: "low", type: "t", payload: "l", priority: 5 }, T0);
-    enqueue(db, { id: "old", type: "t", payload: "o", runAfter: T0 - 10 }, T0);
-    enqueue(db, { id: "new", type: "t", payload: "n" }, T0);
+    enqueue(db, { project: "default", id: "late", type: "t", payload: "x", runAfter: T0 + 1 }, T0);
+    enqueue(db, { project: "default", id: "low", type: "t", payload: "l", priority: 5 }, T0);
+    enqueue(db, { project: "default", id: "old", type: "t", payload: "o", runAfter: T0 - 10 }, T0);
+    enqueue(db, { project: "default", id: "new", type: "t", payload: "n" }, T0);
 
     const claimed = claim(db, T0, 2, 30_000);
     expect(claimed.map((j) => j.id).sort()).toEqual(["new", "old"]);
@@ -87,7 +99,7 @@ describe("claim", () => {
 
 describe("settle", () => {
   const leased = (id = "m") => {
-    enqueue(db, { id, type: "t", payload: 1 }, T0);
+    enqueue(db, { project: "default", id, type: "t", payload: 1 }, T0);
     const [j] = claim(db, T0, 1, 30_000);
     if (!j) throw new Error("nothing claimed");
     return j;
@@ -132,7 +144,11 @@ describe("settle", () => {
   });
 
   test("defer after the per-message expiry is dead with code expired", () => {
-    enqueue(db, { id: "m", type: "t", payload: 1, expiresAt: T0 + 120_000 }, T0);
+    enqueue(
+      db,
+      { project: "default", id: "m", type: "t", payload: 1, expiresAt: T0 + 120_000 },
+      T0,
+    );
     const [j] = claim(db, T0, 1, 30_000);
     if (!j) throw new Error("nothing claimed");
     expect(j.expiresAt).toBe(T0 + 120_000);
@@ -145,7 +161,7 @@ describe("settle", () => {
   });
 
   test("delayed notices fire once each after 1 hour and 1 day", () => {
-    enqueue(db, { id: "m", type: "t", payload: 1 }, T0);
+    enqueue(db, { project: "default", id: "m", type: "t", payload: 1 }, T0);
     const step = (now: number) => {
       const [j] = claim(db, now, 1, 30_000);
       if (!j) throw new Error("nothing claimed");
@@ -204,7 +220,7 @@ describe("settle", () => {
 
 describe("leases and reconciliation", () => {
   test("expired leases become unknown, then ready with a duplicate_risk event", () => {
-    enqueue(db, { id: "m", type: "t", payload: 1 }, T0);
+    enqueue(db, { project: "default", id: "m", type: "t", payload: 1 }, T0);
     claim(db, T0, 1, 1_000);
     expect(expireLeases(db, T0 + 999, 5_000)).toBe(0);
     expect(expireLeases(db, T0 + 1_000, 5_000)).toBe(1);
@@ -216,7 +232,7 @@ describe("leases and reconciliation", () => {
   });
 
   test("a resent job carries the unresolved attempt so it can be reconciled", () => {
-    enqueue(db, { id: "m", type: "t", payload: 1 }, T0);
+    enqueue(db, { project: "default", id: "m", type: "t", payload: 1 }, T0);
     const [first] = claim(db, T0, 1, 1_000);
     expect(first?.unresolvedAttempt).toBeNull();
     recoverAfterCrash(db, T0, 0);
@@ -230,8 +246,8 @@ describe("leases and reconciliation", () => {
   });
 
   test("recovery after a crash marks every lease unknown", () => {
-    enqueue(db, { id: "a", type: "t", payload: 1 }, T0);
-    enqueue(db, { id: "b", type: "t", payload: 1 }, T0);
+    enqueue(db, { project: "default", id: "a", type: "t", payload: 1 }, T0);
+    enqueue(db, { project: "default", id: "b", type: "t", payload: 1 }, T0);
     claim(db, T0, 2, 3_600_000);
     expect(recoverAfterCrash(db, T0, 0)).toBe(2);
     expect(countByState(db)).toMatchObject({ unknown: 2, leased: 0 });
@@ -240,8 +256,8 @@ describe("leases and reconciliation", () => {
 
   test("nextWakeAt is the earliest pending deadline", () => {
     expect(nextWakeAt(db)).toBeUndefined();
-    enqueue(db, { id: "a", type: "t", payload: 1, runAfter: T0 + 500 }, T0);
-    enqueue(db, { id: "b", type: "t", payload: 1 }, T0);
+    enqueue(db, { project: "default", id: "a", type: "t", payload: 1, runAfter: T0 + 500 }, T0);
+    enqueue(db, { project: "default", id: "b", type: "t", payload: 1 }, T0);
     claim(db, T0, 1, 200);
     expect(nextWakeAt(db)).toBe(T0 + 200);
   });

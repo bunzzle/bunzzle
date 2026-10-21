@@ -1,5 +1,4 @@
 import type { Database } from "bun:sqlite";
-import { allows, keyForHash, type Scope } from "../accounts/api-keys.ts";
 import type { Logger } from "../core/log.ts";
 import type { StorageState } from "../core/storage.ts";
 import type { Writer } from "../core/store/writer.ts";
@@ -22,6 +21,7 @@ import {
 } from "../inbound/routes.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import { b } from "../validate/schema.ts";
+import { resolveActor } from "./actor.ts";
 import { DOMAIN, tokenHash, toWire } from "./wire.ts";
 
 export interface RouteDeps {
@@ -51,13 +51,6 @@ const view = (r: Route) => ({
 export function routeMethods(deps: RouteDeps) {
   const { db, writer, log, signer, delivery } = deps;
   const now = deps.now ?? Date.now;
-
-  const caller = (hash: string | undefined, needed: Scope) => {
-    if (hash === undefined) return;
-    const key = keyForHash(db, hash);
-    if (!key) throw new RpcError("unauthenticated", "API key is invalid");
-    if (!allows(key.scope, needed)) throw new RpcError("forbidden", "this API key cannot do this");
-  };
 
   const methods: Methods = {
     inboundRoutes: method(
@@ -104,12 +97,12 @@ export function routeMethods(deps: RouteDeps) {
         format: b.enum(ROUTE_FORMATS).default("parsed"),
       }),
       async (p) => {
-        caller(p.tokenHash, "full");
+        const { project } = resolveActor(db, p.tokenHash, "full");
         const parts = splitRouteAddress(p.address);
         if (!parts || !DOMAIN.test(parts.domain)) {
           throw new RpcError("invalid", "address must look like name@example.com or *@example.com");
         }
-        if (!getDomain(db, parts.domain)) {
+        if (!getDomain(db, project, parts.domain)) {
           throw new RpcError("invalid", `${parts.domain} is not a domain here; add it first`);
         }
         const u = new URL(p.url);
@@ -117,7 +110,9 @@ export function routeMethods(deps: RouteDeps) {
           throw new RpcError("invalid", "route endpoints must be https");
         }
         const address = `${parts.local}@${parts.domain}`;
-        const route = await writer.run((d) => createRoute(d, address, p.url, p.format, now()));
+        const route = await writer.run((d) =>
+          createRoute(d, project, address, p.url, p.format, now()),
+        );
         if (!route) throw new RpcError("invalid", `a route for ${address} already exists`);
         const secret = await signer.call("routeSecret", { id: route.id }, { result: b.string() });
         return { ...view(route), signing_secret: secret };
@@ -125,24 +120,24 @@ export function routeMethods(deps: RouteDeps) {
     ),
 
     listRoutes: method(b.object({ tokenHash }), (p) => {
-      caller(p.tokenHash, "read");
-      return listRoutes(db).map(view);
+      const { project } = resolveActor(db, p.tokenHash, "read");
+      return listRoutes(db, project).map(view);
     }),
 
     deleteRoute: method(b.object({ tokenHash, id: b.string().max(64) }), async (p) => {
-      caller(p.tokenHash, "full");
-      if (!(await writer.run((d) => deleteRoute(d, p.id, now())))) {
+      const { project } = resolveActor(db, p.tokenHash, "full");
+      if (!(await writer.run((d) => deleteRoute(d, project, p.id, now())))) {
         throw new RpcError("not-found", "route not found");
       }
       return { id: p.id, deleted: true };
     }),
 
     retryRoute: method(b.object({ tokenHash, id: b.string().max(64) }), async (p) => {
-      caller(p.tokenHash, "full");
-      if (!listRoutes(db).some((r) => r.id === p.id)) {
+      const { project } = resolveActor(db, p.tokenHash, "full");
+      if (!listRoutes(db, project).some((r) => r.id === p.id)) {
         throw new RpcError("not-found", "route not found");
       }
-      const requeued = await writer.run((d) => retryFailed(d, p.id, now()));
+      const requeued = await writer.run((d) => retryFailed(d, project, p.id, now()));
       return { id: p.id, requeued };
     }),
   };
