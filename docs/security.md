@@ -48,7 +48,14 @@ Every one of these is fuzzed (`test/fuzz`): a few thousand inputs per target in 
 
 One private-network filter covers SMTP, webhooks, inbound routes, MTA-STS and DNS provider requests. Delivery resolves names itself and connects to the vetted IP, while TLS still checks the name. This stops DNS rebinding. Redirects are never followed.
 
-Outbound TLS: delivery always tries STARTTLS when the receiving server offers it. If the TLS handshake fails, the attempt is deferred (4.7.5) and tried again later or on the next MX host, again with STARTTLS; it never falls back to plain text. If the server answers STARTTLS with an error reply, the email goes on in plain text only when nothing requires TLS for that destination (no MTA-STS policy in enforce mode, DANE, provider rule, relay or REQUIRETLS); the delivery record then shows TLS `none`. Otherwise it is deferred.
+Outbound TLS: delivery always tries STARTTLS when the receiving server offers it. If the TLS handshake fails, the attempt is deferred (4.7.5) and tried again later or on the next MX host, again with STARTTLS; it never falls back to plain text.
+
+Delivery goes on in plain text only when both of these are true:
+
+- the server answers `STARTTLS` with anything other than 220, for example `454 4.7.0 TLS not available`;
+- nothing requires TLS for that destination: no MTA-STS policy in enforce mode, no DANE records, no provider rule, no relay, and the email was not sent with REQUIRETLS.
+
+This is intended. It is opportunistic TLS (RFC 3207): a server that refuses TLS still gets the email, and the delivery record shows TLS `none`. Any policy that requires TLS for a destination turns this path off; the attempt is then deferred instead.
 
 ## Abuse
 
