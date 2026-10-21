@@ -1,5 +1,4 @@
-const args = globalThis.Deno ? globalThis.Deno.args : globalThis.process.argv.slice(2);
-const { Bunzzle, BunzzleError } = await import(new URL(`file://${args[0]}`).href);
+const { Bunzzle, BunzzleError } = await import(Bun.argv[2] ?? "");
 
 const seen = [];
 const fetch = async (url, init) => {

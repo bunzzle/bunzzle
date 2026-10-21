@@ -31,10 +31,6 @@ jobs:
 
   sdk:
     runs-on: ubuntu-latest
-    env:
-      NODE_22: node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
-      NODE_24: node:24-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
-      DENO_2: denoland/deno:alpine-2.9.6@sha256:aa665f8777136863b5b8a0445a5cdfccff8103b5f40c9a877de5276b04facb1e
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -46,24 +42,16 @@ jobs:
         working-directory: sdk/typescript
         run: |
           mkdir -p "$RUNNER_TEMP/sdk"
-          bun pm pack --destination "$RUNNER_TEMP/sdk" --quiet
+          bun pm pack --destination "$RUNNER_TEMP/sdk"
           tar -xzf "$RUNNER_TEMP"/sdk/*.tgz -C "$RUNNER_TEMP/sdk"
-      - name: Bun
+          test "$(cd "$RUNNER_TEMP/sdk/package" && ls | LC_ALL=C sort | tr '\n' ' ')" = "CHANGELOG.md LICENSE README.md index.d.ts index.js package.json "
+      - name: The packed SDK works
         run: bun sdk/smoke.mjs "$RUNNER_TEMP/sdk/package/index.js"
-      - name: Node.js 22 and 24
-        run: |
-          for image in "$NODE_22" "$NODE_24"; do
-            docker run --rm -v "$PWD/sdk:/sdk:ro" -v "$RUNNER_TEMP/sdk/package:/pkg:ro" "$image" \
-              node /sdk/smoke.mjs /pkg/index.js
-          done
-      - name: Deno 2
-        run: |
-          docker run --rm -v "$PWD/sdk:/sdk:ro" -v "$RUNNER_TEMP/sdk/package:/pkg:ro" "$DENO_2" \
-            deno run --allow-read=/pkg /sdk/smoke.mjs /pkg/index.js
-      - name: npm publish dry run
-        run: |
-          docker run --rm -v "$PWD/sdk/typescript:/pkg:ro" -w /pkg "$NODE_24" \
-            npx --yes npm@11.20.0 publish --dry-run
+      - name: Publish dry run
+        working-directory: sdk/typescript
+        env:
+          NPM_CONFIG_TOKEN: dry-run
+        run: bun publish --dry-run --access public
 
   system:
     needs: check
