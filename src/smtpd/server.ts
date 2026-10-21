@@ -12,6 +12,7 @@ export interface SmtpSession {
   user: unknown;
   utf8: boolean;
   requiretls: boolean;
+  helo: string | null;
 }
 
 export interface SmtpHooks {
@@ -194,6 +195,7 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
     const upper = line.toUpperCase();
     const tlsMissing = o.requireTls && !c.session.tls;
     if (upper.startsWith("EHLO")) {
+      c.session.helo = line.slice(4).trim() || null;
       ehlo(s, c);
     } else if (upper === "STARTTLS" || upper.startsWith("STARTTLS ")) {
       if (!o.tls) return reply(s, "502 5.5.1 STARTTLS not available");
@@ -201,6 +203,7 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
       if (upper !== "STARTTLS") return reply(s, "501 5.5.4 No parameters allowed");
       upgrade(s, c, o.tls);
     } else if (upper.startsWith("HELO")) {
+      c.session.helo = line.slice(4).trim() || null;
       reply(s, `250 ${o.name}`);
     } else if (upper.startsWith("AUTH")) {
       if (!o.hooks.auth) return reply(s, "502 5.5.1 AUTH not available");
@@ -362,7 +365,14 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
         chain: Promise.resolve(),
         idle: null,
         upgrading: false,
-        session: { remote: ip, tls: !!o.implicitTls, user: null, utf8: false, requiretls: false },
+        session: {
+          remote: ip,
+          tls: !!o.implicitTls,
+          user: null,
+          utf8: false,
+          requiretls: false,
+          helo: null,
+        },
         messages: 0,
         authStep: null,
       };

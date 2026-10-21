@@ -1,11 +1,15 @@
 import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { DmarcError, readDmarcReport } from "../dmarc/report.ts";
+import { cachingResolver } from "../dns/cache.ts";
+import { createResolver, parseServer, systemServers } from "../dns/resolver.ts";
+import { type AuthResults, checkAuth, refusal } from "../inbound/auth.ts";
 import { classifyReport, type Report } from "../inbound/parse.ts";
 import { buildPayload } from "../inbound/payload.ts";
 import { ROUTE_FORMATS } from "../inbound/routes.ts";
 import { startInboundServer } from "../inbound/server.ts";
 import { RpcClient, RpcError } from "../ipc/rpc.ts";
+import { blocklists } from "../ips/blocklists.ts";
 import { MimeParseError } from "../mime/parse.ts";
 import { b } from "../validate/schema.ts";
 import { onStop, ready, watchFile } from "./runtime.ts";
@@ -46,6 +50,11 @@ export async function runInbound(config: Config, log: Logger) {
   const core = new RpcClient(sockets(config.runDir).core);
   const port = config.inboundPort;
   const tls = port === null ? null : await loadTls(config);
+  const servers = config.dnsServers.length
+    ? config.dnsServers.map(parseServer)
+    : await systemServers();
+  const resolver = cachingResolver(createResolver({ servers }));
+  const lists = blocklists(null).filter((l) => config.inboundBlocklists.includes(l.id));
   const server =
     port === null
       ? null
@@ -72,6 +81,22 @@ export async function runInbound(config: Config, log: Logger) {
                   { recipients: all },
                   { result: routesResult, timeoutMs: 10_000 },
                 );
+                let auth: AuthResults | null = null;
+                if (split.routes.length > 0) {
+                  auth = await checkAuth(
+                    resolver,
+                    raw,
+                    { ip: meta.remote, mailFrom: meta.from, helo: meta.helo },
+                    lists,
+                  );
+                  const refused = refusal(auth, config.inboundRefuse, meta.remote);
+                  if (refused) {
+                    log.info("refused a message for a route", {
+                      reply: `${refused.code} ${refused.text}`,
+                    });
+                    return refused;
+                  }
+                }
                 for (const r of split.routes) {
                   const id = Bun.randomUUIDv7();
                   const payload = buildPayload(
@@ -83,6 +108,7 @@ export async function runInbound(config: Config, log: Logger) {
                       rcptTo: r.recipients,
                       remoteIp: meta.remote,
                       tls: meta.tls,
+                      auth,
                     },
                     r.format,
                   );

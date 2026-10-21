@@ -39,7 +39,17 @@ export function relaxedBody(body: string): string {
   return lines.length === 0 ? "" : `${lines.join("\r\n")}\r\n`;
 }
 
-export function headerData(headers: HeaderField[], names: string[]): string {
+export function simpleBody(body: string): string {
+  let end = body.length;
+  while (end >= 2 && body.slice(end - 2, end) === "\r\n") end -= 2;
+  return `${body.slice(0, end)}\r\n`;
+}
+
+export function headerData(
+  headers: HeaderField[],
+  names: string[],
+  canon: (raw: string) => string = relaxedHeader,
+): string {
   const used = new Map<string, number>();
   let out = "";
   for (const name of names) {
@@ -47,7 +57,7 @@ export function headerData(headers: HeaderField[], names: string[]): string {
     const k = used.get(name) ?? 0;
     used.set(name, k + 1);
     const h = instances[instances.length - 1 - k];
-    if (h) out += `${relaxedHeader(h.raw)}\r\n`;
+    if (h) out += `${canon(h.raw)}\r\n`;
   }
   return out;
 }

@@ -29,6 +29,8 @@ describe("loadConfig", () => {
       publicUrl: null,
       track: null,
       inboundHostname: null,
+      inboundBlocklists: [],
+      inboundRefuse: [],
       inboundTlsCertFile: null,
       inboundTlsKeyFile: null,
       dane: "auto",

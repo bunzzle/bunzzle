@@ -1,4 +1,5 @@
 import { decodeWords, fromBinary, type MimePart, parseMime } from "../mime/parse.ts";
+import { type AuthResults, authPayload } from "./auth.ts";
 import type { RouteFormat } from "./routes.ts";
 
 export const ROUTE_MIME_LIMITS = { maxDepth: 10, maxParts: 200, maxHeaders: 1_000 };
@@ -10,6 +11,7 @@ export interface Envelope {
   rcptTo: string[];
   remoteIp: string;
   tls: boolean;
+  auth: AuthResults | null;
 }
 
 interface Attachment {
@@ -48,6 +50,7 @@ function envelopeFields(e: Envelope) {
     rcpt_to: e.rcptTo,
     remote_ip: e.remoteIp,
     tls: e.tls,
+    auth: e.auth ? authPayload(e.auth) : null,
   };
 }
 

@@ -75,6 +75,10 @@ Bounces, complaints, unsubscribe replies and mail for inbound routes. Off unless
 | `BUNZZLE_INBOUND_MAX_SIZE` | `10485760` | Largest message accepted, in bytes. Bounces and reports stay under 2 MB. |
 | `BUNZZLE_INBOUND_TLS_CERT_FILE` | | Certificate for STARTTLS on the inbound port. |
 | `BUNZZLE_INBOUND_TLS_KEY_FILE` | | Private key for that certificate. |
+| `BUNZZLE_INBOUND_BLOCKLISTS` | | Lists the sending IP of route mail is looked up on: comma-separated, from `spamhaus`, `barracuda`, `spamcop`, `mailspike`, `psbl`. |
+| `BUNZZLE_INBOUND_REFUSE` | | Route mail to refuse during the SMTP session: comma-separated, from `spf` (SPF fail), `dmarc` (DMARC fail with `p=reject`) and `blocklist` (listed on one of the lists above). |
+
+Mail for inbound routes is checked for SPF (MAIL FROM, or the HELO name when MAIL FROM is empty), every DKIM signature, DMARC for the From domain, and the lists above. The results are in the `auth` field of the route request. With `dmarc` in `BUNZZLE_INBOUND_REFUSE`, a DMARC check that cannot finish because of a DNS error is answered with a temporary error, and a `quarantine` policy or `t=y` is delivered with the result. Inbound uses the public Spamhaus zone, so Spamhaus needs a local resolver there.
 
 ## Blocklists
 

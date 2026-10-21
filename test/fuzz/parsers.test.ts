@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { generateMasterKey, masterKeyFrom } from "../../src/crypto/master.ts";
+import { checkDkim } from "../../src/dkim/check.ts";
 import { keyFromTxt, selectorsOf } from "../../src/dkim/verify.ts";
+import { parseDmarcRecord } from "../../src/dmarc/policy.ts";
+import type { DnsAnswer, QueryType, Resolver } from "../../src/dns/resolver.ts";
 import { DnsWireError, decodeMessage, encodeQuery, RRType } from "../../src/dns/wire.ts";
 import { ApiError } from "../../src/http/errors.ts";
 import { prepareEmail, sendSchema } from "../../src/http/send.ts";
+import { fromDomain } from "../../src/inbound/auth.ts";
 import { classifyReport } from "../../src/inbound/parse.ts";
 import { AddressError, normalizeAddress, parseAddress } from "../../src/mime/address.ts";
 import {
@@ -18,6 +22,7 @@ import {
 import { classify, retryHint } from "../../src/replies/classify.ts";
 import { makeToken, readToken, unbase32 } from "../../src/signer/tokens.ts";
 import { mxAllowed, parsePolicy } from "../../src/smtp/mta-sts.ts";
+import { checkSpf } from "../../src/spf/check.ts";
 import { fuzz, int, pick, report } from "./engine.ts";
 
 const latin1 = new TextDecoder("latin1");
@@ -523,6 +528,82 @@ describe("fuzz: parsers that see outside data", () => {
         },
       });
       expect(report(findings)).toBe("");
+    },
+    LONG,
+  );
+
+  test(
+    "SPF records, DKIM signatures and DMARC records",
+    async () => {
+      let txt = "";
+      const resolver: Resolver = {
+        async query(name: string, type: QueryType): Promise<DnsAnswer> {
+          const base = { name, type, rcode: 0, authenticated: false, ttl: 60 };
+          if (type === "TXT") {
+            const rr = { name, ttl: 60, rrtype: 16, rdata: new Uint8Array() };
+            return { ...base, records: [{ ...rr, type: "TXT", strings: [txt] }] };
+          }
+          if (type === "A") {
+            const rr = { name, ttl: 60, rrtype: 1, rdata: new Uint8Array() };
+            return { ...base, records: [{ ...rr, type: "A", address: "192.0.2.1" }] };
+          }
+          return { ...base, records: [] };
+        },
+      };
+      const spf = await fuzz({
+        seeds: [
+          "v=spf1 include:%{d} a:%{ir}.%{v}.x/24//64 mx ptr exists:%{l1r-}.%{o} -all",
+          "v=spf1 ip4:192.0.2.0/24 ip6:2001:db8::/32 redirect=%{d2}.example ~all",
+        ],
+        dictionary: ["%{", "}", "include:", "redirect=", "/", "//", "ip6:", ":"],
+        maxLength: 2048,
+        iterations: 3,
+        async run(input) {
+          txt = latin1.decode(input);
+          const r = await checkSpf(resolver, {
+            ip: "192.0.2.9",
+            mailFrom: "a-b@x.test",
+            helo: null,
+          });
+          expect([
+            "pass",
+            "fail",
+            "softfail",
+            "neutral",
+            "none",
+            "temperror",
+            "permerror",
+          ]).toContain(r.result);
+        },
+      });
+      expect(report(spf)).toBe("");
+      const dkim = await fuzz({
+        seeds: [
+          crlf(
+            "DKIM-Signature: v=1; a=rsa-sha256; c=simple/relaxed; d=x.test; s=s; l=4; t=1; x=2;\n h=from:to; bh=AAAA; b=AAAA\nFrom: a@x.test\n\nbody\n",
+          ),
+        ],
+        dictionary: ["DKIM-Signature:", "; ", "=", "\r\n ", "relaxed", "ed25519-sha256"],
+        maxLength: 16 * 1024,
+        iterations: 3,
+        async run(input) {
+          txt = "v=DKIM1; k=rsa; p=AAAA";
+          const raw = latin1.decode(input);
+          for (const r of await checkDkim(resolver, raw)) expect(r.result).not.toBe("pass");
+          fromDomain(raw);
+        },
+      });
+      expect(report(dkim)).toBe("");
+      const dmarc = await fuzz({
+        seeds: ["v=DMARC1; p=reject; sp=none; np=quarantine; adkim=s; aspf=r; pct=50; t=y; psd=n"],
+        dictionary: [";", "=", "v=DMARC1", "p=", "psd=y"],
+        maxLength: 1024,
+        iterations: 5,
+        run(input) {
+          parseDmarcRecord(utf8.decode(input));
+        },
+      });
+      expect(report(dmarc)).toBe("");
     },
     LONG,
   );
