@@ -31,7 +31,6 @@ describe("loadConfig", () => {
       inboundHostname: null,
       inboundBlocklists: [],
       inboundRefuse: [],
-      inboundSocketGroup: null,
       inboundTlsCertFile: null,
       inboundTlsKeyFile: null,
       dane: "auto",

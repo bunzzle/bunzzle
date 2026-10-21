@@ -20,6 +20,7 @@ services:
     command:
       - >-
         chown 0:10010 /run/bunzzle && chmod 1770 /run/bunzzle &&
+        mkdir -p /run/bunzzle/inbound && chown 10012:10018 /run/bunzzle/inbound && chmod 2750 /run/bunzzle/inbound &&
         chown 10011:10011 /var/lib/bunzzle/keys && chmod 0700 /var/lib/bunzzle/keys &&
         chown 10012:10012 /var/lib/bunzzle/data && chmod 0700 /var/lib/bunzzle/data &&
         chown 10016:10017 /var/lib/bunzzle/certs && chmod 2750 /var/lib/bunzzle/certs
@@ -71,12 +72,11 @@ services:
     <<: *role
     command: ["role", "core"]
     user: "10012:10012"
-    group_add: ["10010", "10011", "10013", "10016", "10018"]
+    group_add: ["10010", "10011", "10013", "10016"]
     network_mode: none
     environment:
       BUNZZLE_RUN_DIR: /run/bunzzle
       BUNZZLE_DATA_DIR: /var/lib/bunzzle/data
-      BUNZZLE_INBOUND_SOCKET_GROUP: "10018"
     volumes:
       - run:/run/bunzzle
       - data:/var/lib/bunzzle/data

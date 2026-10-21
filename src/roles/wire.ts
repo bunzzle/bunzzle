@@ -10,7 +10,7 @@ export type Role = (typeof ROLES)[number];
 export function sockets(runDir: string) {
   return {
     core: `${runDir}/core.sock`,
-    coreInbound: `${runDir}/core-inbound.sock`,
+    coreInbound: `${runDir}/inbound/core.sock`,
     signer: `${runDir}/signer.sock`,
     delivery: `${runDir}/delivery.sock`,
     dns: `${runDir}/dns.sock`,

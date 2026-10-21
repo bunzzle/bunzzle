@@ -18,7 +18,6 @@ m bunzzle-core     bunzzle-delivery
 m bunzzle-core     bunzzle-dns
 m bunzzle-delivery bunzzle-signer
 m bunzzle-api      bunzzle-core
-m bunzzle-core     bunzzle-core-inbound
 m bunzzle-inbound  bunzzle-core-inbound
 m bunzzle-api      bunzzle-certs
 m bunzzle-inbound  bunzzle-certs

@@ -58,9 +58,10 @@ describe("bunzzle serve", () => {
     const mode = async (p: string) => (await Bun.file(`${served.dir}/${p}`).stat()).mode & 0o777;
     expect(await mode("run/admin.sock")).toBe(0o600);
     expect(await mode("run/core.sock")).toBe(0o660);
-    expect(await mode("run/core-inbound.sock")).toBe(0o660);
+    expect(await mode("run/inbound")).toBe(0o750);
+    expect(await mode("run/inbound/core.sock")).toBe(0o660);
     const roles = new RpcClient(`${served.dir}/run/core.sock`);
-    const inbound = new RpcClient(`${served.dir}/run/core-inbound.sock`);
+    const inbound = new RpcClient(`${served.dir}/run/inbound/core.sock`);
     const admin = new RpcClient(`${served.dir}/run/admin.sock`);
     try {
       const code = (p: Promise<unknown>) =>

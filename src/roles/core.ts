@@ -277,9 +277,13 @@ export async function runCore(config: Config, log: Logger) {
     ...doctor,
   };
   const admin = await serveRpc(adminSocket(config.runDir), all, { mode: "600" });
-  const inbound = await serveRpc(sock.coreInbound, inboundMethods(all), {
-    group: config.inboundSocketGroup,
-  });
+  const inboundDir = sock.coreInbound.slice(0, sock.coreInbound.lastIndexOf("/"));
+  const made = await Bun.file(inboundDir)
+    .stat()
+    .then(() => true)
+    .catch(() => false);
+  if (!made) await privateDir(inboundDir, "750");
+  const inbound = await serveRpc(sock.coreInbound, inboundMethods(all));
   const server = await serveRpc(sock.core, apiMethods(all));
 
   const shred = async () => {

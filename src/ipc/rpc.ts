@@ -111,7 +111,6 @@ export interface RpcServer {
 
 export interface ServeOptions {
   mode?: "600" | "660";
-  group?: string | null;
 }
 
 export async function serveRpc(
@@ -170,7 +169,6 @@ export async function serveRpc(
       },
     },
   });
-  if (opts.group) await Bun.$`chgrp ${opts.group} ${path}`.quiet();
   await Bun.$`chmod ${opts.mode ?? "660"} ${path}`.quiet();
   return { stop: () => listener.stop(true) };
 }

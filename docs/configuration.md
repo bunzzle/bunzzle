@@ -14,7 +14,6 @@ After editing the file, `sudo systemctl reload 'bunzzle-*'` (or `kill -HUP` on `
 | `BUNZZLE_PORT` | `3000` | API port. |
 | `BUNZZLE_DATA_DIR` | `./data` | Where the SQLite database lives. |
 | `BUNZZLE_RUN_DIR` | `./run` | Unix sockets the roles use to talk to each other. |
-| `BUNZZLE_INBOUND_SOCKET_GROUP` | | Group given to `core-inbound.sock`, so only the inbound role can open it. Set by the systemd units and `compose.yaml`. |
 | `BUNZZLE_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `BUNZZLE_PUBLIC_URL` | | Public https URL of the API, used in the one-click unsubscribe links of bulk email. Tracking hosts are a CNAME to its host. |
 | `BUNZZLE_TRACK_PORT` | | HTTPS port for open and click tracking, usually `443`. Each tracking host needs a certificate in `BUNZZLE_CERTS_DIR/track/HOST/`. |
