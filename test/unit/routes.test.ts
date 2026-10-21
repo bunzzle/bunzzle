@@ -143,6 +143,7 @@ const envelope = {
   rcptTo: ["support@acme.test"],
   remoteIp: "192.0.2.7",
   tls: true,
+  auth: null,
 };
 
 const message = (lines: string[]) => toBinary(new TextEncoder().encode(lines.join("\r\n")));

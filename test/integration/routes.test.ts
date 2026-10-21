@@ -90,7 +90,12 @@ async function until<T>(f: () => T, ok: (v: T) => boolean, ms = 10_000): Promise
 const postsTo = (path: string) => posts.filter((p) => p.path === path);
 
 beforeAll(async () => {
-  dns = await startFakeDns({});
+  dns = await startFakeDns({
+    "signed.example": { TXT: ["v=spf1 ip4:127.0.0.1 -all"] },
+    "_dmarc.signed.example": { TXT: ["v=DMARC1; p=reject"] },
+    "spoof.example": { TXT: ["v=spf1 -all"] },
+    "_dmarc.spoof.example": { TXT: ["v=DMARC1; p=reject"] },
+  });
   receiver = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -113,6 +118,7 @@ beforeAll(async () => {
     BUNZZLE_INBOUND_HOSTNAME: "in.bunzzle.test",
     BUNZZLE_INBOUND_HOST: "127.0.0.1",
     BUNZZLE_INBOUND_PORT: "0",
+    BUNZZLE_INBOUND_REFUSE: "dmarc",
     BUNZZLE_RETRY_SCALE: "0.001",
   });
   inbound = served.inboundPort as number;
@@ -128,6 +134,34 @@ afterAll(async () => {
 });
 
 describe("inbound routes", () => {
+  test("SPF, DKIM and DMARC results are in the payload; a DMARC reject is refused", async () => {
+    await addRoute("auth@acme.test", "/auth");
+    const send = (domain: string) =>
+      smtpTalk(inbound, [
+        "EHLO mx.sender.test",
+        `MAIL FROM:<a@${domain}>`,
+        "RCPT TO:<auth@acme.test>",
+        "DATA",
+        `From: a@${domain}\r\nSubject: hi\r\n\r\nhello\r\n.`,
+        "QUIT",
+      ]);
+    expect((await send("signed.example")).replies[5]).toStartWith("250");
+    const [p] = await until(
+      () => postsTo("/auth"),
+      (l) => l.length > 0,
+    );
+    expect(p?.body["auth"]).toEqual({
+      spf: { result: "pass", domain: "signed.example", scope: "mailfrom", reason: null },
+      dkim: [],
+      dmarc: { result: "pass", domain: "signed.example", policy: "reject", reason: null },
+      blocklists: [],
+    });
+    expect((await send("spoof.example")).replies[5]).toBe(
+      "550 5.7.1 Rejected by the DMARC policy of spoof.example",
+    );
+    expect(postsTo("/auth")).toHaveLength(1);
+  });
+
   test("routes need a known domain, a valid address and one route per address", async () => {
     const add = (address: string) =>
       api("/routes", {

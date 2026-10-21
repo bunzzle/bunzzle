@@ -67,7 +67,16 @@ const ROLE_LIMITS: Record<string, string[]> = {
     "dns/resolver.ts",
   ],
   signer: ["core/store/", "smtp/", "dns/", "delivery/"],
-  inbound: ["core/store/", "signer/", "dkim/", "crypto/", "smtp/", "delivery/"],
+  inbound: [
+    "core/store/",
+    "signer/",
+    "dkim/keys.ts",
+    "dkim/sign.ts",
+    "dkim/verify.ts",
+    "crypto/",
+    "smtp/",
+    "delivery/",
+  ],
   dns: [
     "core/store/",
     "signer/",

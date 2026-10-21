@@ -1,5 +1,9 @@
 import { familyOf } from "./dns/ip.ts";
+import { blocklists } from "./ips/blocklists.ts";
 import { b } from "./validate/schema.ts";
+
+const INBOUND_BLOCKLISTS = blocklists(null).map((l) => l.id);
+const INBOUND_REFUSE = ["spf", "dmarc", "blocklist"];
 
 const bool = b
   .enum(["true", "false", "1", "0"])
@@ -48,6 +52,8 @@ const schema = b.object({
     message: "must be an http(s) URL like https://mail.example.com",
   }),
   BUNZZLE_INBOUND_HOSTNAME: optional,
+  BUNZZLE_INBOUND_BLOCKLISTS: b.string().default(""),
+  BUNZZLE_INBOUND_REFUSE: b.string().default(""),
   BUNZZLE_INBOUND_TLS_CERT_FILE: optional,
   BUNZZLE_INBOUND_TLS_KEY_FILE: optional,
   BUNZZLE_DANE: b.enum(["auto", "off"]).default("auto"),
@@ -163,6 +169,8 @@ export interface Config {
   publicUrl: string | null;
   track: { host: string; port: number; dir: string } | null;
   inboundHostname: string | null;
+  inboundBlocklists: string[];
+  inboundRefuse: ("spf" | "dmarc" | "blocklist")[];
   inboundTlsCertFile: string | null;
   inboundTlsKeyFile: string | null;
   dane: "auto" | "off";
@@ -290,6 +298,23 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
   if (c.BUNZZLE_RELAY_FOR !== "all" && !c.BUNZZLE_RELAY_HOST) {
     throw new ConfigError("invalid configuration:\n  BUNZZLE_RELAY_FOR needs BUNZZLE_RELAY_HOST");
   }
+  const words = (v: string) =>
+    v
+      .split(",")
+      .map((x) => x.trim().toLowerCase())
+      .filter(Boolean);
+  const inboundBlocklists = words(c.BUNZZLE_INBOUND_BLOCKLISTS);
+  if (inboundBlocklists.some((x) => !INBOUND_BLOCKLISTS.includes(x))) {
+    throw new ConfigError(
+      `invalid configuration:\n  BUNZZLE_INBOUND_BLOCKLISTS is a comma-separated list of ${INBOUND_BLOCKLISTS.join(", ")}`,
+    );
+  }
+  const inboundRefuse = words(c.BUNZZLE_INBOUND_REFUSE);
+  if (inboundRefuse.some((x) => !INBOUND_REFUSE.includes(x))) {
+    throw new ConfigError(
+      `invalid configuration:\n  BUNZZLE_INBOUND_REFUSE is a comma-separated list of ${INBOUND_REFUSE.join(", ")}`,
+    );
+  }
   const certsDir = c.BUNZZLE_CERTS_DIR.replace(/\/+$/, "");
   const acmeHosts = [
     ...(c.BUNZZLE_INBOUND_PORT !== undefined
@@ -365,6 +390,8 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
         ? { host: c.BUNZZLE_TRACK_HOST, port: c.BUNZZLE_TRACK_PORT, dir: `${certsDir}/track` }
         : null,
     inboundHostname: c.BUNZZLE_INBOUND_HOSTNAME ?? c.BUNZZLE_EHLO_NAME,
+    inboundBlocklists,
+    inboundRefuse: inboundRefuse as Config["inboundRefuse"],
     inboundTlsCertFile: c.BUNZZLE_INBOUND_TLS_CERT_FILE ?? (acme ? `${certsDir}/cert.pem` : null),
     inboundTlsKeyFile: c.BUNZZLE_INBOUND_TLS_KEY_FILE ?? (acme ? `${certsDir}/key.pem` : null),
     acme,

@@ -1,12 +1,12 @@
-import { DEFAULT_BLOCKING, startSmtpServer } from "../smtpd/server.ts";
+import { DEFAULT_BLOCKING, type SmtpReply, startSmtpServer } from "../smtpd/server.ts";
 
 export interface InboundHandlers {
   recipient(address: string): Promise<boolean>;
   message(
     recipients: string[],
     raw: string,
-    meta: { from: string; remote: string; tls: boolean },
-  ): Promise<"ok" | "retry" | "reject">;
+    meta: { from: string; remote: string; tls: boolean; helo: string | null },
+  ): Promise<"ok" | "retry" | "reject" | SmtpReply>;
 }
 
 export interface InboundOptions {
@@ -44,7 +44,9 @@ export function startInboundServer(o: InboundOptions): { port: number; stop(): v
           from,
           remote: session.remote,
           tls: session.tls,
+          helo: session.helo,
         });
+        if (typeof r === "object") return r;
         if (r === "ok") return { code: 250, text: "2.0.0 Ok: received" };
         if (r === "reject") return { code: 550, text: "5.6.0 Message not accepted" };
         return { code: 451, text: "4.3.0 Try again later" };
