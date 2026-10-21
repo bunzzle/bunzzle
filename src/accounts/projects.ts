@@ -7,6 +7,8 @@ export type ProjectId = string & { readonly [brand]: "ProjectId" };
 
 export const DEFAULT_PROJECT = "default" as ProjectId;
 
+export const SYSTEM_PROJECT = "_system" as ProjectId;
+
 export const PROJECT_NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 
 export interface Project {

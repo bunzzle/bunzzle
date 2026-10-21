@@ -7,7 +7,7 @@ import {
   type Scope,
   touchKey,
 } from "../accounts/api-keys.ts";
-import { DEFAULT_PROJECT, findProject, projectOfMessage } from "../accounts/projects.ts";
+import { findProject, projectOfMessage, SYSTEM_PROJECT } from "../accounts/projects.ts";
 import type { SourceIp } from "../config.ts";
 import { countByState } from "../core/jobs.ts";
 import type { Logger } from "../core/log.ts";
@@ -213,7 +213,10 @@ export function coreMethods(deps: CoreDeps): {
     if (key?.domains && !key.domains.includes(headerDomain)) {
       throw new RpcError("forbidden", `this API key cannot send from ${headerDomain}`);
     }
-    const domain = getDomain(db, project, headerDomain);
+    const domain =
+      project === SYSTEM_PROJECT
+        ? findDomain(db, headerDomain)
+        : getDomain(db, project, headerDomain);
     if (domain?.status !== "verified" && !(key?.test && domain)) {
       throw new RpcError(
         "unverified-domain",
@@ -868,11 +871,7 @@ export function coreMethods(deps: CoreDeps): {
         requireTls: false,
         meta: { from, to: [to], cc: [], bcc: [], replyTo: [], tags: [], lane: "transactional" },
       },
-      {
-        kind: "operator",
-        project: findDomain(db, domainOf(normalizeAddress(from)))?.project ?? DEFAULT_PROJECT,
-        key: null,
-      },
+      { kind: "operator", project: SYSTEM_PROJECT, key: null },
     );
     if (r.existed) return r.id;
     return (await writer.run((d) => r.persist(d))).id;

@@ -4,6 +4,7 @@ import {
   type ClaimedJob,
   type ClaimFilter,
   claim,
+  expireHeldJobs,
   expireLeases,
   nextWakeAt,
   recoverAfterCrash,
@@ -141,7 +142,7 @@ export class Scheduler {
     if (!this.#running) return;
     const { clock, sweepMs, db } = this.#o;
     const now = clock.now();
-    const next = nextWakeAt(db) ?? Number.POSITIVE_INFINITY;
+    const next = nextWakeAt(db, now) ?? Number.POSITIVE_INFINITY;
     const delay = Math.max(0, Math.min(next - now, sweepMs));
     this.#timer = setTimeout(() => void this.#sweep(), delay);
   }
@@ -152,6 +153,7 @@ export class Scheduler {
     try {
       const [expired, resent] = await writer.run((db) => {
         const now = clock.now();
+        expireHeldJobs(db, now);
         return [expireLeases(db, now, reconcileMs), resendUnresolved(db, now)] as const;
       });
       if (expired > 0) log.warn("leases expired", { jobs: expired });
