@@ -25,6 +25,7 @@
     "build": "bun build src/cli/main.ts --compile --minify --sourcemap --outfile dist/bunzzle",
     "openapi": "bun src/cli/main.ts openapi > openapi.json && bun sdk/generate.ts",
     "bench": "bun bench/queue.ts",
+    "bench:fair": "bun bench/fair.ts",
     "crash": "bun bench/crash.ts"
   },
   "type": "module"

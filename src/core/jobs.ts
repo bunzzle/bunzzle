@@ -90,12 +90,47 @@ interface LeasedRow {
   id: string;
   message_id: string;
   target: string;
+  project_id: string;
   attempt: number;
   expires_at: number | null;
   unresolved_attempt: number | null;
   priority: number;
   path: string | null;
 }
+
+interface Fairness {
+  tick: number;
+  at: Map<string, number>;
+  projects: string[];
+  listedAt: number;
+}
+
+const served = new WeakMap<Database, Fairness>();
+
+function fairnessOf(db: Database): Fairness {
+  let s = served.get(db);
+  if (!s) {
+    s = { tick: 0, at: new Map(), projects: [], listedAt: Number.NEGATIVE_INFINITY };
+    served.set(db, s);
+  }
+  const t = performance.now();
+  if (t - s.listedAt > 1_000) {
+    s.projects = db
+      .query<{ id: string }, []>("SELECT id FROM projects UNION SELECT '_system'")
+      .all()
+      .map((r) => r.id);
+    s.listedAt = t;
+  }
+  return s;
+}
+
+const PATHS_OPEN = (paused: string, full: string) => `(path IS NULL OR (
+           path NOT IN (SELECT value FROM json_each(${paused}))
+           AND (priority = 0 OR path NOT IN (SELECT value FROM json_each(${full})))
+         ))`;
+
+const RETURNING =
+  "RETURNING id, message_id, target, project_id, attempt, expires_at, unresolved_attempt, priority, path";
 
 export function claim(
   db: Database,
@@ -111,31 +146,70 @@ export function claim(
     "SELECT MIN(priority) AS p FROM jobs WHERE state = 'ready' AND priority > ?",
   );
   const lease = db.query<LeasedRow, [number, number, number, number, string, string, number]>(
-    `UPDATE jobs SET state = 'leased', attempt = attempt + 1, lease_until = ?, updated_at = ?
+    `UPDATE jobs SET state = 'leased', attempt = attempt + 1, lease_until = ?1, updated_at = ?2
      WHERE id IN (
        SELECT id FROM jobs
-       WHERE state = 'ready' AND priority = ? AND run_after <= ?
+       WHERE state = 'ready' AND priority = ?3 AND run_after <= ?4
          AND ${SENDABLE("?4")}
-         AND (path IS NULL OR (
-           path NOT IN (SELECT value FROM json_each(?))
-           AND (priority = 0 OR path NOT IN (SELECT value FROM json_each(?)))
-         ))
+         AND ${PATHS_OPEN("?5", "?6")}
        ORDER BY run_after
-       LIMIT ?
+       LIMIT ?7
      )
-     RETURNING id, message_id, target, attempt, expires_at, unresolved_attempt, priority, path`,
+     ${RETURNING}`,
   );
+  const leaseFor = db.query<
+    LeasedRow,
+    [number, number, number, number, string, string, number, string]
+  >(
+    `UPDATE jobs SET state = 'leased', attempt = attempt + 1, lease_until = ?1, updated_at = ?2
+     WHERE id IN (
+       SELECT id FROM jobs
+       WHERE state = 'ready' AND project_id = ?8 AND priority = ?3 AND run_after <= ?4
+         AND ${SENDABLE("?4")}
+         AND ${PATHS_OPEN("?5", "?6")}
+       ORDER BY run_after
+       LIMIT ?7
+     )
+     ${RETURNING}`,
+  );
+  const due = db.query<{ n: number }, [string, number, number]>(
+    `SELECT 1 AS n FROM jobs
+     WHERE state = 'ready' AND project_id = ? AND priority = ? AND run_after <= ? LIMIT 1`,
+  );
+  const state = fairnessOf(db);
+  const projects =
+    state.projects.length === 1
+      ? state.projects
+      : state.projects.toSorted((a, b) => (state.at.get(a) ?? 0) - (state.at.get(b) ?? 0));
   const leased: LeasedRow[] = [];
   let priority = Number.MIN_SAFE_INTEGER;
   while (leased.length < limit) {
     const next = nextPriority.get(priority)?.p;
     if (next === null || next === undefined) break;
     priority = next;
-    leased.push(
-      ...lease.all(now + leaseMs, now, priority, now, paused, full, limit - leased.length),
-    );
+    const active = projects.filter((p) => due.get(p, priority, now) !== null);
+    for (let i = 0; i < active.length && leased.length < limit; i++) {
+      const share = Math.ceil((limit - leased.length) / (active.length - i));
+      const got = leaseFor.all(
+        now + leaseMs,
+        now,
+        priority,
+        now,
+        paused,
+        full,
+        share,
+        active[i] as string,
+      );
+      leased.push(...got);
+    }
+    if (leased.length < limit) {
+      leased.push(
+        ...lease.all(now + leaseMs, now, priority, now, paused, full, limit - leased.length),
+      );
+    }
   }
   if (leased.length === 0) return [];
+  for (const r of leased) state.at.set(r.project_id, ++state.tick);
 
   const messages = new Map(
     db
