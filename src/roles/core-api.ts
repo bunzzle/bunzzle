@@ -1,7 +1,5 @@
 import type { Database } from "bun:sqlite";
 import {
-  type ApiKey,
-  allows,
   createKey,
   keyForHash,
   listKeys,
@@ -9,6 +7,7 @@ import {
   type Scope,
   touchKey,
 } from "../accounts/api-keys.ts";
+import { DEFAULT_PROJECT, projectOfMessage } from "../accounts/projects.ts";
 import type { SourceIp } from "../config.ts";
 import { countByState } from "../core/jobs.ts";
 import type { Logger } from "../core/log.ts";
@@ -17,7 +16,6 @@ import type { Writer } from "../core/store/writer.ts";
 import { type EpochPublicKey, sealBody } from "../crypto/envelope.ts";
 import {
   cancelEmail,
-  emailExists,
   enqueueEmail,
   recipientsOf,
   rescheduleEmail,
@@ -25,11 +23,13 @@ import {
 } from "../delivery/queue.ts";
 import { suppressedAtIntake } from "../delivery/simulator.ts";
 import {
+  allDomains,
   type Domain,
   type DomainRecord,
   domainPool,
   evaluate,
   expectedRecords,
+  findDomain,
   getDomain,
   listDomains,
   saveDomain,
@@ -57,6 +57,7 @@ import { queueSummary, removeQueued, resume, type Suspension, suspend } from "..
 import type { PathView } from "../shaping/shaper.ts";
 import { suppressionFor } from "../suppressions/store.ts";
 import { b } from "../validate/schema.ts";
+import { type Actor, resolveActor } from "./actor.ts";
 import { DOMAIN, enqueueParams, MESSAGE_ID, tokenHash } from "./wire.ts";
 
 const SUSPEND_TARGET =
@@ -92,19 +93,6 @@ export interface CoreDeps {
   storage?: () => StorageState;
   now?: () => number;
 }
-
-const OPERATOR: ApiKey = {
-  id: "operator",
-  name: "operator",
-  prefix: "",
-  scope: "full",
-  domains: null,
-  rateLimit: 0,
-  createdAt: 0,
-  lastUsedAt: null,
-  revokedAt: null,
-  test: false,
-};
 
 const publicKeyInfo = b.array(
   b.object({
@@ -180,21 +168,14 @@ export function coreMethods(deps: CoreDeps): {
     }
   };
 
-  const caller = (hash: string | undefined, needed: Scope): ApiKey => {
-    if (hash === undefined) return OPERATOR;
-    const key = keyForHash(db, hash);
-    if (!key) throw new RpcError("unauthenticated", "API key is invalid");
-    if (!allows(key.scope, needed)) {
-      throw new RpcError(
-        "forbidden",
-        `this API key cannot ${needed === "send" ? "send email" : needed === "read" ? "read" : "do this"}`,
-      );
-    }
-    touch(key.id);
-    return key;
+  const caller = (hash: string | undefined, needed: Scope): Actor => {
+    const actor = resolveActor(db, hash, needed);
+    if (actor.key) touch(actor.key.id);
+    return actor;
   };
 
-  const prepareEnqueue = async (p: EnqueueInput, key: ApiKey) => {
+  const prepareEnqueue = async (p: EnqueueInput, actor: Actor) => {
+    const { project, key } = actor;
     const storage = deps.storage?.();
     if (storage?.low) {
       throw new RpcError(
@@ -203,7 +184,11 @@ export function coreMethods(deps: CoreDeps): {
       );
     }
     const id = p.id ?? Bun.randomUUIDv7();
-    if (p.id !== undefined && emailExists(db, id)) return { id, existed: true as const };
+    if (p.id !== undefined) {
+      const owner = projectOfMessage(db, id);
+      if (owner === project) return { id, existed: true as const };
+      if (owner !== null) throw new RpcError("invalid", "this email id is already used");
+    }
     let headerDomain: string;
     let envelopeFrom: string;
     try {
@@ -215,11 +200,11 @@ export function coreMethods(deps: CoreDeps): {
     if (domainOf(envelopeFrom) !== headerDomain) {
       throw new RpcError("invalid", "the envelope sender must use the From header's domain");
     }
-    if (key.domains && !key.domains.includes(headerDomain)) {
+    if (key?.domains && !key.domains.includes(headerDomain)) {
       throw new RpcError("forbidden", `this API key cannot send from ${headerDomain}`);
     }
-    const domain = getDomain(db, headerDomain);
-    if (domain?.status !== "verified" && !(key.test && domain)) {
+    const domain = getDomain(db, project, headerDomain);
+    if (domain?.status !== "verified" && !(key?.test && domain)) {
       throw new RpcError(
         "unverified-domain",
         domain
@@ -239,8 +224,9 @@ export function coreMethods(deps: CoreDeps): {
     }
     const idem =
       p.idempotencyKey !== undefined ? { key: p.idempotencyKey, hash: p.bodyHash ?? "" } : null;
+    const idemOwner = key?.id ?? `operator:${project}`;
     if (idem) {
-      const prev = findIdempotent(db, key.id, idem.key, t);
+      const prev = findIdempotent(db, idemOwner, idem.key, t);
       if (prev) {
         if (prev.bodyHash !== idem.hash) {
           throw new RpcError(
@@ -258,14 +244,14 @@ export function coreMethods(deps: CoreDeps): {
     if (lane === "bulk") {
       const hold =
         activeHold(db, `domain:${headerDomain}`, "bulk") ??
-        (key.id !== "operator" ? activeHold(db, `key:${key.id}`, "bulk") : null);
+        (key ? activeHold(db, `key:${key.id}`, "bulk") : null);
       if (hold) {
         throw new RpcError(
           "held",
           `Bulk sending is on hold (${hold.reason}). An operator must review and release it.`,
         );
       }
-      if (key.id !== "operator") {
+      if (key) {
         const count = await writer.run((d) => countKeyBulk(d, key.id, 1, t));
         const threshold = anomalyThreshold(db, key.id, t, deps.anomalyFloor?.() ?? 500);
         if (count > threshold) {
@@ -296,7 +282,7 @@ export function coreMethods(deps: CoreDeps): {
       }
       const s = suppressedAtIntake(address)
         ? { reason: "simulated", scope: "all" }
-        : suppressionFor(db, address, lane, t);
+        : suppressionFor(db, project, address, lane, t);
       if (s) suppressed.set(address, { reason: s.reason, scope: s.scope });
     }
     await deps.scan?.(p.data, envelopeFrom, p.recipients);
@@ -306,7 +292,7 @@ export function coreMethods(deps: CoreDeps): {
       existed: false as const,
       persist: (d: Database) => {
         if (idem) {
-          const prev = findIdempotent(d, key.id, idem.key, t);
+          const prev = findIdempotent(d, idemOwner, idem.key, t);
           if (prev) {
             if (prev.bodyHash !== idem.hash) {
               throw new RpcError(
@@ -319,6 +305,7 @@ export function coreMethods(deps: CoreDeps): {
         }
         enqueueEmail(
           d,
+          project,
           {
             id,
             body,
@@ -329,11 +316,11 @@ export function coreMethods(deps: CoreDeps): {
             suppressed,
             metadata: {
               ...(p.meta ?? {}),
-              apiKeyId: key.id === "operator" ? null : key.id,
+              apiKeyId: key?.id ?? null,
               scheduledAt: p.scheduledAt ?? null,
-              ...(key.test ? { test: true } : {}),
-              ...((key.pool ?? domainPool(db, headerDomain))
-                ? { pool: key.pool ?? domainPool(db, headerDomain) }
+              ...(key?.test ? { test: true } : {}),
+              ...((key?.pool ?? domainPool(db, headerDomain))
+                ? { pool: key?.pool ?? domainPool(db, headerDomain) }
                 : {}),
             },
             ...(p.expiresAt !== undefined ? { expiresAt: p.expiresAt } : {}),
@@ -342,7 +329,7 @@ export function coreMethods(deps: CoreDeps): {
           },
           t,
         );
-        if (idem) rememberIdempotent(d, key.id, idem.key, idem.hash, id, t);
+        if (idem) rememberIdempotent(d, idemOwner, idem.key, idem.hash, id, t);
         return { id, existed: false };
       },
     };
@@ -354,10 +341,10 @@ export function coreMethods(deps: CoreDeps): {
     throw new RpcError("invalid", (err as Error).message);
   };
 
-  const changeable = (key: ApiKey, id: string) => {
-    const email = MESSAGE_ID.test(id) ? scheduledEmail(db, id) : null;
+  const changeable = ({ project, key }: Actor, id: string) => {
+    const email = MESSAGE_ID.test(id) ? scheduledEmail(db, project, id) : null;
     if (!email) throw new RpcError("not-found", "email not found");
-    if (key.domains && !key.domains.includes(domainOf(email.from))) {
+    if (key?.domains && !key.domains.includes(domainOf(email.from))) {
       throw new RpcError("forbidden", "this API key cannot change this email");
     }
     if (email.scheduledAt === null) {
@@ -376,8 +363,8 @@ export function coreMethods(deps: CoreDeps): {
     return name;
   };
 
-  const verify = async (name: string): Promise<Domain> => {
-    const d = getDomain(db, name);
+  const verify = async (project: Actor["project"], name: string): Promise<Domain> => {
+    const d = getDomain(db, project, name);
     if (!d) throw new RpcError("not-found", `domain ${name} is not registered`);
     const queries = [
       ...new Map(
@@ -401,9 +388,9 @@ export function coreMethods(deps: CoreDeps): {
   };
 
   const verifyPending = async () => {
-    for (const d of listDomains(db).filter((x) => x.status === "pending")) {
+    for (const d of allDomains(db).filter((x) => x.status === "pending")) {
       try {
-        await verify(d.name);
+        await verify(d.project, d.name);
       } catch (err) {
         log.warn("could not check domain", { domain: d.name, error: (err as Error).message });
       }
@@ -424,13 +411,15 @@ export function coreMethods(deps: CoreDeps): {
     }),
 
     enqueue: method(enqueueParams, async (p) => {
-      const key = caller(p.tokenHash, "send");
-      const r = await prepareEnqueue(p, key);
+      const actor = caller(p.tokenHash, "send");
+      const r = await prepareEnqueue(p, actor);
       if (r.existed) return { id: r.id, existed: true };
       try {
         return await writer.run((d) => r.persist(d));
       } catch (err) {
-        if (!(err instanceof RpcError) && emailExists(db, r.id)) return { id: r.id, existed: true };
+        if (!(err instanceof RpcError) && projectOfMessage(db, r.id) === actor.project) {
+          return { id: r.id, existed: true };
+        }
         return enqueueFailed(err);
       }
     }),
@@ -444,11 +433,11 @@ export function coreMethods(deps: CoreDeps): {
           .max(100),
       }),
       async (p) => {
-        const key = caller(p.tokenHash, "send");
+        const actor = caller(p.tokenHash, "send");
         const ready: Awaited<ReturnType<typeof prepareEnqueue>>[] = [];
         for (const [i, e] of p.emails.entries()) {
           try {
-            ready.push(await prepareEnqueue(e, key));
+            ready.push(await prepareEnqueue(e, actor));
           } catch (err) {
             if (err instanceof RpcError)
               throw new RpcError(err.code, `emails[${i}]: ${err.message}`);
@@ -468,9 +457,9 @@ export function coreMethods(deps: CoreDeps): {
     ),
 
     getEmail: method(b.object({ tokenHash, id: b.string() }), ({ tokenHash: hash, id }) => {
-      caller(hash, "read");
+      const { project } = caller(hash, "read");
       if (!MESSAGE_ID.test(id)) throw new RpcError("not-found", "email not found");
-      const view = emailView(db, id, now());
+      const view = emailView(db, project, id, now());
       if (!view) throw new RpcError("not-found", "email not found");
       return view;
     }),
@@ -490,8 +479,8 @@ export function coreMethods(deps: CoreDeps): {
         until: b.number().int().optional(),
       }),
       (p) => {
-        caller(p.tokenHash, "read");
-        const ids = searchEmails(db, {
+        const { project } = caller(p.tokenHash, "read");
+        const ids = searchEmails(db, project, {
           limit: p.limit + 1,
           before: p.before,
           to: p.to?.toLowerCase(),
@@ -504,7 +493,7 @@ export function coreMethods(deps: CoreDeps): {
         const page = ids.slice(0, p.limit);
         return {
           data: page.flatMap((id) => {
-            const s = emailSummary(db, id, now());
+            const s = emailSummary(db, project, id, now());
             return s ? [s] : [];
           }),
           next_cursor: ids.length > p.limit ? (page.at(-1) ?? null) : null,
@@ -521,12 +510,12 @@ export function coreMethods(deps: CoreDeps): {
         tag: b.string().max(512).optional(),
       }),
       (p) => {
-        caller(p.tokenHash, "read");
+        const { project } = caller(p.tokenHash, "read");
         const days = (Date.parse(p.until) - Date.parse(p.since)) / 86_400_000;
         if (!(days >= 0 && days <= 400)) {
           throw new RpcError("invalid", "since must be before until, at most 400 days apart");
         }
-        const data = statsFor(db, {
+        const data = statsFor(db, project, {
           since: p.since,
           until: p.until,
           domain: p.domain?.toLowerCase(),
@@ -540,9 +529,9 @@ export function coreMethods(deps: CoreDeps): {
     ),
 
     cancelEmail: method(b.object({ tokenHash, id: b.string() }), async (p) => {
-      const key = caller(p.tokenHash, "send");
-      changeable(key, p.id);
-      const r = await writer.run((d) => cancelEmail(d, p.id, now()));
+      const actor = caller(p.tokenHash, "send");
+      changeable(actor, p.id);
+      const r = await writer.run((d) => cancelEmail(d, actor.project, p.id, now()));
       if (r === "started") {
         throw new RpcError(
           "started",
@@ -555,13 +544,15 @@ export function coreMethods(deps: CoreDeps): {
     rescheduleEmail: method(
       b.object({ tokenHash, id: b.string(), scheduledAt: b.number().int().positive() }),
       async (p) => {
-        const key = caller(p.tokenHash, "send");
-        changeable(key, p.id);
+        const actor = caller(p.tokenHash, "send");
+        changeable(actor, p.id);
         const t = now();
         if (p.scheduledAt > t + MAX_SCHEDULE_MS) {
           throw new RpcError("invalid", "scheduled_at can be at most 72 hours ahead");
         }
-        const r = await writer.run((d) => rescheduleEmail(d, p.id, p.scheduledAt, t));
+        const r = await writer.run((d) =>
+          rescheduleEmail(d, actor.project, p.id, p.scheduledAt, t),
+        );
         if (r === "started") {
           throw new RpcError(
             "started",
@@ -585,9 +576,12 @@ export function coreMethods(deps: CoreDeps): {
     ),
 
     addDomain: method(b.object({ tokenHash, name: b.string().max(253) }), async (p) => {
-      caller(p.tokenHash, "full");
+      const { project } = caller(p.tokenHash, "full");
       const name = domainName(p.name);
-      const existing = getDomain(db, name);
+      const existing = findDomain(db, name);
+      if (existing && existing.project !== project) {
+        throw new RpcError("domain-taken", `${name} is already added on this server`);
+      }
       if (existing) return domainView(existing);
       const keys = await signer.call(
         "ensureKeys",
@@ -597,6 +591,7 @@ export function coreMethods(deps: CoreDeps): {
       signerDomains = null;
       const t = now();
       const d: Domain = {
+        project,
         name,
         status: "pending",
         records: expectedRecords(name, keys, deps.sourceIp, deps.inboundHost ?? null),
@@ -604,22 +599,24 @@ export function coreMethods(deps: CoreDeps): {
         checkedAt: null,
       };
       await writer.run((w) => {
-        if (!getDomain(w, name)) saveDomain(w, d, t);
+        if (!findDomain(w, name)) saveDomain(w, d, t);
       });
       log.info("domain added", { domain: name });
       if (deps.publish && (await deps.publish(d.records))) {
-        await verify(name).catch(() => {});
+        await verify(project, name).catch(() => {});
       }
-      return domainView(getDomain(db, name) as Domain);
+      const added = getDomain(db, project, name);
+      if (!added) throw new RpcError("domain-taken", `${name} is already added on this server`);
+      return domainView(added);
     }),
 
     setDomainPool: method(
       b.object({ tokenHash, name: b.string().max(253), pool: b.string().max(32).nullable() }),
       async (p) => {
-        caller(p.tokenHash, "full");
+        const { project } = caller(p.tokenHash, "full");
         if (p.pool !== null) knownPool(p.pool);
         const name = domainName(p.name);
-        if (!(await writer.run((d) => setDomainPool(d, name, p.pool, now())))) {
+        if (!(await writer.run((d) => setDomainPool(d, project, name, p.pool, now())))) {
           throw new RpcError("not-found", "domain not found");
         }
         return { name, ip_pool: p.pool };
@@ -627,8 +624,8 @@ export function coreMethods(deps: CoreDeps): {
     ),
 
     getDomain: method(b.object({ tokenHash, name: b.string().max(253) }), (p) => {
-      caller(p.tokenHash, "read");
-      const d = getDomain(db, domainName(p.name));
+      const { project } = caller(p.tokenHash, "read");
+      const d = getDomain(db, project, domainName(p.name));
       if (!d) throw new RpcError("not-found", "domain not found");
       const gmail = latestPostmaster(db, d.name);
       return {
@@ -650,13 +647,13 @@ export function coreMethods(deps: CoreDeps): {
     }),
 
     listDomains: method(b.object({ tokenHash }), (p) => {
-      caller(p.tokenHash, "read");
-      return listDomains(db).map(domainView);
+      const { project } = caller(p.tokenHash, "read");
+      return listDomains(db, project).map(domainView);
     }),
 
     verifyDomain: method(b.object({ tokenHash, name: b.string().max(253) }), async (p) => {
-      caller(p.tokenHash, "full");
-      return domainView(await verify(domainName(p.name)));
+      const { project } = caller(p.tokenHash, "full");
+      return domainView(await verify(project, domainName(p.name)));
     }),
 
     createKey: method(
@@ -674,6 +671,7 @@ export function coreMethods(deps: CoreDeps): {
         const { key, token } = await writer.run((d) =>
           createKey(
             d,
+            DEFAULT_PROJECT,
             {
               name: p.name,
               scope: p.scope,
@@ -689,10 +687,10 @@ export function coreMethods(deps: CoreDeps): {
       },
     ),
 
-    listKeys: method(b.object({}), () => listKeys(db)),
+    listKeys: method(b.object({}), () => listKeys(db, DEFAULT_PROJECT)),
 
     revokeKey: method(b.object({ id: b.string().min(1).max(64) }), async ({ id }) => {
-      if (!(await writer.run((d) => revokeKey(d, id, now())))) {
+      if (!(await writer.run((d) => revokeKey(d, DEFAULT_PROJECT, id, now())))) {
         throw new RpcError("not-found", "no active key with that id");
       }
       return { id, revoked: true };
@@ -901,7 +899,11 @@ export function coreMethods(deps: CoreDeps): {
         requireTls: false,
         meta: { from, to: [to], cc: [], bcc: [], replyTo: [], tags: [], lane: "transactional" },
       },
-      OPERATOR,
+      {
+        kind: "operator",
+        project: findDomain(db, domainOf(normalizeAddress(from)))?.project ?? DEFAULT_PROJECT,
+        key: null,
+      },
     );
     if (r.existed) return r.id;
     return (await writer.run((d) => r.persist(d))).id;

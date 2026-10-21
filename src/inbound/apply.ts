@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { projectOfMessage } from "../accounts/projects.ts";
 import { appendEvent } from "../core/events.ts";
 import type { SealedBody } from "../crypto/envelope.ts";
 import { countEmail } from "../emails/search.ts";
@@ -55,7 +56,9 @@ export function applyUnsubscribe(
   const rows = recipientsOf(db, messageId);
   if (rows.length !== 1) return null;
   const address = (rows[0] as RecipientRow).address;
-  suppress(db, { address, scope: "bulk", reason: "unsubscribe", messageId }, now);
+  const project = projectOfMessage(db, messageId);
+  if (project)
+    suppress(db, project, { address, scope: "bulk", reason: "unsubscribe", messageId }, now);
   appendEvent(db, {
     messageId,
     kind: "unsubscribed",
@@ -128,17 +131,20 @@ export function applyInbound(db: Database, input: InboundInput, now: number): Ap
     const target =
       (report.originalRcpt ? byAddress.get(report.originalRcpt) : undefined) ?? sole ?? undefined;
     if (!target) return { kind: "unmatched", recipients: [] };
-    suppress(
-      db,
-      {
-        address: target.address,
-        scope: "bulk",
-        reason: "complaint",
-        detail: report.feedbackType,
-        messageId,
-      },
-      now,
-    );
+    const project = projectOfMessage(db, messageId);
+    if (project)
+      suppress(
+        db,
+        project,
+        {
+          address: target.address,
+          scope: "bulk",
+          reason: "complaint",
+          detail: report.feedbackType,
+          messageId,
+        },
+        now,
+      );
     event("complained", { address: target.address, feedback_type: report.feedbackType });
     countEmail(db, messageId, "complained", 1, now);
     attribute({ complained: 1 });
@@ -217,9 +223,11 @@ export function applyInbound(db: Database, input: InboundInput, now: number): Ap
     });
     const s = verdict.suppress ? suppressionForClass(verdict.class) : null;
     if (s) attribute({ hardBounced: 1 });
-    if (s) {
+    const project = s ? projectOfMessage(db, messageId) : null;
+    if (s && project) {
       suppress(
         db,
+        project,
         {
           address: f.row.address,
           scope: s.scope,

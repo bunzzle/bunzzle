@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { ProjectId } from "../accounts/projects.ts";
 
 export type SuppressionScope = "all" | "bulk";
 export type SuppressionReason =
@@ -46,20 +47,21 @@ export interface NewSuppression {
   ttlMs?: number | null;
 }
 
-export function suppress(db: Database, s: NewSuppression, now: number): void {
+export function suppress(db: Database, project: ProjectId, s: NewSuppression, now: number): void {
   db.query<
     unknown,
-    [string, SuppressionScope, string, string | null, string | null, number, number | null]
+    [string, string, SuppressionScope, string, string | null, string | null, number, number | null]
   >(
-    `INSERT INTO suppressions (address, scope, reason, detail, source_message_id, created_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT (address, scope) DO UPDATE SET reason = excluded.reason, detail = excluded.detail,
+    `INSERT INTO suppressions (project_id, address, scope, reason, detail, source_message_id, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (project_id, address, scope) DO UPDATE SET reason = excluded.reason, detail = excluded.detail,
        source_message_id = excluded.source_message_id, created_at = excluded.created_at,
        expires_at = CASE
          WHEN suppressions.expires_at IS NULL AND suppressions.reason IN ('complaint', 'unsubscribe', 'manual')
            THEN NULL
          ELSE excluded.expires_at END`,
   ).run(
+    project,
     s.address.toLowerCase(),
     s.scope,
     s.reason,
@@ -92,42 +94,47 @@ const fromRow = (r: Row): Suppression => ({
 
 export function suppressionFor(
   db: Database,
+  project: ProjectId,
   address: string,
   lane: "transactional" | "bulk",
   now: number,
 ): Suppression | null {
   const r = db
-    .query<Row, [string, number, string]>(
+    .query<Row, [string, string, number, string]>(
       `SELECT * FROM suppressions
-       WHERE address = ? AND (expires_at IS NULL OR expires_at > ?)
+       WHERE project_id = ? AND address = ? AND (expires_at IS NULL OR expires_at > ?)
          AND (scope = 'all' OR scope = ?)
        ORDER BY scope = 'all' DESC LIMIT 1`,
     )
-    .get(address.toLowerCase(), now, lane === "bulk" ? "bulk" : "all");
+    .get(project, address.toLowerCase(), now, lane === "bulk" ? "bulk" : "all");
   return r ? fromRow(r) : null;
 }
 
-export function listSuppressions(db: Database, now: number): Suppression[] {
+export function listSuppressions(db: Database, project: ProjectId, now: number): Suppression[] {
   return db
-    .query<Row, [number]>(
-      "SELECT * FROM suppressions WHERE expires_at IS NULL OR expires_at > ? ORDER BY created_at DESC",
+    .query<Row, [string, number]>(
+      `SELECT * FROM suppressions WHERE project_id = ? AND (expires_at IS NULL OR expires_at > ?)
+       ORDER BY created_at DESC`,
     )
-    .all(now)
+    .all(project, now)
     .map(fromRow);
 }
 
 export function removeSuppression(
   db: Database,
+  project: ProjectId,
   address: string,
   scope: SuppressionScope | null,
 ): number {
   return scope
     ? db
-        .query<unknown, [string, string]>(
-          "DELETE FROM suppressions WHERE address = ? AND scope = ?",
+        .query<unknown, [string, string, string]>(
+          "DELETE FROM suppressions WHERE project_id = ? AND address = ? AND scope = ?",
         )
-        .run(address.toLowerCase(), scope).changes
+        .run(project, address.toLowerCase(), scope).changes
     : db
-        .query<unknown, [string]>("DELETE FROM suppressions WHERE address = ?")
-        .run(address.toLowerCase()).changes;
+        .query<unknown, [string, string]>(
+          "DELETE FROM suppressions WHERE project_id = ? AND address = ?",
+        )
+        .run(project, address.toLowerCase()).changes;
 }

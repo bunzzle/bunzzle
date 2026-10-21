@@ -3,12 +3,12 @@ import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
 import { keyFromTxt, selectorsOf, verifyDkim } from "../dkim/verify.ts";
 import {
+  allDomains,
   type Domain,
   type DomainRecord,
   evaluate,
   expectedRecords,
-  getDomain,
-  listDomains,
+  findDomain,
   saveDomain,
 } from "../domains/domains.ts";
 import type { RpcClient } from "../ipc/rpc.ts";
@@ -62,7 +62,7 @@ export function rotation(deps: RotationDeps) {
   const keys = (domain: string) => signer.call("keyStates", { domain }, { result: keyInfo });
 
   const rebuild = async (domain: string, list: KeyInfo[]): Promise<Domain | null> => {
-    const d = getDomain(db, domain);
+    const d = findDomain(db, domain);
     if (!d) return null;
     const records = expectedRecords(domain, list, deps.sourceIp, deps.inboundHost);
     const queries = [
@@ -145,7 +145,7 @@ export function rotation(deps: RotationDeps) {
   };
 
   const step = async (domain: string, force: boolean): Promise<string> => {
-    const d = getDomain(db, domain);
+    const d = findDomain(db, domain);
     if (d?.status !== "verified") return "domain not verified";
     let list = await keys(domain);
     const t = now();
@@ -218,7 +218,7 @@ export function rotation(deps: RotationDeps) {
   };
 
   const tick = async () => {
-    for (const d of listDomains(db)) {
+    for (const d of allDomains(db)) {
       try {
         await step(d.name, false);
       } catch (err) {

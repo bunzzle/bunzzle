@@ -73,7 +73,9 @@ for (let i = 0; i < missing.length; i += chunk) {
   const ids = missing.slice(i, i + chunk);
   await Promise.all(
     ids.map((id) =>
-      writer.run((d) => enqueue(d, { id, type: "crash", payload: { id } }, Date.now())),
+      writer.run((d) =>
+        enqueue(d, { project: "default", id, type: "crash", payload: { id } }, Date.now()),
+      ),
     ),
   );
   await ack(ids);

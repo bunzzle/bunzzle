@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { ProjectId } from "../accounts/projects.ts";
 
 export interface Content {
   subject: string;
@@ -62,35 +63,43 @@ function insertVersion(db: Database, id: string, v: number, c: Content, now: num
 
 export function createTemplate(
   db: Database,
+  project: ProjectId,
   name: string,
   content: Content,
   now: number,
 ): TemplateInfo | null {
   const id = Bun.randomUUIDv7();
   const added = db
-    .query<unknown, [string, string, number, number]>(
-      `INSERT INTO templates (id, name, version, created_at, updated_at) VALUES (?, ?, 1, ?, ?)
-       ON CONFLICT DO NOTHING`,
+    .query<unknown, [string, string, string, number, number]>(
+      `INSERT INTO templates (id, project_id, name, version, created_at, updated_at)
+       VALUES (?, ?, ?, 1, ?, ?) ON CONFLICT DO NOTHING`,
     )
-    .run(id, name, now, now).changes;
+    .run(id, project, name, now, now).changes;
   if (!added) return null;
   insertVersion(db, id, 1, content, now);
   return { id, name, version: 1, createdAt: now, updatedAt: now };
 }
 
-export function findTemplate(db: Database, idOrName: string): TemplateInfo | null {
+export function findTemplate(
+  db: Database,
+  project: ProjectId,
+  idOrName: string,
+): TemplateInfo | null {
   const row = db
     .query<InfoRow, [string, string]>(
-      `SELECT ${COLUMNS} FROM templates WHERE (id = ? OR name = ?) AND deleted_at IS NULL`,
+      `SELECT ${COLUMNS} FROM templates
+       WHERE project_id = ?1 AND (id = ?2 OR name = ?2) AND deleted_at IS NULL`,
     )
-    .get(idOrName, idOrName);
+    .get(project, idOrName);
   return row ? info(row) : null;
 }
 
-export function listTemplates(db: Database): TemplateInfo[] {
+export function listTemplates(db: Database, project: ProjectId): TemplateInfo[] {
   return db
-    .query<InfoRow, []>(`SELECT ${COLUMNS} FROM templates WHERE deleted_at IS NULL ORDER BY name`)
-    .all()
+    .query<InfoRow, [string]>(
+      `SELECT ${COLUMNS} FROM templates WHERE project_id = ? AND deleted_at IS NULL ORDER BY name`,
+    )
+    .all(project)
     .map(info);
 }
 
@@ -113,24 +122,30 @@ export function listVersions(db: Database, id: string): number[] {
     .map((r) => r.version);
 }
 
-export function addVersion(db: Database, id: string, content: Content, now: number): number | null {
+export function addVersion(
+  db: Database,
+  project: ProjectId,
+  id: string,
+  content: Content,
+  now: number,
+): number | null {
   const row = db
-    .query<{ version: number }, [number, string]>(
+    .query<{ version: number }, [number, string, string]>(
       `UPDATE templates SET version = version + 1, updated_at = ?
-       WHERE id = ? AND deleted_at IS NULL RETURNING version`,
+       WHERE id = ? AND project_id = ? AND deleted_at IS NULL RETURNING version`,
     )
-    .get(now, id);
+    .get(now, id, project);
   if (!row) return null;
   insertVersion(db, id, row.version, content, now);
   return row.version;
 }
 
-export function deleteTemplate(db: Database, id: string, now: number): boolean {
+export function deleteTemplate(db: Database, project: ProjectId, id: string, now: number): boolean {
   return (
     db
-      .query<unknown, [number, string]>(
-        "UPDATE templates SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+      .query<unknown, [number, string, string]>(
+        "UPDATE templates SET deleted_at = ? WHERE id = ? AND project_id = ? AND deleted_at IS NULL",
       )
-      .run(now, id).changes > 0
+      .run(now, id, project).changes > 0
   );
 }

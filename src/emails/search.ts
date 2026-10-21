@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { ProjectId } from "../accounts/projects.ts";
 
 export const METRICS = [
   "sent",
@@ -20,15 +21,16 @@ export function indexEmail(
   db: Database,
   e: {
     id: string;
+    project: ProjectId;
     domain: string;
     keyId: string | null;
     test: boolean;
     tags: { name: string; value: string }[];
   },
 ): void {
-  db.query<unknown, [string, string, string | null, number]>(
-    "INSERT OR IGNORE INTO email_index (message_id, domain, key_id, test) VALUES (?, ?, ?, ?)",
-  ).run(e.id, e.domain, e.keyId, e.test ? 1 : 0);
+  db.query<unknown, [string, string, string, string | null, number]>(
+    "INSERT OR IGNORE INTO email_index (message_id, project_id, domain, key_id, test) VALUES (?, ?, ?, ?, ?)",
+  ).run(e.id, e.project, e.domain, e.keyId, e.test ? 1 : 0);
   const tag = db.query<unknown, [string, string]>(
     "INSERT OR IGNORE INTO email_tags (message_id, tag) VALUES (?, ?)",
   );
@@ -44,8 +46,8 @@ export function countEmail(
 ): void {
   if (n <= 0) return;
   const e = db
-    .query<{ domain: string; test: number }, [string]>(
-      "SELECT domain, test FROM email_index WHERE message_id = ?",
+    .query<{ project_id: string; domain: string; test: number }, [string]>(
+      "SELECT project_id, domain, test FROM email_index WHERE message_id = ?",
     )
     .get(messageId);
   if (!e || e.test === 1) return;
@@ -53,12 +55,12 @@ export function countEmail(
     .query<{ tag: string }, [string]>("SELECT tag FROM email_tags WHERE message_id = ?")
     .all(messageId)
     .map((r) => r.tag);
-  const add = db.query<unknown, [string, string, string, string, number]>(
-    `INSERT INTO stats_daily (day, domain, tag, metric, n) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT (day, domain, tag, metric) DO UPDATE SET n = n + excluded.n`,
+  const add = db.query<unknown, [string, string, string, string, string, number]>(
+    `INSERT INTO stats_daily (project_id, day, domain, tag, metric, n) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (project_id, day, domain, tag, metric) DO UPDATE SET n = n + excluded.n`,
   );
   const day = dayOf(at);
-  for (const tag of ["", ...tags]) add.run(day, e.domain, tag, metric, n);
+  for (const tag of ["", ...tags]) add.run(e.project_id, day, e.domain, tag, metric, n);
 }
 
 export interface StatsQuery {
@@ -70,14 +72,17 @@ export interface StatsQuery {
 
 export type DayCounts = { day: string } & Record<Metric, number>;
 
-export function statsFor(db: Database, q: StatsQuery): DayCounts[] {
+export function statsFor(db: Database, project: ProjectId, q: StatsQuery): DayCounts[] {
   const rows = db
-    .query<{ day: string; metric: Metric; n: number }, [string, string, string, string | null]>(
+    .query<
+      { day: string; metric: Metric; n: number },
+      [string, string, string, string, string | null]
+    >(
       `SELECT day, metric, sum(n) AS n FROM stats_daily
-       WHERE day >= ? AND day <= ? AND tag = ? AND (?4 IS NULL OR domain = ?4)
+       WHERE project_id = ?1 AND day >= ?2 AND day <= ?3 AND tag = ?4 AND (?5 IS NULL OR domain = ?5)
        GROUP BY day, metric ORDER BY day`,
     )
-    .all(q.since, q.until, q.tag ?? "", q.domain ?? null);
+    .all(project, q.since, q.until, q.tag ?? "", q.domain ?? null);
   const byDay = new Map<string, DayCounts>();
   for (let t = Date.parse(q.since); t <= Date.parse(q.until); t += 86_400_000) {
     const day = dayOf(t);
@@ -107,19 +112,19 @@ export function idAt(ms: number, high: boolean): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${tail}`;
 }
 
-export function searchEmails(db: Database, q: SearchQuery): string[] {
-  const where: string[] = ["m.type = 'email'"];
-  const args: (string | number)[] = [];
+export function searchEmails(db: Database, project: ProjectId, q: SearchQuery): string[] {
+  const where: string[] = ["m.type = 'email'", "x.project_id = ?"];
+  const args: (string | number)[] = [project];
   if (q.before !== undefined) {
-    where.push("m.id < ?");
+    where.push("x.message_id < ?");
     args.push(q.before);
   }
   if (q.since !== undefined) {
-    where.push("m.id >= ?");
+    where.push("x.message_id >= ?");
     args.push(idAt(q.since, false));
   }
   if (q.until !== undefined) {
-    where.push("m.id <= ?");
+    where.push("x.message_id <= ?");
     args.push(idAt(q.until, true));
   }
   if (q.to !== undefined) {
@@ -139,7 +144,7 @@ export function searchEmails(db: Database, q: SearchQuery): string[] {
     args.push(q.tag);
   }
   if (q.domain !== undefined) {
-    where.push("EXISTS (SELECT 1 FROM email_index x WHERE x.message_id = m.id AND x.domain = ?)");
+    where.push("x.domain = ?");
     args.push(q.domain);
   }
   const source =
@@ -152,8 +157,8 @@ export function searchEmails(db: Database, q: SearchQuery): string[] {
           : null;
   const driver = q.to ?? q.tag ?? (q.status !== "delivered" ? q.status : undefined);
   const sql = source
-    ? `SELECT m.id FROM ${source} c JOIN messages m ON m.id = c.id WHERE ${where.join(" AND ")} ORDER BY m.id DESC LIMIT ?`
-    : `SELECT m.id FROM messages m WHERE ${where.join(" AND ")} ORDER BY m.id DESC LIMIT ?`;
+    ? `SELECT m.id FROM ${source} c JOIN email_index x ON x.message_id = c.id JOIN messages m ON m.id = c.id WHERE ${where.join(" AND ")} ORDER BY m.id DESC LIMIT ?`
+    : `SELECT m.id FROM email_index x JOIN messages m ON m.id = x.message_id WHERE ${where.join(" AND ")} ORDER BY x.message_id DESC LIMIT ?`;
   const params = [...(source && driver !== undefined ? [driver] : []), ...args, q.limit];
   return db
     .query<{ id: string }, (string | number)[]>(sql)

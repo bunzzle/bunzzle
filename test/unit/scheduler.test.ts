@@ -32,7 +32,7 @@ function setup(handle: JobHandler, extra: { concurrency?: number; leaseMs?: numb
   const add = (n: number) =>
     Promise.all(
       Array.from({ length: n }, (_, i) =>
-        writer.run((d) => enqueue(d, { type: "t", payload: i }, Date.now())),
+        writer.run((d) => enqueue(d, { project: "default", type: "t", payload: i }, Date.now())),
       ),
     );
   return { db, writer, scheduler, add };

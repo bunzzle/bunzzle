@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { b } from "../validate/schema.ts";
+import type { ProjectId } from "./projects.ts";
 
 export type Scope = "send" | "read" | "full";
 
@@ -15,6 +16,7 @@ export interface ApiKey {
   revokedAt: number | null;
   test: boolean;
   pool?: string | null;
+  projectId: ProjectId | null;
 }
 
 export const TOKEN = /^bz_[A-Za-z0-9_-]{43}$/;
@@ -43,6 +45,7 @@ interface Row {
   revoked_at: number | null;
   test: number;
   pool: string | null;
+  project_id: string | null;
 }
 
 const fromRow = (r: Row): ApiKey => ({
@@ -57,6 +60,7 @@ const fromRow = (r: Row): ApiKey => ({
   revokedAt: r.revoked_at,
   test: r.test === 1,
   pool: r.pool,
+  projectId: r.project_id as ProjectId | null,
 });
 
 export interface NewKey {
@@ -68,16 +72,33 @@ export interface NewKey {
   pool?: string | null;
 }
 
-export function createKey(db: Database, k: NewKey, now: number): { key: ApiKey; token: string } {
+export function createKey(
+  db: Database,
+  project: ProjectId,
+  k: NewKey,
+  now: number,
+): { key: ApiKey; token: string } {
   const token = newToken();
   const id = Bun.randomUUIDv7();
   const domains = k.domains?.length ? JSON.stringify([...new Set(k.domains)].sort()) : null;
   db.query<
     unknown,
-    [string, string, string, string, Scope, string | null, number, number, number, string | null]
+    [
+      string,
+      string,
+      string,
+      string,
+      Scope,
+      string | null,
+      number,
+      number,
+      number,
+      string | null,
+      string,
+    ]
   >(
-    `INSERT INTO api_keys (id, name, token_hash, prefix, scope, domains, rate_limit, created_at, test, pool)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO api_keys (id, name, token_hash, prefix, scope, domains, rate_limit, created_at, test, pool, project_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     k.name,
@@ -89,6 +110,7 @@ export function createKey(db: Database, k: NewKey, now: number): { key: ApiKey; 
     now,
     k.test ? 1 : 0,
     k.pool ?? null,
+    project,
   );
   return { key: getKey(db, id) as ApiKey, token };
 }
@@ -135,18 +157,21 @@ export function touchKey(db: Database, id: string, now: number): void {
   );
 }
 
-export function listKeys(db: Database): ApiKey[] {
-  return db.query<Row, []>("SELECT * FROM api_keys ORDER BY created_at").all().map(fromRow);
+export function listKeys(db: Database, project: ProjectId): ApiKey[] {
+  return db
+    .query<Row, [string]>("SELECT * FROM api_keys WHERE project_id = ? ORDER BY created_at")
+    .all(project)
+    .map(fromRow);
 }
 
-export function revokeKey(db: Database, id: string, now: number): boolean {
+export function revokeKey(db: Database, project: ProjectId, id: string, now: number): boolean {
   const c = cacheOf(db);
   for (const [hash, key] of c) if (key.id === id) c.delete(hash);
   return (
     db
-      .query<unknown, [number, string]>(
-        "UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+      .query<unknown, [number, string, string]>(
+        "UPDATE api_keys SET revoked_at = ? WHERE id = ? AND project_id = ? AND revoked_at IS NULL",
       )
-      .run(now, id).changes > 0
+      .run(now, id, project).changes > 0
   );
 }

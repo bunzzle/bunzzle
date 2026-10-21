@@ -1,10 +1,9 @@
 import type { Database } from "bun:sqlite";
-import { allows, keyForHash, type Scope } from "../accounts/api-keys.ts";
 import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
 import { type EpochPublicKey, sealBody } from "../crypto/envelope.ts";
 import { dmarcSummary, saveDmarcReport } from "../dmarc/store.ts";
-import { getDomain } from "../domains/domains.ts";
+import { findDomain, getDomain } from "../domains/domains.ts";
 import { type Applied, applyInbound, applyUnsubscribe, type Via } from "../inbound/apply.ts";
 import { findRoute } from "../inbound/routes.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
@@ -20,6 +19,7 @@ import {
   resetSending,
   settleDelivery,
 } from "../webhooks/store.ts";
+import { resolveActor } from "./actor.ts";
 import { DOMAIN, dmarcWire, reportWire, tokenHash } from "./wire.ts";
 
 export interface FeedbackDeps {
@@ -41,13 +41,6 @@ export function feedbackMethods(deps: FeedbackDeps) {
   const { db, writer, log, signer, delivery } = deps;
   const now = deps.now ?? Date.now;
 
-  const caller = (hash: string | undefined, needed: Scope) => {
-    if (hash === undefined) return;
-    const key = keyForHash(db, hash);
-    if (!key) throw new RpcError("unauthenticated", "API key is invalid");
-    if (!allows(key.scope, needed)) throw new RpcError("forbidden", "this API key cannot do this");
-  };
-
   const readToken = (token: string) =>
     signer.call("readToken", { token }, { result: tokenResult, timeoutMs: 10_000 });
 
@@ -68,7 +61,7 @@ export function feedbackMethods(deps: FeedbackDeps) {
   const dmarcDomain = (address: string): string | null => {
     const m = /^dmarc@bounce\.(.+)$/i.exec(address.trim());
     const domain = m?.[1]?.toLowerCase();
-    return domain && DOMAIN.test(domain) && getDomain(db, domain) ? domain : null;
+    return domain && DOMAIN.test(domain) && findDomain(db, domain) ? domain : null;
   };
 
   const methods: Methods = {
@@ -100,9 +93,9 @@ export function feedbackMethods(deps: FeedbackDeps) {
     dmarcReports: method(
       b.object({ tokenHash, domain: b.string().max(253), days: b.number().int().min(1).max(90) }),
       (p) => {
-        caller(p.tokenHash, "read");
+        const actor = resolveActor(db, p.tokenHash, "read");
         const name = p.domain.toLowerCase();
-        if (!DOMAIN.test(name) || !getDomain(db, name)) {
+        if (!DOMAIN.test(name) || !getDomain(db, actor.project, name)) {
           throw new RpcError("not-found", "domain not found");
         }
         return { object: "list", domain: name, data: dmarcSummary(db, name, p.days, now()) };
@@ -157,8 +150,8 @@ export function feedbackMethods(deps: FeedbackDeps) {
     }),
 
     listSuppressions: method(b.object({ tokenHash }), (p) => {
-      caller(p.tokenHash, "read");
-      return listSuppressions(db, now()).map((s) => ({
+      const actor = resolveActor(db, p.tokenHash, "read");
+      return listSuppressions(db, actor.project, now()).map((s) => ({
         object: "suppression",
         email: s.address,
         scope: s.scope,
@@ -177,9 +170,9 @@ export function feedbackMethods(deps: FeedbackDeps) {
         scope: b.enum(["all", "bulk"]).default("all"),
       }),
       async (p) => {
-        caller(p.tokenHash, "full");
+        const actor = resolveActor(db, p.tokenHash, "full");
         await writer.run((d) =>
-          suppress(d, { address: p.email, scope: p.scope, reason: "manual" }, now()),
+          suppress(d, actor.project, { address: p.email, scope: p.scope, reason: "manual" }, now()),
         );
         return { email: p.email.toLowerCase(), scope: p.scope, reason: "manual" };
       },
@@ -192,8 +185,8 @@ export function feedbackMethods(deps: FeedbackDeps) {
         scope: b.enum(["all", "bulk"]).nullable().default(null),
       }),
       async (p) => {
-        caller(p.tokenHash, "full");
-        const n = await writer.run((d) => removeSuppression(d, p.email, p.scope));
+        const actor = resolveActor(db, p.tokenHash, "full");
+        const n = await writer.run((d) => removeSuppression(d, actor.project, p.email, p.scope));
         if (n === 0) throw new RpcError("not-found", "that address is not suppressed");
         return { email: p.email.toLowerCase(), removed: n };
       },
@@ -206,12 +199,14 @@ export function feedbackMethods(deps: FeedbackDeps) {
         events: b.array(b.enum(EVENT_TYPES)).max(EVENT_TYPES.length).default([]),
       }),
       async (p) => {
-        caller(p.tokenHash, "full");
+        const actor = resolveActor(db, p.tokenHash, "full");
         const u = new URL(p.url);
         if (u.protocol !== "https:" && u.protocol !== "http:") {
           throw new RpcError("invalid", "webhook URLs must be http or https");
         }
-        const hook = await writer.run((d) => createWebhook(d, p.url, p.events, now()));
+        const hook = await writer.run((d) =>
+          createWebhook(d, actor.project, p.url, p.events, now()),
+        );
         const secret = await signer.call("webhookSecret", { id: hook.id }, { result: b.string() });
         return {
           object: "webhook",
@@ -225,8 +220,8 @@ export function feedbackMethods(deps: FeedbackDeps) {
     ),
 
     listWebhooks: method(b.object({ tokenHash }), (p) => {
-      caller(p.tokenHash, "read");
-      return listWebhooks(db).map((h) => ({
+      const actor = resolveActor(db, p.tokenHash, "read");
+      return listWebhooks(db, actor.project).map((h) => ({
         object: "webhook",
         id: h.id,
         endpoint: h.url,
@@ -236,8 +231,8 @@ export function feedbackMethods(deps: FeedbackDeps) {
     }),
 
     deleteWebhook: method(b.object({ tokenHash, id: b.string().max(64) }), async (p) => {
-      caller(p.tokenHash, "full");
-      if (!(await writer.run((d) => deleteWebhook(d, p.id, now())))) {
+      const actor = resolveActor(db, p.tokenHash, "full");
+      if (!(await writer.run((d) => deleteWebhook(d, actor.project, p.id, now())))) {
         throw new RpcError("not-found", "webhook not found");
       }
       return { id: p.id, deleted: true };

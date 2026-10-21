@@ -24,6 +24,7 @@ const FROM_RPC: Record<string, [number, string]> = {
   invalid: [422, "validation_error"],
   "unverified-domain": [403, "validation_error"],
   "idempotency-conflict": [409, "invalid_idempotent_request"],
+  "domain-taken": [409, "domain_taken"],
   "not-found": [404, "not_found"],
   held: [403, "sending_paused"],
   started: [409, "invalid_state"],

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { ProjectId } from "../accounts/projects.ts";
 import { b } from "../validate/schema.ts";
 
 export const EVENT_TYPES = [
@@ -39,34 +40,52 @@ const fromRow = (r: Row): Webhook => ({
 
 export function createWebhook(
   db: Database,
+  project: ProjectId,
   url: string,
   events: EventType[],
   now: number,
 ): Webhook {
   const id = Bun.randomUUIDv7();
   const list = events.length ? [...new Set(events)] : [...EVENT_TYPES];
-  db.query<unknown, [string, string, string, number]>(
-    "INSERT INTO webhooks (id, url, events, created_at) VALUES (?, ?, ?, ?)",
-  ).run(id, url, JSON.stringify(list), now);
+  db.query<unknown, [string, string, string, string, number]>(
+    "INSERT INTO webhooks (id, project_id, url, events, created_at) VALUES (?, ?, ?, ?, ?)",
+  ).run(id, project, url, JSON.stringify(list), now);
   return { id, url, events: list, createdAt: now };
 }
 
-export function listWebhooks(db: Database): Webhook[] {
+export function listWebhooks(db: Database, project: ProjectId): Webhook[] {
   return db
-    .query<Row, []>(
-      "SELECT id, url, events, created_at FROM webhooks WHERE disabled_at IS NULL ORDER BY created_at",
+    .query<Row, [string]>(
+      `SELECT id, url, events, created_at FROM webhooks
+       WHERE project_id = ? AND disabled_at IS NULL ORDER BY created_at`,
     )
-    .all()
+    .all(project)
     .map(fromRow);
 }
 
-export function deleteWebhook(db: Database, id: string, now: number): boolean {
+export function webhooksByProject(db: Database): Map<string, Webhook[]> {
+  const out = new Map<string, Webhook[]>();
+  const rows = db
+    .query<Row & { project_id: string }, []>(
+      `SELECT project_id, id, url, events, created_at FROM webhooks
+       WHERE disabled_at IS NULL ORDER BY created_at`,
+    )
+    .all();
+  for (const r of rows) {
+    const list = out.get(r.project_id) ?? [];
+    list.push(fromRow(r));
+    out.set(r.project_id, list);
+  }
+  return out;
+}
+
+export function deleteWebhook(db: Database, project: ProjectId, id: string, now: number): boolean {
   return (
     db
-      .query<unknown, [number, string]>(
-        "UPDATE webhooks SET disabled_at = ? WHERE id = ? AND disabled_at IS NULL",
+      .query<unknown, [number, string, string]>(
+        "UPDATE webhooks SET disabled_at = ? WHERE id = ? AND project_id = ? AND disabled_at IS NULL",
       )
-      .run(now, id).changes > 0
+      .run(now, id, project).changes > 0
   );
 }
 

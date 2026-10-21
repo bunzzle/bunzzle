@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { projectOfMessage } from "../accounts/projects.ts";
 import type { SourceIp } from "../config.ts";
 import { type Clock, systemClock } from "../core/clock.ts";
 import { appendEvent } from "../core/events.ts";
@@ -160,9 +161,11 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         });
         if (u.verdict?.suppress) {
           const s = suppressionForClass(u.verdict.class);
-          if (s) {
+          const project = s ? projectOfMessage(db, job.messageId) : null;
+          if (s && project) {
             suppress(
               db,
+              project,
               {
                 address: u.address,
                 scope: s.scope,

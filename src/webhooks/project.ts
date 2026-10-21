@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { EventType } from "./store.ts";
-import { listWebhooks } from "./store.ts";
+import { webhooksByProject } from "./store.ts";
 
 const CURSOR = "webhook_cursor";
 
@@ -47,12 +47,13 @@ function typeOf(kind: string, data: Record<string, unknown>): EventType | null {
 
 function meta(db: Database, messageId: string) {
   const r = db
-    .query<{ metadata: string; created_at: number }, [string]>(
-      "SELECT metadata, created_at FROM messages WHERE id = ?",
+    .query<{ project_id: string; metadata: string; created_at: number }, [string]>(
+      "SELECT project_id, metadata, created_at FROM messages WHERE id = ?",
     )
     .get(messageId);
   const m = r ? (JSON.parse(r.metadata) as Record<string, unknown>) : {};
   return {
+    project: r?.project_id ?? null,
     from: m["from"] ?? null,
     to: m["to"] ?? [],
     tags: m["tags"] ?? [],
@@ -72,20 +73,22 @@ export function projectEvents(db: Database, now: number, limit = 500): number {
     )
     .all(cursor, limit);
   if (rows.length === 0) return 0;
-  const hooks = listWebhooks(db);
+  const hooks = webhooksByProject(db);
   const insert = db.query<unknown, [string, string, string, string, number, number, number]>(
     `INSERT INTO webhook_deliveries (id, webhook_id, type, payload, state, next_at, created_at, updated_at)
      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
   );
   let made = 0;
   for (const e of rows) {
-    if (hooks.length === 0) break;
+    if (hooks.size === 0) break;
     const data = e.data ? (JSON.parse(e.data) as Record<string, unknown>) : {};
     const type = typeOf(e.kind, data);
     if (!type) continue;
-    const targets = hooks.filter((h) => h.events.includes(type));
-    if (targets.length === 0) continue;
     const m = meta(db, e.message_id);
+    const targets = (m.project === null ? [] : (hooks.get(m.project) ?? [])).filter((h) =>
+      h.events.includes(type),
+    );
+    if (targets.length === 0) continue;
     const detail: Record<string, unknown> = {
       email_id: e.message_id,
       created_at: m.created_at,

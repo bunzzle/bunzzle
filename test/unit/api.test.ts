@@ -7,8 +7,9 @@ import {
   revokeKey,
   TOKEN,
 } from "../../src/accounts/api-keys.ts";
+import { DEFAULT_PROJECT } from "../../src/accounts/projects.ts";
 import { openDatabase } from "../../src/core/store/db.ts";
-import { evaluate, expectedRecords, getDomain, saveDomain } from "../../src/domains/domains.ts";
+import { evaluate, expectedRecords, findDomain, saveDomain } from "../../src/domains/domains.ts";
 import {
   findIdempotent,
   IDEMPOTENCY_TTL_MS,
@@ -105,6 +106,7 @@ describe("API keys", () => {
     const db = openDatabase({ path: ":memory:" });
     const { key, token } = createKey(
       db,
+      DEFAULT_PROJECT,
       { name: "app", scope: "send", domains: ["acme.test"] },
       T0,
     );
@@ -113,9 +115,9 @@ describe("API keys", () => {
     expect(row?.token_hash).toBe(hashToken(token));
     expect(JSON.stringify(db.query("SELECT * FROM api_keys").all())).not.toContain(token);
     expect(keyForHash(db, hashToken(token))).toMatchObject({ id: key.id, domains: ["acme.test"] });
-    expect(revokeKey(db, key.id, T0)).toBe(true);
+    expect(revokeKey(db, DEFAULT_PROJECT, key.id, T0)).toBe(true);
     expect(keyForHash(db, hashToken(token))).toBeNull();
-    expect(revokeKey(db, key.id, T0)).toBe(false);
+    expect(revokeKey(db, DEFAULT_PROJECT, key.id, T0)).toBe(false);
   });
 
   test("scopes", () => {
@@ -246,19 +248,21 @@ describe("cached lookups", () => {
     const db = openDatabase({ path: ":memory:" });
     const { key, token } = createKey(
       db,
+      DEFAULT_PROJECT,
       { name: "app", scope: "send", domains: null, rateLimit: 10 },
       T0,
     );
     const hash = hashToken(token);
     expect(keyForHash(db, hash)?.id).toBe(key.id);
     expect(keyForHash(db, hash)).toBe(keyForHash(db, hash));
-    revokeKey(db, key.id, T0 + 1);
+    revokeKey(db, DEFAULT_PROJECT, key.id, T0 + 1);
     expect(keyForHash(db, hash)).toBeNull();
   });
 
   test("a domain read inside a transaction that rolls back is never cached", () => {
     const db = openDatabase({ path: ":memory:" });
     const d = {
+      project: DEFAULT_PROJECT,
       name: "acme.test",
       status: "pending" as const,
       records: [],
@@ -266,16 +270,16 @@ describe("cached lookups", () => {
       checkedAt: null,
     };
     saveDomain(db, d, T0);
-    expect(getDomain(db, "acme.test")?.status).toBe("pending");
+    expect(findDomain(db, "acme.test")?.status).toBe("pending");
     try {
       db.transaction(() => {
         saveDomain(db, { ...d, status: "verified" }, T0 + 1);
-        expect(getDomain(db, "acme.test")?.status).toBe("verified");
+        expect(findDomain(db, "acme.test")?.status).toBe("verified");
         throw new Error("rollback");
       })();
     } catch {}
-    expect(getDomain(db, "acme.test")?.status).toBe("pending");
+    expect(findDomain(db, "acme.test")?.status).toBe("pending");
     saveDomain(db, { ...d, status: "verified" }, T0 + 2);
-    expect(getDomain(db, "acme.test")?.status).toBe("verified");
+    expect(findDomain(db, "acme.test")?.status).toBe("verified");
   });
 });

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { ProjectId } from "../accounts/projects.ts";
 import { eventsFor } from "../core/events.ts";
 import { recipientsOf } from "../delivery/queue.ts";
 
@@ -69,12 +70,12 @@ function emailStatus(all: PublicStatus[]): PublicStatus {
   return "queued";
 }
 
-export function emailView(db: Database, id: string, now: number) {
+export function emailView(db: Database, project: ProjectId, id: string, now: number) {
   const msg = db
-    .query<{ id: string; metadata: string; created_at: number }, [string]>(
-      "SELECT id, metadata, created_at FROM messages WHERE id = ? AND type = 'email'",
+    .query<{ id: string; metadata: string; created_at: number }, [string, string]>(
+      "SELECT id, metadata, created_at FROM messages WHERE id = ? AND project_id = ? AND type = 'email'",
     )
-    .get(id);
+    .get(id, project);
   if (!msg) return null;
   const meta = JSON.parse(msg.metadata) as Partial<EmailMeta>;
   const scheduled = (meta.scheduledAt ?? 0) > now;
@@ -181,12 +182,12 @@ export function pruneConversations(db: Database, before: number): number {
     .changes;
 }
 
-export function emailSummary(db: Database, id: string, now: number) {
+export function emailSummary(db: Database, project: ProjectId, id: string, now: number) {
   const msg = db
-    .query<{ id: string; metadata: string; created_at: number }, [string]>(
-      "SELECT id, metadata, created_at FROM messages WHERE id = ? AND type = 'email'",
+    .query<{ id: string; metadata: string; created_at: number }, [string, string]>(
+      "SELECT id, metadata, created_at FROM messages WHERE id = ? AND project_id = ? AND type = 'email'",
     )
-    .get(id);
+    .get(id, project);
   if (!msg) return null;
   const meta = JSON.parse(msg.metadata) as Partial<EmailMeta>;
   const scheduled = (meta.scheduledAt ?? 0) > now;

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { ProjectId } from "../accounts/projects.ts";
 import type { SealedBody } from "../crypto/envelope.ts";
 import { RETRY_MS } from "../webhooks/store.ts";
 
@@ -43,6 +44,7 @@ export function splitRouteAddress(input: string): { local: string; domain: strin
 
 export function createRoute(
   db: Database,
+  project: ProjectId,
   address: string,
   url: string,
   format: RouteFormat,
@@ -50,31 +52,31 @@ export function createRoute(
 ): Route | null {
   const id = Bun.randomUUIDv7();
   const added = db
-    .query<unknown, [string, string, string, string, number]>(
-      `INSERT INTO routes (id, address, url, format, created_at) VALUES (?, ?, ?, ?, ?)
+    .query<unknown, [string, string, string, string, string, number]>(
+      `INSERT INTO routes (id, project_id, address, url, format, created_at) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT DO NOTHING`,
     )
-    .run(id, address, url, format, now).changes;
+    .run(id, project, address, url, format, now).changes;
   return added ? { id, address, url, format, createdAt: now } : null;
 }
 
-export function listRoutes(db: Database): Route[] {
+export function listRoutes(db: Database, project: ProjectId): Route[] {
   return db
-    .query<Row, []>(
+    .query<Row, [string]>(
       `SELECT id, address, url, format, created_at FROM routes
-       WHERE disabled_at IS NULL ORDER BY address`,
+       WHERE project_id = ? AND disabled_at IS NULL ORDER BY address`,
     )
-    .all()
+    .all(project)
     .map(fromRow);
 }
 
-export function deleteRoute(db: Database, id: string, now: number): boolean {
+export function deleteRoute(db: Database, project: ProjectId, id: string, now: number): boolean {
   return (
     db
-      .query<unknown, [number, string]>(
-        "UPDATE routes SET disabled_at = ? WHERE id = ? AND disabled_at IS NULL",
+      .query<unknown, [number, string, string]>(
+        "UPDATE routes SET disabled_at = ? WHERE id = ? AND project_id = ? AND disabled_at IS NULL",
       )
-      .run(now, id).changes > 0
+      .run(now, id, project).changes > 0
   );
 }
 
@@ -215,13 +217,19 @@ export function settleRouted(
   return "retry";
 }
 
-export function retryFailed(db: Database, routeId: string, now: number): number {
+export function retryFailed(
+  db: Database,
+  project: ProjectId,
+  routeId: string,
+  now: number,
+): number {
   return db
-    .query<unknown, [number, number, string]>(
+    .query<unknown, [number, number, string, string]>(
       `UPDATE route_deliveries SET state = 'pending', attempt = 0, next_at = ?, updated_at = ?
-       WHERE route_id = ? AND state = 'failed' AND body IS NOT NULL`,
+       WHERE route_id = (SELECT id FROM routes WHERE id = ? AND project_id = ?)
+         AND state = 'failed' AND body IS NOT NULL`,
     )
-    .run(now, now, routeId).changes;
+    .run(now, now, routeId, project).changes;
 }
 
 export function resetRouted(db: Database, now: number): number {

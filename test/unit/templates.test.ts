@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { DEFAULT_PROJECT as P } from "../../src/accounts/projects.ts";
 import { openDatabase } from "../../src/core/store/db.ts";
 import { applyTemplate, prepareEmail, renderTemplate, sendSchema } from "../../src/http/send.ts";
 import { MissingVariables, parse, render, TemplateError } from "../../src/templates/render.ts";
@@ -104,25 +105,25 @@ describe("template rendering", () => {
 describe("template store", () => {
   test("create, find by id or name, version, delete", () => {
     const db = openDatabase({ path: ":memory:" });
-    const t = createTemplate(db, "welcome", { subject: "Hi", html: "<p>Hi</p>", text: null }, 1);
+    const t = createTemplate(db, P, "welcome", { subject: "Hi", html: "<p>Hi</p>", text: null }, 1);
     expect(t?.version).toBe(1);
-    expect(createTemplate(db, "welcome", { subject: "x", html: null, text: "x" }, 2)).toBeNull();
+    expect(createTemplate(db, P, "welcome", { subject: "x", html: null, text: "x" }, 2)).toBeNull();
     const id = t?.id as string;
-    expect(findTemplate(db, "welcome")?.id).toBe(id);
-    expect(findTemplate(db, id)?.name).toBe("welcome");
-    expect(addVersion(db, id, { subject: "Hello", html: null, text: "Hello" }, 5)).toBe(2);
-    expect(findTemplate(db, id)).toMatchObject({ version: 2, updatedAt: 5, createdAt: 1 });
+    expect(findTemplate(db, P, "welcome")?.id).toBe(id);
+    expect(findTemplate(db, P, id)?.name).toBe("welcome");
+    expect(addVersion(db, P, id, { subject: "Hello", html: null, text: "Hello" }, 5)).toBe(2);
+    expect(findTemplate(db, P, id)).toMatchObject({ version: 2, updatedAt: 5, createdAt: 1 });
     expect(getVersion(db, id, 1)?.subject).toBe("Hi");
     expect(getVersion(db, id, 2)).toMatchObject({ subject: "Hello", html: null, text: "Hello" });
     expect(getVersion(db, id, 3)).toBeNull();
     expect(listVersions(db, id)).toEqual([1, 2]);
-    expect(listTemplates(db).map((x) => x.name)).toEqual(["welcome"]);
-    expect(deleteTemplate(db, id, 9)).toBe(true);
-    expect(deleteTemplate(db, id, 9)).toBe(false);
-    expect(findTemplate(db, "welcome")).toBeNull();
-    expect(addVersion(db, id, { subject: "x", html: null, text: "x" }, 10)).toBeNull();
+    expect(listTemplates(db, P).map((x) => x.name)).toEqual(["welcome"]);
+    expect(deleteTemplate(db, P, id, 9)).toBe(true);
+    expect(deleteTemplate(db, P, id, 9)).toBe(false);
+    expect(findTemplate(db, P, "welcome")).toBeNull();
+    expect(addVersion(db, P, id, { subject: "x", html: null, text: "x" }, 10)).toBeNull();
     expect(
-      createTemplate(db, "welcome", { subject: "x", html: null, text: "x" }, 11),
+      createTemplate(db, P, "welcome", { subject: "x", html: null, text: "x" }, 11),
     ).not.toBeNull();
   });
 });

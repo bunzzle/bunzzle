@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { DEFAULT_PROJECT } from "../../src/accounts/projects.ts";
 import { manualClock } from "../../src/core/clock.ts";
 import { claim, settle } from "../../src/core/jobs.ts";
 import { createLogger } from "../../src/core/log.ts";
@@ -85,6 +86,7 @@ test("a new IP sends only its warm-up budget, waits for tomorrow, then gets more
     ids.push(
       enqueueEmail(
         db,
+        DEFAULT_PROJECT,
         {
           id,
           body,
