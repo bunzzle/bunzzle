@@ -11,4 +11,4 @@ First release on npm. Needs Bunzzle 0.2.0 or later.
 - Webhooks, inbound routes, templates with `previewTemplate`, suppressions.
 - Operations: `runDoctor`, `listIps`, `listHolds`, `releaseHold`, `getQueue`, `suspendDelivery`, `resumeDelivery`, `failQueued`, `cancelQueued`, `listPaths`, `getMetrics`, `getHealth`.
 - `BunzzleError` with the status code, error name and message.
-- No dependencies: runs in Bun, Deno, Node.js 18+ and browsers.
+- No dependencies. Written for Bun, for use on servers.

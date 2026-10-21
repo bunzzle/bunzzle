@@ -29,6 +29,30 @@ jobs:
       - run: bun run build
       - run: ./dist/bunzzle --version
 
+  sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.3
+      - name: Pack
+        working-directory: sdk/typescript
+        run: |
+          mkdir -p "$RUNNER_TEMP/sdk"
+          bun pm pack --destination "$RUNNER_TEMP/sdk"
+          tar -xzf "$RUNNER_TEMP"/sdk/*.tgz -C "$RUNNER_TEMP/sdk"
+          test "$(cd "$RUNNER_TEMP/sdk/package" && ls | LC_ALL=C sort | tr '\n' ' ')" = "CHANGELOG.md LICENSE README.md index.d.ts index.js package.json "
+      - name: The packed SDK works
+        run: bun sdk/smoke.mjs "$RUNNER_TEMP/sdk/package/index.js"
+      - name: Publish dry run
+        working-directory: sdk/typescript
+        env:
+          NPM_CONFIG_TOKEN: dry-run
+        run: bun publish --dry-run --access public
+
   system:
     needs: check
     runs-on: ubuntu-latest
