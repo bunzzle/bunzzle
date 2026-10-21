@@ -1,4 +1,5 @@
 import { purgeDeletedProject } from "../accounts/purge.ts";
+import { pruneUsage } from "../accounts/usage.ts";
 import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { fail, type Outcome } from "../core/outcome.ts";
@@ -302,6 +303,7 @@ export async function runCore(config: Config, log: Logger) {
       pruneDmarc(d, Date.now());
       pruneConversations(d, Date.now() - config.retentionDays * 24 * HOUR);
       pruneRouted(d, Date.now() - config.retentionDays * 24 * HOUR);
+      pruneUsage(d, Date.now());
     }),
   );
   const purge = async () => {

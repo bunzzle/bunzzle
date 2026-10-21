@@ -26,6 +26,7 @@ const FROM_RPC: Record<string, [number, string]> = {
   "idempotency-conflict": [409, "invalid_idempotent_request"],
   "domain-taken": [409, "domain_taken"],
   "project-suspended": [403, "project_suspended"],
+  "project-limit": [429, "project_limit"],
   "not-found": [404, "not_found"],
   held: [403, "sending_paused"],
   started: [409, "invalid_state"],
@@ -41,7 +42,14 @@ export function fromRpc(err: unknown): ApiError {
   if (err instanceof ApiError) return err;
   if (err instanceof RpcError) {
     const mapped = FROM_RPC[err.code];
-    if (mapped) return new ApiError(mapped[0], mapped[1], err.message);
+    if (mapped) {
+      return new ApiError(
+        mapped[0],
+        mapped[1],
+        err.message,
+        err.retryAfter !== undefined ? { "Retry-After": String(err.retryAfter) } : {},
+      );
+    }
     const later = RETRY_LATER[err.code];
     if (later) {
       return new ApiError(later[0], later[1], err.message, { "Retry-After": later[2] });

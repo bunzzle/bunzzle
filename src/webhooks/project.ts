@@ -34,6 +34,8 @@ function typeOf(kind: string, data: Record<string, unknown>): EventType | null {
       return "email.opened";
     case "clicked":
       return "email.clicked";
+    case "limit_approaching":
+      return "project.limit_approaching";
     case "dead":
       return data["code"] === "expired" ||
         data["code"] === "retries_exhausted" ||
@@ -89,15 +91,24 @@ export function projectEvents(db: Database, now: number, limit = 500): number {
       h.events.includes(type),
     );
     if (targets.length === 0) continue;
-    const detail: Record<string, unknown> = {
-      email_id: e.message_id,
-      created_at: m.created_at,
-      from: m.from,
-      to: m.to,
-      subject: null,
-      tags: m.tags,
-      lane: m.lane,
-    };
+    const detail: Record<string, unknown> =
+      type === "project.limit_approaching"
+        ? {
+            project_id: m.project,
+            window: data["window"] ?? null,
+            limit: data["limit"] ?? null,
+            used: data["used"] ?? null,
+            email_id: e.message_id,
+          }
+        : {
+            email_id: e.message_id,
+            created_at: m.created_at,
+            from: m.from,
+            to: m.to,
+            subject: null,
+            tags: m.tags,
+            lane: m.lane,
+          };
     if (typeof data["address"] === "string") detail["recipient"] = data["address"];
     if (type === "email.bounced") {
       detail["bounce"] = {

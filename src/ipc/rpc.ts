@@ -12,6 +12,7 @@ export class RpcError extends Error {
   constructor(
     readonly code: RpcErrorCode | (string & {}),
     message: string,
+    readonly retryAfter?: number,
   ) {
     super(message);
   }
@@ -33,7 +34,11 @@ const response = b.union([
   b.object({ id: b.number().int(), result: b.unknown() }),
   b.object({
     id: b.number().int(),
-    error: b.object({ code: b.string(), message: b.string() }),
+    error: b.object({
+      code: b.string(),
+      message: b.string(),
+      retryAfter: b.number().int().positive().optional(),
+    }),
   }),
 ]);
 
@@ -145,7 +150,15 @@ export async function serveRpc(
       framer.send({ id, result: (await m.handle(params.data)) ?? null });
     } catch (err) {
       const code = err instanceof RpcError ? err.code : "failed";
-      framer.send({ id, error: { code, message: (err as Error)?.message ?? String(err) } });
+      const retryAfter = err instanceof RpcError ? err.retryAfter : undefined;
+      framer.send({
+        id,
+        error: {
+          code,
+          message: (err as Error)?.message ?? String(err),
+          ...(retryAfter !== undefined ? { retryAfter } : {}),
+        },
+      });
     }
   };
   const listener: UnixSocketListener<undefined> = Bun.listen({
@@ -245,8 +258,10 @@ export class RpcClient {
     if (!p) return;
     this.#pending.delete(res.data.id);
     clearTimeout(p.timer);
-    if ("error" in res.data) p.reject(new RpcError(res.data.error.code, res.data.error.message));
-    else p.resolve(res.data.result);
+    if ("error" in res.data) {
+      const e = res.data.error;
+      p.reject(new RpcError(e.code, e.message, e.retryAfter));
+    } else p.resolve(res.data.result);
   }
 
   async call<R = unknown>(method: string, params: unknown, opts: CallOptions<R> = {}): Promise<R> {

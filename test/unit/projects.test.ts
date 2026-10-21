@@ -442,4 +442,62 @@ describe("projects", () => {
     });
     await expect(send).rejects.toThrow("suspended");
   });
+
+  test("send limits at intake: whole batches, real recipients only, retry time, 90 % event", async () => {
+    const db = openDatabase({ path: ":memory:" });
+    saveDomain(
+      db,
+      {
+        project: A,
+        name: "a.test",
+        status: "verified",
+        records: [],
+        createdAt: T0,
+        checkedAt: null,
+      },
+      T0,
+    );
+    db.run("UPDATE projects SET per_hour = 10 WHERE id = ?", [A]);
+    suppress(db, A, { address: "gone@dest.test", scope: "all", reason: "manual" }, T0);
+    const epoch = await epochKeyPair(1, newEpochSeed());
+    const stub = {
+      call: async (m: string) => (m === "domains" ? ["a.test"] : null),
+    } as unknown as RpcClient;
+    const { methods } = coreMethods({
+      db,
+      writer: new Writer(db),
+      log: createLogger("error", {}, () => {}),
+      signer: stub,
+      delivery: stub,
+      currentKey: async () => epoch,
+      sourceIp: null,
+    });
+    const email = (to: string[]) => ({
+      from: "x@a.test",
+      recipients: to,
+      data: "From: x@a.test\r\nSubject: s\r\n\r\nhi\r\n",
+      smtpUtf8: false,
+      requireTls: false,
+    });
+    const rcpts = (n: number, tag: string) =>
+      Array.from({ length: n }, (_, i) => `${tag}${i}@dest.test`);
+    const enqueue = (p: unknown) => methods["enqueue"]?.handle(p) as Promise<unknown>;
+    const batch = (p: unknown) => methods["enqueueBatch"]?.handle(p) as Promise<unknown>;
+
+    await enqueue(email([...rcpts(8, "a"), "gone@dest.test"]));
+    const events = () =>
+      db
+        .query<{ data: string }, []>("SELECT data FROM events WHERE kind = 'limit_approaching'")
+        .all()
+        .map((e) => JSON.parse(e.data));
+    expect(events()).toEqual([]);
+    const before = db.query("SELECT count(*) AS n FROM messages").get();
+    const refused = batch({ emails: [email(rcpts(1, "b")), email(rcpts(2, "c"))] });
+    await expect(refused).rejects.toMatchObject({ code: "project-limit" });
+    await refused.catch((e: { retryAfter?: number }) => expect(e.retryAfter).toBeGreaterThan(0));
+    expect(db.query("SELECT count(*) AS n FROM messages").get()).toEqual(before);
+    await batch({ emails: [email(rcpts(1, "d")), email(rcpts(1, "e"))] });
+    expect(events()).toEqual([{ window: "hour", limit: 10, used: 9 }]);
+    await expect(enqueue(email(rcpts(11, "f")))).rejects.toMatchObject({ code: "invalid" });
+  });
 });

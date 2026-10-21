@@ -446,6 +446,7 @@ export type WebhookList = {
       | "email.canceled"
       | "email.opened"
       | "email.clicked"
+      | "project.limit_approaching"
     )[];
     created_at: string;
     signing_secret?: string;
@@ -465,6 +466,7 @@ export type CreateWebhook = {
     | "email.canceled"
     | "email.opened"
     | "email.clicked"
+    | "project.limit_approaching"
   )[];
 };
 
@@ -483,6 +485,7 @@ export type Webhook = {
     | "email.canceled"
     | "email.opened"
     | "email.clicked"
+    | "project.limit_approaching"
   )[];
   created_at: string;
   signing_secret?: string;
