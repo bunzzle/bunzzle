@@ -54,6 +54,11 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const MAX_SETTLED = 50_000;
 
+export function leaseTimes(scale: number): { leaseMs: number; maxWaitMs: number } {
+  const leaseMs = Math.max(2_000, Math.max(1, Math.round(45 * MIN * scale)));
+  return { leaseMs, maxWaitMs: Math.max(1_000, Math.floor(leaseMs / 3)) };
+}
+
 export function scaledPolicy(p: RetryPolicy, scale: number): RetryPolicy {
   const s = (ms: number) => Math.max(1, Math.round(ms * scale));
   return {
@@ -163,7 +168,7 @@ export async function runCore(config: Config, log: Logger) {
     ips: config.sourceIps,
     holdRetryMs: scaled(15 * MIN),
     suspendRetryMs: scaled(5 * MIN),
-    maxWaitMs: Math.max(1_000, Math.floor(Math.max(2_000, scaled(45 * MIN)) / 3)),
+    maxWaitMs: leaseTimes(scale).maxWaitMs,
     bounceDomainFor: (d) => (returnPathReady(findDomain(db, d)) ? bounceDomain(d) : null),
     relayRoutes: () =>
       config.relay && !config.relay.for.all
@@ -175,13 +180,13 @@ export async function runCore(config: Config, log: Logger) {
     db,
     writer,
     log,
-    handle: (job): Promise<Outcome> =>
+    handle: (job, signal, ctx): Promise<Outcome> =>
       job.type === "email"
-        ? handleEmail(job)
+        ? handleEmail(job, signal, ctx)
         : Promise.resolve(fail("unknown-type", `no handler for ${job.type}`)),
     retry: scaledPolicy(defaultRetryPolicy, scale),
     reconcileMs: scaled(15 * MIN),
-    leaseMs: Math.max(2_000, scaled(45 * MIN)),
+    leaseMs: leaseTimes(scale).leaseMs,
     concurrency: 512,
     filter: () => shaper.blocked(),
   });
