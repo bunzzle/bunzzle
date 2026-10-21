@@ -2,19 +2,22 @@ import type { Database } from "bun:sqlite";
 
 export interface WriterOptions {
   maxBatch?: number;
+  maxWaitMs?: number;
 }
 
 export class Writer {
   readonly #db: Database;
   readonly #maxBatch: number;
+  readonly #maxWaitMs: number;
   #queue: Pending[] = [];
   #scheduled = false;
   #closed = false;
   readonly #listeners = new Set<() => void>();
 
-  constructor(db: Database, { maxBatch = 256 }: WriterOptions = {}) {
+  constructor(db: Database, { maxBatch = 256, maxWaitMs = 1 }: WriterOptions = {}) {
     this.#db = db;
     this.#maxBatch = maxBatch;
+    this.#maxWaitMs = maxWaitMs;
   }
 
   run<T>(op: (db: Database) => T, { quiet = false }: { quiet?: boolean } = {}): Promise<T> {
@@ -24,9 +27,14 @@ export class Writer {
     if (this.#queue.length >= this.#maxBatch) this.#flush();
     else if (!this.#scheduled) {
       this.#scheduled = true;
-      setImmediate(() => this.#flush());
+      this.#later();
     }
     return promise;
+  }
+
+  #later(): void {
+    if (this.#maxWaitMs > 0) setTimeout(() => this.#flush(), this.#maxWaitMs);
+    else setImmediate(() => this.#flush());
   }
 
   onCommit(fn: () => void): () => void {
