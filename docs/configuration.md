@@ -51,6 +51,7 @@ The master key encrypts the DKIM keys and every email body. Keep it in a file on
 | Variable | Default | |
 |---|---|---|
 | `BUNZZLE_EVENT_LOG` | `false` | Write every delivery event to local files as JSON lines. |
+| `BUNZZLE_SHARED_BOUNCES` | `true` | Suppress an address that bounced as not existing for every project, not only the one that sent to it. |
 | `BUNZZLE_EVENT_LOG_DIR` | `./logs/events` | Where the files go. With the systemd units: `/var/log/bunzzle/events`. |
 | `BUNZZLE_EVENT_LOG_MAX_MB` | `100` | A new file starts after this many megabytes, and every day at 00:00 UTC. |
 | `BUNZZLE_EVENT_LOG_DAYS` | `30` | Files older than this many days are deleted. |

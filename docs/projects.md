@@ -48,6 +48,10 @@ sudo bunzzle domains move shop.example shop
 
 Email already queued for the old project is still sent. Its stats and suppressions stay with the old project.
 
+## Suppressions
+
+Complaints, unsubscribes and addresses added by hand belong to one project. An address that bounced because it does not exist, or whose domain takes no email, is suppressed for every project: other projects see it as reason `invalid`, without the bounce text or which project sent to it. A project cannot remove such an address. `BUNZZLE_SHARED_BOUNCES=false` keeps these bounces per project too.
+
 ## IP pools
 
 The operator can give a pool from `BUNZZLE_SOURCE_IPS` to one project:
