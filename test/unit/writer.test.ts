@@ -27,6 +27,30 @@ describe("Writer", () => {
     expect(commits).toBe(1);
   });
 
+  test("operations from later ticks inside the wait share the commit", async () => {
+    const db = openDatabase({ path: ":memory:" });
+    db.run("CREATE TABLE t (x INTEGER PRIMARY KEY)");
+    const writer = new Writer(db, { maxWaitMs: 20 });
+    let commits = 0;
+    writer.onCommit(() => commits++);
+    const first = writer.run((d) => d.run("INSERT INTO t VALUES (1)").changes);
+    await new Promise((r) => setImmediate(r));
+    const second = writer.run((d) => d.run("INSERT INTO t VALUES (2)").changes);
+    expect(await Promise.all([first, second])).toEqual([1, 1]);
+    expect(commits).toBe(1);
+  });
+
+  test("without a wait, the next tick commits", async () => {
+    const db = openDatabase({ path: ":memory:" });
+    db.run("CREATE TABLE t (x INTEGER PRIMARY KEY)");
+    const writer = new Writer(db, { maxWaitMs: 0 });
+    let commits = 0;
+    writer.onCommit(() => commits++);
+    await writer.run((d) => d.run("INSERT INTO t VALUES (1)").changes);
+    await writer.run((d) => d.run("INSERT INTO t VALUES (2)").changes);
+    expect(commits).toBe(2);
+  });
+
   test("a failing operation rolls back alone", async () => {
     const { writer, rows } = setup();
     const a = writer.run((db) => db.run("INSERT INTO t VALUES (1)"));
