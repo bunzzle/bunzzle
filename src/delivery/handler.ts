@@ -49,6 +49,7 @@ export interface DeliveryHandlerOptions {
 }
 
 const RELAY = "relay";
+const RENEW_AFTER_MS = 1_000;
 
 interface Update {
   address: string;
@@ -344,7 +345,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
     }
     const ticket = admission;
     admission = { kind: "go", connections: 1, release: () => {} };
-    if (ctx && !(await ctx.renew())) {
+    if (ctx && clock.now() - now >= RENEW_AFTER_MS && !(await ctx.renew())) {
       ticket.release("neutral", "");
       return requeue("lease lost while waiting", 0);
     }
