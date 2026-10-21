@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  BodyOpener,
   BodySealer,
   epochKeyPair,
   newEpochSeed,
@@ -60,6 +61,25 @@ describe("body sealer", () => {
     expect(b.wrapped.subarray(0, 32)).not.toEqual(a.wrapped.subarray(0, 32));
     expect(await openBody(two, "m2", b)).toBe("y");
     expect(openBody(one, "m2", b)).rejects.toThrow();
+  });
+});
+
+describe("body opener", () => {
+  test("opens bodies from the sealer and from sealBody, refuses another id, works after forget", async () => {
+    const pair = await epochKeyPair(20_000, newEpochSeed());
+    const sealer = new BodySealer();
+    const opener = new BodyOpener({ max: 2 });
+    const a = await sealer.seal(pair, "m1", "one");
+    const b = await sealer.seal(pair, "m2", "two");
+    const c = await sealBody(pair, "m3", "three");
+    expect(await opener.open(pair, "m1", a)).toBe("one");
+    expect(await opener.open(pair, "m2", b)).toBe("two");
+    expect(await opener.open(pair, "m3", c)).toBe("three");
+    expect(opener.open(pair, "m2", a)).rejects.toThrow();
+    opener.forget();
+    expect(await opener.open(pair, "m1", a)).toBe("one");
+    const other = await epochKeyPair(20_001, newEpochSeed());
+    expect(opener.open(other, "m1", a)).rejects.toThrow("another epoch");
   });
 });
 
