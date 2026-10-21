@@ -362,6 +362,73 @@ export type Rotation = {
   result: string;
 };
 
+export type ProjectList = {
+  object: "list";
+  data: {
+    object: "project";
+    id: string;
+    name: string;
+    per_hour: number | null;
+    per_day: number | null;
+    ip_pool: string | null;
+    suspended: boolean;
+    created_at: string;
+    suspended_at: string | null;
+  }[];
+};
+
+export type CreateProject = {
+  name: string;
+};
+
+export type Project = {
+  object: "project";
+  id: string;
+  name: string;
+  per_hour: number | null;
+  per_day: number | null;
+  ip_pool: string | null;
+  suspended: boolean;
+  created_at: string;
+  suspended_at: string | null;
+};
+
+export type UpdateProject = {
+  name?: string;
+  per_hour?: number | null;
+  per_day?: number | null;
+  ip_pool?: string | null;
+  suspended?: boolean;
+};
+
+export type ProjectDeleted = {
+  object: "project";
+  id: string;
+  deleted: boolean;
+};
+
+export type CreateProjectKey = {
+  name: string;
+  scope?: "send" | "read" | "full";
+  domains?: string[];
+  rate_limit?: number;
+  test?: boolean;
+  ip_pool?: string;
+};
+
+export type ProjectKey = {
+  object: "api_key";
+  id: string;
+  name: string;
+  scope: "send" | "read" | "full";
+  domains: string[] | null;
+  rate_limit: number;
+  test: boolean;
+  ip_pool: string | null;
+  created_at: string;
+  token: string;
+};
+
 export type WebhookList = {
   object: "list";
   data: {
@@ -644,6 +711,12 @@ export declare class Bunzzle {
     },
   ): Promise<DmarcReports>;
   rotateDomainKeys(name: string): Promise<Rotation>;
+  listProjects(): Promise<ProjectList>;
+  createProject(body: CreateProject): Promise<Project>;
+  getProject(id: string): Promise<Project>;
+  updateProject(id: string, body: UpdateProject): Promise<Project>;
+  deleteProject(id: string): Promise<ProjectDeleted>;
+  createProjectKey(id: string, body: CreateProjectKey): Promise<ProjectKey>;
   listWebhooks(): Promise<WebhookList>;
   createWebhook(body: CreateWebhook): Promise<Webhook>;
   deleteWebhook(id: string): Promise<Deleted>;

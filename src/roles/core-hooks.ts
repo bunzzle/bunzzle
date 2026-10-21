@@ -1,12 +1,12 @@
 import type { Database } from "bun:sqlite";
-import { allows, keyForHash } from "../accounts/api-keys.ts";
 import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
 import { parseCheckReply, parseScanReply } from "../hooks/reply.ts";
 import { addHook, type Hook, listHooks, removeHook } from "../hooks/store.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import { b } from "../validate/schema.ts";
-import { tokenHash } from "./wire.ts";
+import { resolveActor } from "./actor.ts";
+import { project, tokenHash } from "./wire.ts";
 
 export interface HookDeps {
   db: Database;
@@ -121,17 +121,9 @@ export function hookMethods(deps: HookDeps) {
     }),
 
     checkEmail: method(
-      b.object({ tokenHash, email: b.record(b.string(), b.unknown()) }),
+      b.object({ tokenHash, project, email: b.record(b.string(), b.unknown()) }),
       async (p) => {
-        let apiKey: string | null = null;
-        if (p.tokenHash !== undefined) {
-          const key = keyForHash(db, p.tokenHash);
-          if (!key) throw new RpcError("unauthenticated", "API key is invalid");
-          if (!allows(key.scope, "send")) {
-            throw new RpcError("forbidden", "this API key cannot send email");
-          }
-          apiKey = key.id;
-        }
+        const apiKey = resolveActor(db, p, "send").key?.id ?? null;
         let email = p.email;
         for (const h of listHooks(db, "check")) {
           const r = await post(

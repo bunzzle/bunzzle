@@ -22,7 +22,7 @@ import {
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import { b } from "../validate/schema.ts";
 import { resolveActor } from "./actor.ts";
-import { DOMAIN, tokenHash, toWire } from "./wire.ts";
+import { DOMAIN, project, tokenHash, toWire } from "./wire.ts";
 
 export interface RouteDeps {
   db: Database;
@@ -92,12 +92,13 @@ export function routeMethods(deps: RouteDeps) {
     createRoute: method(
       b.object({
         tokenHash,
+        project,
         address: b.string().max(320),
         url: b.string().url().max(2048),
         format: b.enum(ROUTE_FORMATS).default("parsed"),
       }),
       async (p) => {
-        const { project } = resolveActor(db, p.tokenHash, "full");
+        const { project } = resolveActor(db, p, "full");
         const parts = splitRouteAddress(p.address);
         if (!parts || !DOMAIN.test(parts.domain)) {
           throw new RpcError("invalid", "address must look like name@example.com or *@example.com");
@@ -119,21 +120,21 @@ export function routeMethods(deps: RouteDeps) {
       },
     ),
 
-    listRoutes: method(b.object({ tokenHash }), (p) => {
-      const { project } = resolveActor(db, p.tokenHash, "read");
+    listRoutes: method(b.object({ tokenHash, project }), (p) => {
+      const { project } = resolveActor(db, p, "read");
       return listRoutes(db, project).map(view);
     }),
 
-    deleteRoute: method(b.object({ tokenHash, id: b.string().max(64) }), async (p) => {
-      const { project } = resolveActor(db, p.tokenHash, "full");
+    deleteRoute: method(b.object({ tokenHash, project, id: b.string().max(64) }), async (p) => {
+      const { project } = resolveActor(db, p, "full");
       if (!(await writer.run((d) => deleteRoute(d, project, p.id, now())))) {
         throw new RpcError("not-found", "route not found");
       }
       return { id: p.id, deleted: true };
     }),
 
-    retryRoute: method(b.object({ tokenHash, id: b.string().max(64) }), async (p) => {
-      const { project } = resolveActor(db, p.tokenHash, "full");
+    retryRoute: method(b.object({ tokenHash, project, id: b.string().max(64) }), async (p) => {
+      const { project } = resolveActor(db, p, "full");
       if (!listRoutes(db, project).some((r) => r.id === p.id)) {
         throw new RpcError("not-found", "route not found");
       }

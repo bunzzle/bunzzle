@@ -26,10 +26,12 @@ import {
   ipsCommand,
   keysCommand,
   pathsCommand,
+  projectsCommand,
   queueCommand,
   routesCommand,
   statsCommand,
   suppressionsCommand,
+  useProject,
   webhooksCommand,
 } from "./admin.ts";
 import { UsageError } from "./args.ts";
@@ -48,7 +50,8 @@ Usage:
   bunzzle master-key  Print a new random master key
   bunzzle openapi     Print the OpenAPI description of the API
   bunzzle domains     add|verify|show|list|reports sending domains and their DMARC reports (needs \`serve\` running)
-  bunzzle keys        create|list|revoke API keys (needs \`serve\` running)
+  bunzzle keys        create|list|revoke API keys; --admin for a key that manages projects (needs \`serve\` running)
+  bunzzle projects    add|list|show|limits|suspend|resume|remove projects (needs \`serve\` running)
   bunzzle paths       sending speed per destination and why it changed (needs \`serve\` running)
   bunzzle webhooks    add|list|remove event webhooks (needs \`serve\` running)
   bunzzle routes      add|list|remove|retry inbound routes: mail for an address posted to a URL (needs \`serve\` running)
@@ -66,6 +69,9 @@ Usage:
   bunzzle restore     --from DIR: put a backup back (stop \`serve\` first, needs the same master key)
   bunzzle --version   Print the version
   bunzzle --help      Show this help
+
+domains, keys, webhooks, routes, suppressions, emails and stats work on the default
+project; add --project NAME for another one.
 
 bunzzle send:
   --from "Name <you@your.domain>"   sender (its domain must match the DKIM keys)
@@ -173,7 +179,34 @@ async function role(name: string | undefined) {
   }
 }
 
-async function main(argv: string[]) {
+const PROJECT_COMMANDS = new Set([
+  "domains",
+  "keys",
+  "webhooks",
+  "routes",
+  "suppressions",
+  "emails",
+  "stats",
+]);
+
+function takeProject(argv: string[]): string[] {
+  if (!PROJECT_COMMANDS.has(argv[0] ?? "")) return argv;
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i] as string;
+    if (arg === "--project" || arg.startsWith("--project=")) {
+      const name = arg === "--project" ? argv[++i] : arg.slice("--project=".length);
+      if (!name) throw new UsageError("--project needs a value");
+      useProject(name);
+      continue;
+    }
+    out.push(arg);
+  }
+  return out;
+}
+
+async function main(input: string[]) {
+  const argv = takeProject(input);
   const [command] = argv;
   switch (command) {
     case "serve":
@@ -189,6 +222,8 @@ async function main(argv: string[]) {
       return domainsCommand(argv.slice(1), loadConfig());
     case "keys":
       return keysCommand(argv.slice(1), loadConfig());
+    case "projects":
+      return projectsCommand(argv.slice(1), loadConfig());
     case "paths":
       return pathsCommand(argv.slice(1), loadConfig());
     case "doctor":

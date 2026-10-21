@@ -130,6 +130,30 @@ export class Bunzzle {
     return this.#request("POST", `/domains/${segment(name)}/rotate`);
   }
 
+  listProjects() {
+    return this.#request("GET", `/projects`);
+  }
+
+  createProject(body) {
+    return this.#request("POST", `/projects`, { body });
+  }
+
+  getProject(id) {
+    return this.#request("GET", `/projects/${segment(id)}`);
+  }
+
+  updateProject(id, body) {
+    return this.#request("PATCH", `/projects/${segment(id)}`, { body });
+  }
+
+  deleteProject(id) {
+    return this.#request("DELETE", `/projects/${segment(id)}`);
+  }
+
+  createProjectKey(id, body) {
+    return this.#request("POST", `/projects/${segment(id)}/keys`, { body });
+  }
+
   listWebhooks() {
     return this.#request("GET", `/webhooks`);
   }

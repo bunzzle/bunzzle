@@ -3,7 +3,7 @@ import { VERSION } from "../version.ts";
 import * as s from "./schemas.ts";
 import { rescheduleSchema, sendSchema } from "./send.ts";
 
-type Scope = "send" | "read" | "full";
+type Scope = "send" | "read" | "full" | "admin";
 type Named = [string, b.Schema];
 
 export interface Operation {
@@ -177,6 +177,63 @@ export const OPERATIONS: Operation[] = [
     summary: "Start or continue DKIM key rotation",
     scope: ["full"],
     response: ["Rotation", s.rotation],
+  },
+  {
+    method: "GET",
+    path: "/projects",
+    id: "listProjects",
+    tag: "Projects",
+    summary: "List projects",
+    scope: ["admin"],
+    response: ["ProjectList", s.projectList],
+  },
+  {
+    method: "POST",
+    path: "/projects",
+    id: "createProject",
+    tag: "Projects",
+    summary: "Add a project",
+    scope: ["admin"],
+    body: ["CreateProject", s.createProjectSchema],
+    response: ["Project", s.project],
+  },
+  {
+    method: "GET",
+    path: "/projects/:id",
+    id: "getProject",
+    tag: "Projects",
+    summary: "Get a project by id or name",
+    scope: ["admin"],
+    response: ["Project", s.project],
+  },
+  {
+    method: "PATCH",
+    path: "/projects/:id",
+    id: "updateProject",
+    tag: "Projects",
+    summary: "Rename a project, set its limits and IP pool, suspend or resume it",
+    scope: ["admin"],
+    body: ["UpdateProject", s.updateProjectSchema],
+    response: ["Project", s.project],
+  },
+  {
+    method: "DELETE",
+    path: "/projects/:id",
+    id: "deleteProject",
+    tag: "Projects",
+    summary: "Remove a project; its API keys stop working at once",
+    scope: ["admin"],
+    response: ["ProjectDeleted", s.projectDeleted],
+  },
+  {
+    method: "POST",
+    path: "/projects/:id/keys",
+    id: "createProjectKey",
+    tag: "Projects",
+    summary: "Add an API key to a project; the response has the key",
+    scope: ["admin"],
+    body: ["CreateProjectKey", s.createProjectKeySchema],
+    response: ["ProjectKey", s.projectKey],
   },
   {
     method: "GET",
@@ -547,7 +604,11 @@ export function openApi(): Record<string, unknown> {
       tags: [op.tag],
       summary: op.summary,
       ...(op.scope
-        ? { description: `API key scope: ${op.scope.join(" or ")} (full keys can do everything).` }
+        ? {
+            description: op.scope.includes("admin")
+              ? "Needs an admin key."
+              : `API key scope: ${op.scope.join(" or ")} (full keys can do everything).`,
+          }
         : {}),
       ...(op.scope ? {} : { security: [] }),
       ...(params.length ? { parameters: params } : {}),

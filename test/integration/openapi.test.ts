@@ -16,6 +16,7 @@ let dns: FakeDns;
 let mx: FakeMx;
 let served: Served;
 let token: string;
+let adminToken: string;
 const problems: string[] = [];
 const seen = new Set<string>();
 
@@ -28,10 +29,10 @@ function operationFor(method: string, path: string) {
   });
 }
 
-async function call(method: string, path: string, body?: unknown) {
+async function call(method: string, path: string, body?: unknown, as = token) {
   const r = await fetch(`${served.url}${path}`, {
     method,
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${as}`, "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const json = (await r.json()) as Record<string, unknown>;
@@ -86,6 +87,7 @@ beforeAll(async () => {
     "10000",
   );
   token = keys.split("\n").at(-1) ?? "";
+  adminToken = (await cli("keys", "create", "--name", "ops", "--admin")).split("\n").at(-1) ?? "";
 }, 30_000);
 
 afterAll(async () => {
@@ -170,6 +172,28 @@ describe("API responses match openapi.json", () => {
     await call("POST", "/queue/cancel", { reason: "r", domain: "example.test", dry_run: true });
     await call("GET", "/paths");
     await call("GET", "/health");
+
+    await call("GET", "/projects");
+    await call("POST", "/projects", {}, adminToken);
+    const made = await call("POST", "/projects", { name: "shop" }, adminToken);
+    await call("GET", "/projects", undefined, adminToken);
+    await call("GET", `/projects/${made["id"]}`, undefined, adminToken);
+    await call("PATCH", "/projects/shop", { per_day: 1000, suspended: true }, adminToken);
+    const key = await call(
+      "POST",
+      "/projects/shop/keys",
+      { name: "app", scope: "full" },
+      adminToken,
+    );
+    const refused = await call("GET", "/domains", undefined, adminToken);
+    expect(refused["name"]).toBe("restricted_api_key");
+    const shopDomains = await call("GET", "/domains", undefined, key["token"] as string);
+    expect(shopDomains["data"]).toEqual([]);
+    expect(await cli("domains", "list", "--project", "shop")).not.toContain("acme.test");
+    await call("DELETE", "/projects/default", undefined, adminToken);
+    await call("DELETE", "/projects/shop", undefined, adminToken);
+    const gone = await call("GET", "/domains", undefined, key["token"] as string);
+    expect(gone["name"]).toBe("invalid_api_key");
 
     expect(problems).toEqual([]);
     const described = OPERATIONS.filter((o) => o.response && o.id !== "releaseHold").map(

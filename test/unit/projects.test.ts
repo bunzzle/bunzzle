@@ -1,6 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import { createKey, hashToken, listKeys, revokeKey } from "../../src/accounts/api-keys.ts";
-import { DEFAULT_PROJECT, type ProjectId } from "../../src/accounts/projects.ts";
+import {
+  createAdminKey,
+  createKey,
+  hashToken,
+  keyForHash,
+  listKeys,
+  revokeKey,
+} from "../../src/accounts/api-keys.ts";
+import {
+  createProject,
+  DEFAULT_PROJECT,
+  deleteProject,
+  findProject,
+  listProjects,
+  type ProjectId,
+  recordAdminEvent,
+  updateProject,
+} from "../../src/accounts/projects.ts";
 import { appendEvent } from "../../src/core/events.ts";
 import { openDatabase } from "../../src/core/store/db.ts";
 import { cancelEmail, enqueueEmail, scheduledEmail } from "../../src/delivery/queue.ts";
@@ -13,11 +29,18 @@ import {
 } from "../../src/domains/domains.ts";
 import { countEmail, searchEmails, statsFor } from "../../src/emails/search.ts";
 import { emailSummary, emailView } from "../../src/emails/view.ts";
+import { nextAdminBatch } from "../../src/eventlog/export.ts";
 import { createHold, listHolds, releaseHold } from "../../src/guards/guards.ts";
 import { createRoute, deleteRoute, listRoutes } from "../../src/inbound/routes.ts";
 import { collect, render } from "../../src/metrics/metrics.ts";
 import { queueSummary, removeQueued } from "../../src/queue/control.ts";
-import { requireServerWide, resolveActor, scopeOf } from "../../src/roles/actor.ts";
+import {
+  requireServerWide,
+  resolveActor,
+  resolveAdmin,
+  resolveServer,
+  scopeOf,
+} from "../../src/roles/actor.ts";
 import {
   listSuppressions,
   removeSuppression,
@@ -64,11 +87,11 @@ describe("projects", () => {
   test("a key resolves to its own project; no key is the operator on the default project", () => {
     const { db } = setup();
     const { token } = createKey(db, B, { name: "b", scope: "full" }, T0);
-    expect(resolveActor(db, hashToken(token), "read")).toMatchObject({
+    expect(resolveActor(db, { tokenHash: hashToken(token) }, "read")).toMatchObject({
       kind: "project",
       project: B,
     });
-    expect(resolveActor(db, undefined)).toEqual({ kind: "operator", project: A, key: null });
+    expect(resolveActor(db, {})).toEqual({ kind: "operator", project: A, key: null });
     expect(listKeys(db, A)).toEqual([]);
     const [key] = listKeys(db, B);
     expect(revokeKey(db, A, key?.id as string, T0)).toBe(false);
@@ -166,16 +189,82 @@ describe("projects", () => {
     expect(removeQueued(db, A, filter, "cancel", "x", T0, true).emails).toBe(1);
     expect(render(collect(db, B, [], T0, T0))).toContain('bunzzle_jobs{state="ready"} 0');
     expect(render(collect(db, A, [], T0, T0))).toContain('bunzzle_jobs{state="ready"} 1');
-    expect(scopeOf(resolveActor(db, undefined))).toBeNull();
+    expect(scopeOf(resolveActor(db, {}))).toBeNull();
   });
 
   test("delivery-wide changes need the operator once a second project exists", () => {
     const db = openDatabase({ path: ":memory:" });
     const { token } = createKey(db, A, { name: "a", scope: "full" }, T0);
-    const key = resolveActor(db, hashToken(token), "full");
+    const key = resolveActor(db, { tokenHash: hashToken(token) }, "full");
     expect(() => requireServerWide(db, key)).not.toThrow();
     db.run("INSERT INTO projects (id, name, created_at) VALUES (?, 'other', ?)", [B, T0]);
     expect(() => requireServerWide(db, key)).toThrow("the operator must do it");
-    expect(() => requireServerWide(db, resolveActor(db, undefined))).not.toThrow();
+    expect(() => requireServerWide(db, resolveActor(db, {}))).not.toThrow();
+  });
+
+  test("admin keys manage projects and cannot touch project data", () => {
+    const db = openDatabase({ path: ":memory:" });
+    const admin = createAdminKey(db, { name: "ops" }, T0);
+    const user = createKey(db, A, { name: "app", scope: "full" }, T0);
+    const asAdmin = { tokenHash: hashToken(admin.token) };
+    const asUser = { tokenHash: hashToken(user.token) };
+    expect(admin.key).toMatchObject({ scope: "admin", projectId: null });
+    expect(() => resolveActor(db, asAdmin, "read")).toThrow("use a project key");
+    expect(resolveAdmin(db, asAdmin).kind).toBe("admin");
+    expect(scopeOf(resolveServer(db, asAdmin, "read"))).toBeNull();
+    expect(() => resolveAdmin(db, asUser)).toThrow("needs an admin key");
+    expect(resolveAdmin(db, {}).kind).toBe("operator");
+    expect(listKeys(db, null).map((k) => k.id)).toEqual([admin.key.id]);
+    expect(listKeys(db, A).map((k) => k.id)).toEqual([user.key.id]);
+    expect(() => resolveActor(db, { ...asUser, project: "default" })).toThrow("own project");
+  });
+
+  test("the operator picks a project by name; unknown names are not found", () => {
+    const db = openDatabase({ path: ":memory:" });
+    const p = createProject(db, "acme", T0);
+    expect(resolveActor(db, { project: "acme" }).project).toBe(p?.id as ProjectId);
+    expect(resolveActor(db, {}).project).toBe(A);
+    expect(() => resolveActor(db, { project: "nope" })).toThrow("no project nope");
+  });
+
+  test("projects: names are unique, limits change, removal revokes keys at once", () => {
+    const db = openDatabase({ path: ":memory:" });
+    const p = createProject(db, "acme", T0) as NonNullable<ReturnType<typeof createProject>>;
+    expect(createProject(db, "acme", T0)).toBeNull();
+    expect(listProjects(db).map((x) => x.name)).toEqual(["acme", "default"]);
+    expect(updateProject(db, p.id, { perHour: 100, suspended: true }, T0 + 1)).toMatchObject({
+      perHour: 100,
+      perDay: null,
+      suspendedAt: T0 + 1,
+    });
+    expect(updateProject(db, p.id, { suspended: false }, T0 + 2)?.suspendedAt).toBeNull();
+    const { token } = createKey(db, p.id, { name: "k", scope: "send" }, T0);
+    expect(keyForHash(db, hashToken(token))?.projectId).toBe(p.id);
+    expect(deleteProject(db, p.id, T0 + 3)).toBe(true);
+    expect(deleteProject(db, p.id, T0 + 3)).toBe(false);
+    expect(keyForHash(db, hashToken(token))).toBeNull();
+    expect(findProject(db, "acme")).toBeNull();
+    expect(() => resolveActor(db, { project: "acme" })).toThrow("no project acme");
+  });
+
+  test("admin actions go to the event log with the project and who did it", () => {
+    const db = openDatabase({ path: ":memory:" });
+    recordAdminEvent(
+      db,
+      { kind: "project.created", project: B, actor: "operator", data: { name: "other" } },
+      T0,
+    );
+    const batch = nextAdminBatch(db);
+    expect(batch?.lines.map((l) => JSON.parse(l))).toEqual([
+      {
+        admin_event_id: 1,
+        at: new Date(T0).toISOString(),
+        project_id: B,
+        event: "project.created",
+        source: "admin",
+        actor: "operator",
+        data: { name: "other" },
+      },
+    ]);
   });
 });

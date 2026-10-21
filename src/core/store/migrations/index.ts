@@ -20,6 +20,7 @@ import tracking from "./0019_tracking.sql" with { type: "text" };
 import hooks from "./0020_hooks.sql" with { type: "text" };
 import projects from "./0021_projects.sql" with { type: "text" };
 import projectKeys from "./0022_project_keys.sql" with { type: "text" };
+import adminKeys from "./0023_admin_keys.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -50,4 +51,5 @@ export const migrations: readonly Migration[] = [
   { version: 20, name: "hooks", sql: hooks },
   { version: 21, name: "projects", sql: projects },
   { version: 22, name: "project keys", sql: projectKeys },
+  { version: 23, name: "admin keys", sql: adminKeys },
 ];

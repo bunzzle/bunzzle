@@ -7,6 +7,8 @@ import { VERSION } from "../version.ts";
 import { ApiError, errorResponse, fromRpc } from "./errors.ts";
 import {
   createDomainSchema,
+  createProjectKeySchema,
+  createProjectSchema,
   createRouteSchema,
   createSuppressionSchema,
   createTemplateSchema,
@@ -15,6 +17,7 @@ import {
   removeSchema,
   suspendSchema,
   updateDomainSchema,
+  updateProjectSchema,
   updateTemplateSchema,
 } from "./schemas.ts";
 import {
@@ -41,7 +44,7 @@ interface Caller {
 
 export const authResult = b.object({
   id: b.string(),
-  scope: b.enum(["send", "read", "full"]),
+  scope: b.enum(["send", "read", "full", "admin"]),
   domains: b.array(b.string()).nullable(),
   rateLimit: b.number(),
   hooks: b.boolean().default(false),
@@ -560,6 +563,72 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           }
           return Response.json(
             await rpc("dmarcReports", { tokenHash: caller.hash, domain: req.params["name"], days }),
+          );
+        }),
+      },
+      "/projects": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const data = await rpc("listProjects", { tokenHash: caller.hash }, b.array(b.unknown()));
+          return Response.json({ object: "list", data });
+        }),
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          const parsed = createProjectSchema.safeParse(await json(req));
+          if (!parsed.success) throw invalid(parsed.error);
+          return Response.json(
+            await rpc("createProject", { tokenHash: caller.hash, name: parsed.data.name }),
+          );
+        }),
+      },
+      "/projects/:id": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(
+            await rpc("getProject", { tokenHash: caller.hash, id: req.params["id"] }),
+          );
+        }),
+        PATCH: handle(async (req) => {
+          const caller = await authenticate(req);
+          const parsed = updateProjectSchema.safeParse(await json(req));
+          if (!parsed.success) throw invalid(parsed.error);
+          const p = parsed.data;
+          return Response.json(
+            await rpc("updateProject", {
+              tokenHash: caller.hash,
+              id: req.params["id"],
+              ...(p.name !== undefined ? { name: p.name } : {}),
+              ...(p.per_hour !== undefined ? { perHour: p.per_hour } : {}),
+              ...(p.per_day !== undefined ? { perDay: p.per_day } : {}),
+              ...(p.ip_pool !== undefined ? { pool: p.ip_pool } : {}),
+              ...(p.suspended !== undefined ? { suspended: p.suspended } : {}),
+            }),
+          );
+        }),
+        DELETE: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(
+            await rpc("deleteProject", { tokenHash: caller.hash, id: req.params["id"] }),
+          );
+        }),
+      },
+      "/projects/:id/keys": {
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          const parsed = createProjectKeySchema.safeParse(await json(req));
+          if (!parsed.success) throw invalid(parsed.error);
+          const p = parsed.data;
+          return Response.json(
+            await rpc("createProjectKey", {
+              tokenHash: caller.hash,
+              id: req.params["id"],
+              name: p.name,
+              scope: p.scope ?? "send",
+              ...(p.domains ? { domains: p.domains } : {}),
+              ...(p.rate_limit !== undefined ? { rateLimit: p.rate_limit } : {}),
+              ...(p.test ? { test: true } : {}),
+              ...(p.ip_pool !== undefined ? { pool: p.ip_pool } : {}),
+            }),
           );
         }),
       },

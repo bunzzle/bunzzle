@@ -57,8 +57,17 @@ import { queueSummary, removeQueued, resume, type Suspension, suspend } from "..
 import type { PathView } from "../shaping/shaper.ts";
 import { suppressionFor } from "../suppressions/store.ts";
 import { b } from "../validate/schema.ts";
-import { type Actor, requireServerWide, resolveActor, scopeOf } from "./actor.ts";
-import { DOMAIN, enqueueParams, MESSAGE_ID, tokenHash } from "./wire.ts";
+import {
+  type Actor,
+  type Auth,
+  type Caller,
+  requireServerWide,
+  resolveActor,
+  resolveServer,
+  scopeOf,
+} from "./actor.ts";
+import { domainName, knownPool } from "./checks.ts";
+import { DOMAIN, enqueueParams, MESSAGE_ID, project, tokenHash } from "./wire.ts";
 
 const SUSPEND_TARGET =
   /^(domain:(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}|provider:[a-z0-9-]{1,40})$/;
@@ -70,7 +79,7 @@ const suspensionView = (s: Suspension) => ({
   since: new Date(s.createdAt).toISOString(),
 });
 
-type EnqueueInput = Omit<b.output<typeof enqueueParams>, "tokenHash">;
+type EnqueueInput = Omit<b.output<typeof enqueueParams>, "tokenHash" | "project">;
 
 const MAX_SCHEDULE_MS = 72 * 3_600_000;
 
@@ -158,20 +167,15 @@ export function coreMethods(deps: CoreDeps): {
     return (await fetchSignerDomains()).has(domain);
   };
 
-  const knownPool = (pool: string) => {
-    const pools = [...new Set((deps.ips ?? []).map((x) => x.pool))];
-    if (!pools.includes(pool)) {
-      throw new RpcError(
-        "invalid",
-        `no source IP is in the pool ${pool}; pools in BUNZZLE_SOURCE_IPS: ${pools.join(", ") || "none"}`,
-      );
-    }
-  };
-
-  const caller = (hash: string | undefined, needed: Scope): Actor => {
-    const actor = resolveActor(db, hash, needed);
+  const caller = (auth: Auth, needed: Scope): Actor => {
+    const actor = resolveActor(db, auth, needed);
     if (actor.key) touch(actor.key.id);
     return actor;
+  };
+  const server = (auth: Auth, needed: Scope): Caller => {
+    const c = resolveServer(db, auth, needed);
+    if (c.key) touch(c.key.id);
+    return c;
   };
 
   const prepareEnqueue = async (p: EnqueueInput, actor: Actor) => {
@@ -352,17 +356,6 @@ export function coreMethods(deps: CoreDeps): {
     }
   };
 
-  const domainName = (raw: string): string => {
-    let name: string;
-    try {
-      name = asciiDomain(raw);
-    } catch (err) {
-      throw new RpcError("invalid", (err as Error).message);
-    }
-    if (!DOMAIN.test(name)) throw new RpcError("invalid", `invalid domain: ${raw}`);
-    return name;
-  };
-
   const verify = async (project: Actor["project"], name: string): Promise<Domain> => {
     const d = getDomain(db, project, name);
     if (!d) throw new RpcError("not-found", `domain ${name} is not registered`);
@@ -411,7 +404,7 @@ export function coreMethods(deps: CoreDeps): {
     }),
 
     enqueue: method(enqueueParams, async (p) => {
-      const actor = caller(p.tokenHash, "send");
+      const actor = caller(p, "send");
       const r = await prepareEnqueue(p, actor);
       if (r.existed) return { id: r.id, existed: true };
       try {
@@ -427,13 +420,14 @@ export function coreMethods(deps: CoreDeps): {
     enqueueBatch: method(
       b.object({
         tokenHash,
+        project,
         emails: b
-          .array(enqueueParams.omit({ tokenHash: true }))
+          .array(enqueueParams.omit({ tokenHash: true, project: true }))
           .min(1)
           .max(100),
       }),
       async (p) => {
-        const actor = caller(p.tokenHash, "send");
+        const actor = caller(p, "send");
         const ready: Awaited<ReturnType<typeof prepareEnqueue>>[] = [];
         for (const [i, e] of p.emails.entries()) {
           try {
@@ -456,8 +450,9 @@ export function coreMethods(deps: CoreDeps): {
       },
     ),
 
-    getEmail: method(b.object({ tokenHash, id: b.string() }), ({ tokenHash: hash, id }) => {
-      const { project } = caller(hash, "read");
+    getEmail: method(b.object({ tokenHash, project, id: b.string() }), (p) => {
+      const { project } = caller(p, "read");
+      const { id } = p;
       if (!MESSAGE_ID.test(id)) throw new RpcError("not-found", "email not found");
       const view = emailView(db, project, id, now());
       if (!view) throw new RpcError("not-found", "email not found");
@@ -467,6 +462,7 @@ export function coreMethods(deps: CoreDeps): {
     listEmails: method(
       b.object({
         tokenHash,
+        project,
         limit: b.number().int().min(1).max(100),
         before: b.string().regex(MESSAGE_ID).optional(),
         to: b.string().max(320).optional(),
@@ -479,7 +475,7 @@ export function coreMethods(deps: CoreDeps): {
         until: b.number().int().optional(),
       }),
       (p) => {
-        const { project } = caller(p.tokenHash, "read");
+        const { project } = caller(p, "read");
         const ids = searchEmails(db, project, {
           limit: p.limit + 1,
           before: p.before,
@@ -504,13 +500,14 @@ export function coreMethods(deps: CoreDeps): {
     stats: method(
       b.object({
         tokenHash,
+        project,
         since: b.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         until: b.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         domain: b.string().max(253).optional(),
         tag: b.string().max(512).optional(),
       }),
       (p) => {
-        const { project } = caller(p.tokenHash, "read");
+        const { project } = caller(p, "read");
         const days = (Date.parse(p.until) - Date.parse(p.since)) / 86_400_000;
         if (!(days >= 0 && days <= 400)) {
           throw new RpcError("invalid", "since must be before until, at most 400 days apart");
@@ -528,8 +525,8 @@ export function coreMethods(deps: CoreDeps): {
       },
     ),
 
-    cancelEmail: method(b.object({ tokenHash, id: b.string() }), async (p) => {
-      const actor = caller(p.tokenHash, "send");
+    cancelEmail: method(b.object({ tokenHash, project, id: b.string() }), async (p) => {
+      const actor = caller(p, "send");
       changeable(actor, p.id);
       const r = await writer.run((d) => cancelEmail(d, actor.project, p.id, now()));
       if (r === "started") {
@@ -542,9 +539,9 @@ export function coreMethods(deps: CoreDeps): {
     }),
 
     rescheduleEmail: method(
-      b.object({ tokenHash, id: b.string(), scheduledAt: b.number().int().positive() }),
+      b.object({ tokenHash, project, id: b.string(), scheduledAt: b.number().int().positive() }),
       async (p) => {
-        const actor = caller(p.tokenHash, "send");
+        const actor = caller(p, "send");
         changeable(actor, p.id);
         const t = now();
         if (p.scheduledAt > t + MAX_SCHEDULE_MS) {
@@ -575,8 +572,8 @@ export function coreMethods(deps: CoreDeps): {
       })),
     ),
 
-    addDomain: method(b.object({ tokenHash, name: b.string().max(253) }), async (p) => {
-      const { project } = caller(p.tokenHash, "full");
+    addDomain: method(b.object({ tokenHash, project, name: b.string().max(253) }), async (p) => {
+      const { project } = caller(p, "full");
       const name = domainName(p.name);
       const existing = findDomain(db, name);
       if (existing && existing.project !== project) {
@@ -611,10 +608,15 @@ export function coreMethods(deps: CoreDeps): {
     }),
 
     setDomainPool: method(
-      b.object({ tokenHash, name: b.string().max(253), pool: b.string().max(32).nullable() }),
+      b.object({
+        tokenHash,
+        project,
+        name: b.string().max(253),
+        pool: b.string().max(32).nullable(),
+      }),
       async (p) => {
-        const { project } = caller(p.tokenHash, "full");
-        if (p.pool !== null) knownPool(p.pool);
+        const { project } = caller(p, "full");
+        if (p.pool !== null) knownPool(deps.ips, p.pool);
         const name = domainName(p.name);
         if (!(await writer.run((d) => setDomainPool(d, project, name, p.pool, now())))) {
           throw new RpcError("not-found", "domain not found");
@@ -623,8 +625,8 @@ export function coreMethods(deps: CoreDeps): {
       },
     ),
 
-    getDomain: method(b.object({ tokenHash, name: b.string().max(253) }), (p) => {
-      const { project } = caller(p.tokenHash, "read");
+    getDomain: method(b.object({ tokenHash, project, name: b.string().max(253) }), (p) => {
+      const { project } = caller(p, "read");
       const d = getDomain(db, project, domainName(p.name));
       if (!d) throw new RpcError("not-found", "domain not found");
       const gmail = latestPostmaster(db, d.name);
@@ -646,60 +648,20 @@ export function coreMethods(deps: CoreDeps): {
       };
     }),
 
-    listDomains: method(b.object({ tokenHash }), (p) => {
-      const { project } = caller(p.tokenHash, "read");
+    listDomains: method(b.object({ tokenHash, project }), (p) => {
+      const { project } = caller(p, "read");
       return listDomains(db, project).map(domainView);
     }),
 
-    verifyDomain: method(b.object({ tokenHash, name: b.string().max(253) }), async (p) => {
-      const { project } = caller(p.tokenHash, "full");
+    verifyDomain: method(b.object({ tokenHash, project, name: b.string().max(253) }), async (p) => {
+      const { project } = caller(p, "full");
       return domainView(await verify(project, domainName(p.name)));
-    }),
-
-    createKey: method(
-      b.object({
-        name: b.string().min(1).max(100),
-        scope: b.enum(["send", "read", "full"]),
-        domains: b.array(b.string().max(253)).max(100).optional(),
-        rateLimit: b.number().int().min(1).max(10_000).optional(),
-        test: b.boolean().optional(),
-        pool: b.string().max(32).optional(),
-      }),
-      async (p) => {
-        if (p.pool !== undefined) knownPool(p.pool);
-        const domains = p.domains?.map(domainName);
-        const { key, token } = await writer.run((d) =>
-          createKey(
-            d,
-            DEFAULT_PROJECT,
-            {
-              name: p.name,
-              scope: p.scope,
-              ...(domains ? { domains } : {}),
-              ...(p.rateLimit ? { rateLimit: p.rateLimit } : {}),
-              ...(p.test ? { test: true } : {}),
-              ...(p.pool !== undefined ? { pool: p.pool } : {}),
-            },
-            now(),
-          ),
-        );
-        return { ...key, token };
-      },
-    ),
-
-    listKeys: method(b.object({}), () => listKeys(db, DEFAULT_PROJECT)),
-
-    revokeKey: method(b.object({ id: b.string().min(1).max(64) }), async ({ id }) => {
-      if (!(await writer.run((d) => revokeKey(d, DEFAULT_PROJECT, id, now())))) {
-        throw new RpcError("not-found", "no active key with that id");
-      }
-      return { id, revoked: true };
     }),
 
     health: method(b.object({}), () => ({ ok: true, jobs: countByState(db) })),
 
-    ips: method(b.object({ tokenHash }), async (p) => {
-      caller(p.tokenHash, "read");
+    ips: method(b.object({ tokenHash, project }), async (p) => {
+      server(p, "read");
       const reverse = await delivery
         .call<
           {
@@ -753,8 +715,8 @@ export function coreMethods(deps: CoreDeps): {
       });
     }),
 
-    holds: method(b.object({ tokenHash, all: b.boolean().default(false) }), (p) => {
-      const scope = scopeOf(caller(p.tokenHash, "read"));
+    holds: method(b.object({ tokenHash, project, all: b.boolean().default(false) }), (p) => {
+      const scope = scopeOf(server(p, "read"));
       return {
         holds: listHolds(db, scope, p.all).map((h) => ({
           object: "hold",
@@ -777,8 +739,8 @@ export function coreMethods(deps: CoreDeps): {
       };
     }),
 
-    releaseHold: method(b.object({ tokenHash, id: b.string().max(64) }), async (p) => {
-      const scope = scopeOf(caller(p.tokenHash, "full"));
+    releaseHold: method(b.object({ tokenHash, project, id: b.string().max(64) }), async (p) => {
+      const scope = scopeOf(server(p, "full"));
       if (!(await writer.run((d) => releaseHold(d, scope, p.id, now())))) {
         throw new RpcError("not-found", "no active hold with that id");
       }
@@ -786,20 +748,21 @@ export function coreMethods(deps: CoreDeps): {
       return { id: p.id, released: true };
     }),
 
-    queue: method(b.object({ tokenHash }), (p) => {
-      const q = queueSummary(db, scopeOf(caller(p.tokenHash, "read")), now());
+    queue: method(b.object({ tokenHash, project }), (p) => {
+      const q = queueSummary(db, scopeOf(server(p, "read")), now());
       return { ...q, suspensions: q.suspensions.map(suspensionView) };
     }),
 
     suspend: method(
       b.object({
         tokenHash,
+        project,
         target: b.string().regex(SUSPEND_TARGET, "must be domain:NAME or provider:ID"),
         reason: b.string().min(1).max(500),
         until: b.number().int().positive().nullable().default(null),
       }),
       async (p) => {
-        requireServerWide(db, caller(p.tokenHash, "full"));
+        requireServerWide(db, server(p, "full"));
         const t = now();
         if (p.until !== null && p.until <= t) throw new RpcError("invalid", "until is in the past");
         const s = await writer.run((d) => suspend(d, p.target, p.reason, p.until, t));
@@ -808,8 +771,8 @@ export function coreMethods(deps: CoreDeps): {
       },
     ),
 
-    resume: method(b.object({ tokenHash, target: b.string().max(300) }), async (p) => {
-      requireServerWide(db, caller(p.tokenHash, "full"));
+    resume: method(b.object({ tokenHash, project, target: b.string().max(300) }), async (p) => {
+      requireServerWide(db, server(p, "full"));
       const r = await writer.run((d) => resume(d, p.target, now()));
       if (!r.resumed) throw new RpcError("not-found", `${p.target} is not suspended`);
       log.info("delivery resumed by an operator", { target: p.target, woken: r.woken });
@@ -819,6 +782,7 @@ export function coreMethods(deps: CoreDeps): {
     removeQueued: method(
       b.object({
         tokenHash,
+        project,
         action: b.enum(["fail", "cancel"]),
         reason: b.string().min(1).max(500),
         domain: b.string().regex(DOMAIN).optional(),
@@ -827,7 +791,7 @@ export function coreMethods(deps: CoreDeps): {
         dryRun: b.boolean().default(false),
       }),
       async (p) => {
-        const scope = scopeOf(caller(p.tokenHash, "full"));
+        const scope = scopeOf(server(p, "full"));
         const filter = {
           ...(p.domain !== undefined ? { domain: p.domain } : {}),
           ...(p.senderDomain !== undefined ? { senderDomain: p.senderDomain } : {}),
@@ -855,15 +819,15 @@ export function coreMethods(deps: CoreDeps): {
       },
     ),
 
-    metrics: method(b.object({ tokenHash }), (p) => {
-      const scope = scopeOf(caller(p.tokenHash, "read"));
+    metrics: method(b.object({ tokenHash, project }), (p) => {
+      const scope = scopeOf(server(p, "read"));
       return {
         text: render(collect(db, scope, deps.paths?.() ?? [], now(), startedAt, deps.storage?.())),
       };
     }),
 
-    paths: method(b.object({ tokenHash }), (p) => {
-      caller(p.tokenHash, "read");
+    paths: method(b.object({ tokenHash, project }), (p) => {
+      server(p, "read");
       return (deps.paths?.() ?? []).map((v) => ({
         object: "path",
         path: v.key,
