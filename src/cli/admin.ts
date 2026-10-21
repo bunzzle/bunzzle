@@ -30,11 +30,21 @@ export async function runDirOf(config: Config): Promise<string> {
   return isSocket ? SYSTEM_RUN_DIR : config.runDir;
 }
 
+let projectName: string | undefined;
+
+export function useProject(name: string): void {
+  projectName = name;
+}
+
 async function call<T>(config: Config, method: string, params: unknown): Promise<T> {
   const runDir = await runDirOf(config);
   const core = new RpcClient(adminSocket(runDir));
+  const withProject =
+    projectName !== undefined && params !== null && typeof params === "object"
+      ? { ...params, project: projectName }
+      : params;
   try {
-    return await core.call<T>(method, params, { timeoutMs: 60_000 });
+    return await core.call<T>(method, withProject, { timeoutMs: 60_000 });
   } catch (err) {
     if (err instanceof RpcError && err.code === "unavailable") {
       throw new UsageError(
@@ -474,15 +484,19 @@ export async function keysCommand(argv: string[], config: Config) {
       const args = parseArgs(rest, {
         strings: ["name", "scope", "rate-limit", "pool"],
         lists: ["domain"],
-        flags: ["test"],
+        flags: ["test", "admin"],
       });
       const name = args.strings.get("name");
       if (!name)
         throw new UsageError(
-          "usage: bunzzle keys create --name NAME [--scope send|read|full] [--domain D] [--test]",
+          "usage: bunzzle keys create --name NAME [--scope send|read|full] [--domain D] [--test] [--admin]",
         );
-      const scope = args.strings.get("scope") ?? "send";
-      if (!["send", "read", "full"].includes(scope))
+      const admin = args.flags.has("admin");
+      if (admin && (args.strings.has("scope") || projectName !== undefined)) {
+        throw new UsageError("an admin key has no scope and no project");
+      }
+      const scope = admin ? "admin" : (args.strings.get("scope") ?? "send");
+      if (!admin && !["send", "read", "full"].includes(scope))
         throw new UsageError("--scope must be send, read or full");
       const rateLimit = args.strings.get("rate-limit");
       const domains = args.lists.get("domain");
@@ -495,14 +509,19 @@ export async function keysCommand(argv: string[], config: Config) {
         ...(args.strings.get("pool") ? { pool: args.strings.get("pool") } : {}),
       });
       console.log(
-        `Created ${key.test ? "test " : ""}API key "${key.name}" (${key.scope}${key.domains ? `, only ${key.domains.join(", ")}` : ""}).${key.test ? " Email sent with it is recorded but never delivered." : ""}`,
+        admin
+          ? `Created admin key "${key.name}". It manages projects through /projects and cannot send email.`
+          : `Created ${key.test ? "test " : ""}API key "${key.name}" (${key.scope}${key.domains ? `, only ${key.domains.join(", ")}` : ""})${projectName ? ` in project ${projectName}` : ""}.${key.test ? " Email sent with it is recorded but never delivered." : ""}`,
       );
       console.log("Copy it now, it is shown only once:\n");
       console.log(key.token);
       return;
     }
     case "list": {
-      const keys = await call<KeyView[]>(config, "listKeys", {});
+      const args = parseArgs(rest, { flags: ["admin"] });
+      const keys = await call<KeyView[]>(config, "listKeys", {
+        ...(args.flags.has("admin") ? { admin: true } : {}),
+      });
       if (keys.length === 0)
         console.log("No API keys yet. Create one with `bunzzle keys create --name NAME`.");
       for (const k of keys) {
@@ -523,6 +542,100 @@ export async function keysCommand(argv: string[], config: Config) {
     }
     default:
       throw new UsageError("usage: bunzzle keys create|list|revoke");
+  }
+}
+
+interface ProjectView {
+  id: string;
+  name: string;
+  per_hour: number | null;
+  per_day: number | null;
+  ip_pool: string | null;
+  suspended: boolean;
+  created_at: string;
+}
+
+function printProject(p: ProjectView) {
+  console.log(`${p.name}  (${p.id})${p.suspended ? "  SUSPENDED" : ""}`);
+  console.log(`  per hour: ${p.per_hour ?? "no limit"}`);
+  console.log(`  per day:  ${p.per_day ?? "no limit"}`);
+  console.log(`  IP pool:  ${p.ip_pool ?? "default"}`);
+  console.log(`  created:  ${p.created_at}`);
+}
+
+const limitArg = (v: string | undefined, flag: string): number | null | undefined => {
+  if (v === undefined) return undefined;
+  if (v === "none") return null;
+  if (!/^\d+$/.test(v) || Number(v) < 1) {
+    throw new UsageError(`--${flag} must be a positive number or none`);
+  }
+  return Number(v);
+};
+
+export async function projectsCommand(argv: string[], config: Config) {
+  const [sub, ...rest] = argv;
+  const one = (usage: string) => {
+    const [name, ...extra] = rest;
+    if (!name || extra.length > 0) throw new UsageError(`usage: bunzzle projects ${usage}`);
+    return name;
+  };
+  switch (sub) {
+    case "add": {
+      const p = await call<ProjectView>(config, "createProject", { name: one("add NAME") });
+      console.log(`Added project ${p.name}.`);
+      console.log(
+        `Create a key for it with \`bunzzle keys create --project ${p.name} --name NAME\`.`,
+      );
+      return;
+    }
+    case "list": {
+      const list = await call<ProjectView[]>(config, "listProjects", {});
+      for (const p of list) {
+        console.log(`${p.name.padEnd(24)} ${p.suspended ? "suspended" : "active   "}  ${p.id}`);
+      }
+      return;
+    }
+    case "show": {
+      printProject(await call<ProjectView>(config, "getProject", { id: one("show NAME") }));
+      return;
+    }
+    case "limits": {
+      const [name, ...flags] = rest;
+      if (!name)
+        throw new UsageError(
+          "usage: bunzzle projects limits NAME [--per-hour N|none] [--per-day N|none] [--pool POOL|none]",
+        );
+      const args = parseArgs(flags, { strings: ["per-hour", "per-day", "pool"] });
+      const perHour = limitArg(args.strings.get("per-hour"), "per-hour");
+      const perDay = limitArg(args.strings.get("per-day"), "per-day");
+      const pool = args.strings.get("pool");
+      printProject(
+        await call<ProjectView>(config, "updateProject", {
+          id: name,
+          ...(perHour !== undefined ? { perHour } : {}),
+          ...(perDay !== undefined ? { perDay } : {}),
+          ...(pool !== undefined ? { pool: pool === "none" ? null : pool } : {}),
+        }),
+      );
+      return;
+    }
+    case "suspend":
+    case "resume": {
+      const p = await call<ProjectView>(config, "updateProject", {
+        id: one(`${sub} NAME`),
+        suspended: sub === "suspend",
+      });
+      console.log(`${p.name} is ${p.suspended ? "suspended" : "active"}.`);
+      return;
+    }
+    case "remove": {
+      const name = one("remove NAME");
+      await call(config, "deleteProject", { id: name });
+      console.log(`Removed project ${name}; its API keys no longer work.`);
+      return;
+    }
+    default:
+      throw new UsageError("usage: bunzzle projects add|list|show|limits|suspend|resume|remove");
   }
 }
 

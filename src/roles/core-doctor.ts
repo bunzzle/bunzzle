@@ -8,9 +8,9 @@ import { listHolds } from "../guards/guards.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import type { PathView } from "../shaping/shaper.ts";
 import { b } from "../validate/schema.ts";
-import { resolveActor, scopeOf } from "./actor.ts";
+import { resolveServer, scopeOf } from "./actor.ts";
 import type { rotation } from "./core-rotation.ts";
-import { tokenHash } from "./wire.ts";
+import { project, tokenHash } from "./wire.ts";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 
@@ -243,8 +243,8 @@ export function doctorMethods(deps: DoctorDeps): Methods {
   };
 
   return {
-    doctor: method(b.object({ tokenHash }), async (p) => {
-      const actor = resolveActor(db, p.tokenHash, "full");
+    doctor: method(b.object({ tokenHash, project }), async (p) => {
+      const actor = resolveServer(db, p, "full");
       const checks = await run(scopeOf(actor));
       return {
         checks,
@@ -255,8 +255,8 @@ export function doctorMethods(deps: DoctorDeps): Methods {
         },
       };
     }),
-    rotateDomain: method(b.object({ tokenHash, name: b.string().max(253) }), async (p) => {
-      const scope = scopeOf(resolveActor(db, p.tokenHash, "full"));
+    rotateDomain: method(b.object({ tokenHash, project, name: b.string().max(253) }), async (p) => {
+      const scope = scopeOf(resolveServer(db, p, "full"));
       const name = p.name.toLowerCase();
       if (!(scope === null ? findDomain(db, name) : getDomain(db, scope, name)))
         throw new RpcError("not-found", "domain not found");

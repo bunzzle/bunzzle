@@ -26,6 +26,9 @@
       "name": "Domains"
     },
     {
+      "name": "Projects"
+    },
+    {
       "name": "Webhooks"
     },
     {
@@ -752,6 +755,262 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Rotation"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects": {
+      "get": {
+        "operationId": "listProjects",
+        "tags": [
+          "Projects"
+        ],
+        "summary": "List projects",
+        "description": "Needs an admin key.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectList"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createProject",
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Add a project",
+        "description": "Needs an admin key.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProject"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{id}": {
+      "get": {
+        "operationId": "getProject",
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Get a project by id or name",
+        "description": "Needs an admin key.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateProject",
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Rename a project, set its limits and IP pool, suspend or resume it",
+        "description": "Needs an admin key.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProject"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteProject",
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Remove a project; its API keys stop working at once",
+        "description": "Needs an admin key.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDeleted"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{id}/keys": {
+      "post": {
+        "operationId": "createProjectKey",
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Add an API key to a project; the response has the key",
+        "description": "Needs an admin key.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectKey"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectKey"
                 }
               }
             }
@@ -3729,6 +3988,308 @@
         },
         "required": [
           "result"
+        ]
+      },
+      "ProjectList": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "list"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "object": {
+                  "const": "project"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "per_hour": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "per_day": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "ip_pool": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "suspended": {
+                  "type": "boolean"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "suspended_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                }
+              },
+              "required": [
+                "object",
+                "id",
+                "name",
+                "per_hour",
+                "per_day",
+                "ip_pool",
+                "suspended",
+                "created_at",
+                "suspended_at"
+              ]
+            }
+          }
+        },
+        "required": [
+          "object",
+          "data"
+        ]
+      },
+      "CreateProject": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "Project": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "project"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "per_hour": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "per_day": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ip_pool": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "suspended": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "suspended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "object",
+          "id",
+          "name",
+          "per_hour",
+          "per_day",
+          "ip_pool",
+          "suspended",
+          "created_at",
+          "suspended_at"
+        ]
+      },
+      "UpdateProject": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63
+          },
+          "per_hour": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 100000000
+          },
+          "per_day": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 100000000
+          },
+          "ip_pool": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-z0-9-]{1,32}$"
+          },
+          "suspended": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      },
+      "ProjectDeleted": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "project"
+          },
+          "id": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "object",
+          "id",
+          "deleted"
+        ]
+      },
+      "CreateProjectKey": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "send",
+              "read",
+              "full"
+            ]
+          },
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 253
+            },
+            "maxItems": 100
+          },
+          "rate_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "test": {
+            "type": "boolean"
+          },
+          "ip_pool": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,32}$"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "ProjectKey": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "api_key"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "send",
+              "read",
+              "full"
+            ]
+          },
+          "domains": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "rate_limit": {
+            "type": "integer"
+          },
+          "test": {
+            "type": "boolean"
+          },
+          "ip_pool": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "token": {
+            "type": "string",
+            "description": "Shown only once"
+          }
+        },
+        "required": [
+          "object",
+          "id",
+          "name",
+          "scope",
+          "domains",
+          "rate_limit",
+          "test",
+          "ip_pool",
+          "created_at",
+          "token"
         ]
       },
       "WebhookList": {

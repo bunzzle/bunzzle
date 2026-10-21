@@ -398,3 +398,64 @@ export const doctor = b.object({
 export const rotation = b.object({ result: b.string() });
 export const operatorList = list(b.record(b.string(), b.unknown()));
 export const operatorView = b.record(b.string(), b.unknown());
+
+const limitField = b.number().int().min(1).max(100_000_000).nullable();
+
+export const createProjectSchema = b.object({ name: b.string().min(1).max(63) });
+
+export const updateProjectSchema = b.object({
+  name: b.string().min(1).max(63).optional(),
+  per_hour: limitField.optional(),
+  per_day: limitField.optional(),
+  ip_pool: b
+    .string()
+    .regex(/^[a-z0-9-]{1,32}$/)
+    .nullable()
+    .optional(),
+  suspended: b.boolean().optional(),
+});
+
+export const createProjectKeySchema = b.object({
+  name: b.string().min(1).max(100),
+  scope: b.enum(["send", "read", "full"]).optional(),
+  domains: b.array(b.string().max(253)).max(100).optional(),
+  rate_limit: b.number().int().min(1).max(10_000).optional(),
+  test: b.boolean().optional(),
+  ip_pool: b
+    .string()
+    .regex(/^[a-z0-9-]{1,32}$/)
+    .optional(),
+});
+
+export const project = b.object({
+  object: b.literal("project"),
+  id,
+  name: b.string(),
+  per_hour: b.number().int().nullable(),
+  per_day: b.number().int().nullable(),
+  ip_pool: b.string().nullable(),
+  suspended: b.boolean(),
+  created_at: time,
+  suspended_at: time.nullable(),
+});
+
+export const projectList = list(project);
+
+export const projectDeleted = b.object({
+  object: b.literal("project"),
+  id,
+  deleted: b.boolean(),
+});
+
+export const projectKey = b.object({
+  object: b.literal("api_key"),
+  id,
+  name: b.string(),
+  scope: b.enum(["send", "read", "full"]),
+  domains: b.array(b.string()).nullable(),
+  rate_limit: b.number().int(),
+  test: b.boolean(),
+  ip_pool: b.string().nullable(),
+  created_at: time,
+  token: b.string().describe("Shown only once"),
+});

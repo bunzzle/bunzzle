@@ -3,12 +3,13 @@ import { b } from "../validate/schema.ts";
 import type { ProjectId } from "./projects.ts";
 
 export type Scope = "send" | "read" | "full";
+export type KeyScope = Scope | "admin";
 
 export interface ApiKey {
   id: string;
   name: string;
   prefix: string;
-  scope: Scope;
+  scope: KeyScope;
   domains: string[] | null;
   rateLimit: number;
   createdAt: number;
@@ -29,7 +30,7 @@ export function newToken(): string {
   return `bz_${crypto.getRandomValues(new Uint8Array(32)).toBase64({ alphabet: "base64url", omitPadding: true })}`;
 }
 
-export function allows(scope: Scope, needed: Scope): boolean {
+export function allows(scope: KeyScope, needed: Scope): boolean {
   return scope === "full" || scope === needed;
 }
 
@@ -37,7 +38,7 @@ interface Row {
   id: string;
   name: string;
   prefix: string;
-  scope: Scope;
+  scope: KeyScope;
   domains: string | null;
   rate_limit: number;
   created_at: number;
@@ -78,6 +79,23 @@ export function createKey(
   k: NewKey,
   now: number,
 ): { key: ApiKey; token: string } {
+  return insertKey(db, project, k, now);
+}
+
+export function createAdminKey(
+  db: Database,
+  k: { name: string; rateLimit?: number },
+  now: number,
+): { key: ApiKey; token: string } {
+  return insertKey(db, null, { ...k, scope: "admin" }, now);
+}
+
+function insertKey(
+  db: Database,
+  project: ProjectId | null,
+  k: Omit<NewKey, "scope"> & { scope: KeyScope },
+  now: number,
+): { key: ApiKey; token: string } {
   const token = newToken();
   const id = Bun.randomUUIDv7();
   const domains = k.domains?.length ? JSON.stringify([...new Set(k.domains)].sort()) : null;
@@ -88,13 +106,13 @@ export function createKey(
       string,
       string,
       string,
-      Scope,
+      KeyScope,
       string | null,
       number,
       number,
       number,
       string | null,
-      string,
+      string | null,
     ]
   >(
     `INSERT INTO api_keys (id, name, token_hash, prefix, scope, domains, rate_limit, created_at, test, pool, project_id)
@@ -132,6 +150,10 @@ function cacheOf(db: Database): Map<string, ApiKey> {
   return c;
 }
 
+export function forgetKeys(db: Database): void {
+  cacheOf(db).clear();
+}
+
 export function keyForHash(db: Database, hash: string): ApiKey | null {
   const c = cacheOf(db);
   const hit = c.get(hash);
@@ -157,20 +179,25 @@ export function touchKey(db: Database, id: string, now: number): void {
   );
 }
 
-export function listKeys(db: Database, project: ProjectId): ApiKey[] {
+export function listKeys(db: Database, project: ProjectId | null): ApiKey[] {
   return db
-    .query<Row, [string]>("SELECT * FROM api_keys WHERE project_id = ? ORDER BY created_at")
+    .query<Row, [string | null]>("SELECT * FROM api_keys WHERE project_id IS ? ORDER BY created_at")
     .all(project)
     .map(fromRow);
 }
 
-export function revokeKey(db: Database, project: ProjectId, id: string, now: number): boolean {
+export function revokeKey(
+  db: Database,
+  project: ProjectId | null,
+  id: string,
+  now: number,
+): boolean {
   const c = cacheOf(db);
   for (const [hash, key] of c) if (key.id === id) c.delete(hash);
   return (
     db
-      .query<unknown, [number, string, string]>(
-        "UPDATE api_keys SET revoked_at = ? WHERE id = ? AND project_id = ? AND revoked_at IS NULL",
+      .query<unknown, [number, string, string | null]>(
+        "UPDATE api_keys SET revoked_at = ? WHERE id = ? AND project_id IS ? AND revoked_at IS NULL",
       )
       .run(now, id, project).changes > 0
   );

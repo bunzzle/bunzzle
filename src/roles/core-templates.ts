@@ -16,7 +16,7 @@ import {
 } from "../templates/store.ts";
 import { b } from "../validate/schema.ts";
 import { resolveActor } from "./actor.ts";
-import { tokenHash } from "./wire.ts";
+import { project, tokenHash } from "./wire.ts";
 
 export interface TemplateDeps {
   db: Database;
@@ -71,13 +71,14 @@ export function templateMethods(deps: TemplateDeps): Methods {
     createTemplate: method(
       b.object({
         tokenHash,
+        project,
         name: b.string().max(64),
         subject,
         html: body.optional(),
         text: body.optional(),
       }),
       async (p) => {
-        const { project } = resolveActor(db, p.tokenHash, "full");
+        const { project } = resolveActor(db, p, "full");
         if (!TEMPLATE_NAME.test(p.name) || UUID.test(p.name)) {
           throw new RpcError(
             "invalid",
@@ -91,15 +92,15 @@ export function templateMethods(deps: TemplateDeps): Methods {
       },
     ),
 
-    listTemplates: method(b.object({ tokenHash }), (p) => {
-      const { project } = resolveActor(db, p.tokenHash, "read");
+    listTemplates: method(b.object({ tokenHash, project }), (p) => {
+      const { project } = resolveActor(db, p, "read");
       return listTemplates(db, project).map(summary);
     }),
 
     getTemplate: method(
-      b.object({ tokenHash, id: ref, version: b.number().int().min(1).optional() }),
+      b.object({ tokenHash, project, id: ref, version: b.number().int().min(1).optional() }),
       (p) => {
-        const { project } = resolveActor(db, p.tokenHash, "read", "send");
+        const { project } = resolveActor(db, p, "read", "send");
         const t = find(project, p.id);
         const v = getVersion(db, t.id, p.version ?? t.version);
         if (!v) throw new RpcError("not-found", `template ${t.name} has no version ${p.version}`);
@@ -117,13 +118,14 @@ export function templateMethods(deps: TemplateDeps): Methods {
     updateTemplate: method(
       b.object({
         tokenHash,
+        project,
         id: ref,
         subject: subject.optional(),
         html: body.nullable().optional(),
         text: body.nullable().optional(),
       }),
       async (p) => {
-        const { project } = resolveActor(db, p.tokenHash, "full");
+        const { project } = resolveActor(db, p, "full");
         const t = find(project, p.id);
         const latest = getVersion(db, t.id, t.version) as Content;
         const content = check({
@@ -141,8 +143,8 @@ export function templateMethods(deps: TemplateDeps): Methods {
       },
     ),
 
-    deleteTemplate: method(b.object({ tokenHash, id: ref }), async (p) => {
-      const { project } = resolveActor(db, p.tokenHash, "full");
+    deleteTemplate: method(b.object({ tokenHash, project, id: ref }), async (p) => {
+      const { project } = resolveActor(db, p, "full");
       const t = find(project, p.id);
       if (!(await writer.run((d) => deleteTemplate(d, project, t.id, now())))) {
         throw new RpcError("not-found", "template not found");

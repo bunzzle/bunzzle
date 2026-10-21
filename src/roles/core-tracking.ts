@@ -15,7 +15,7 @@ import {
 } from "../tracking/store.ts";
 import { b } from "../validate/schema.ts";
 import { resolveActor } from "./actor.ts";
-import { DOMAIN, MESSAGE_ID, tokenHash } from "./wire.ts";
+import { DOMAIN, MESSAGE_ID, project, tokenHash } from "./wire.ts";
 
 export interface TrackingDeps {
   db: Database;
@@ -79,6 +79,7 @@ export function trackingMethods(deps: TrackingDeps) {
     setDomainTracking: method(
       b.object({
         tokenHash,
+        project,
         name: b.string().max(253),
         tracking: b
           .object({
@@ -89,7 +90,7 @@ export function trackingMethods(deps: TrackingDeps) {
           .nullable(),
       }),
       async (p) => {
-        const { project } = resolveActor(db, p.tokenHash, "full");
+        const { project } = resolveActor(db, p, "full");
         const name = p.name.toLowerCase();
         if (!getDomain(db, project, name)) throw new RpcError("not-found", "domain not found");
         let next: Tracking | null = null;
@@ -124,6 +125,7 @@ export function trackingMethods(deps: TrackingDeps) {
     tracking: method(
       b.object({
         tokenHash,
+        project,
         domain: b.string().max(253),
         id: b.string().regex(MESSAGE_ID),
         urls: b.array(b.string().max(2000)).max(200),
@@ -131,7 +133,7 @@ export function trackingMethods(deps: TrackingDeps) {
         clicks: b.boolean().optional(),
       }),
       async (p) => {
-        const { project, key } = resolveActor(db, p.tokenHash, "send");
+        const { project, key } = resolveActor(db, p, "send");
         if (key?.domains && !key.domains.includes(p.domain)) return null;
         if (!getDomain(db, project, p.domain)) return null;
         const t = getTracking(db, p.domain);

@@ -20,7 +20,7 @@ import {
   settleDelivery,
 } from "../webhooks/store.ts";
 import { resolveActor } from "./actor.ts";
-import { DOMAIN, dmarcWire, reportWire, tokenHash } from "./wire.ts";
+import { DOMAIN, dmarcWire, project, reportWire, tokenHash } from "./wire.ts";
 
 export interface FeedbackDeps {
   db: Database;
@@ -91,9 +91,14 @@ export function feedbackMethods(deps: FeedbackDeps) {
     ),
 
     dmarcReports: method(
-      b.object({ tokenHash, domain: b.string().max(253), days: b.number().int().min(1).max(90) }),
+      b.object({
+        tokenHash,
+        project,
+        domain: b.string().max(253),
+        days: b.number().int().min(1).max(90),
+      }),
       (p) => {
-        const actor = resolveActor(db, p.tokenHash, "read");
+        const actor = resolveActor(db, p, "read");
         const name = p.domain.toLowerCase();
         if (!DOMAIN.test(name) || !getDomain(db, actor.project, name)) {
           throw new RpcError("not-found", "domain not found");
@@ -149,8 +154,8 @@ export function feedbackMethods(deps: FeedbackDeps) {
       return { unsubscribed: true };
     }),
 
-    listSuppressions: method(b.object({ tokenHash }), (p) => {
-      const actor = resolveActor(db, p.tokenHash, "read");
+    listSuppressions: method(b.object({ tokenHash, project }), (p) => {
+      const actor = resolveActor(db, p, "read");
       return listSuppressions(db, actor.project, now()).map((s) => ({
         object: "suppression",
         email: s.address,
@@ -166,11 +171,12 @@ export function feedbackMethods(deps: FeedbackDeps) {
     addSuppression: method(
       b.object({
         tokenHash,
+        project,
         email: b.string().email().max(320),
         scope: b.enum(["all", "bulk"]).default("all"),
       }),
       async (p) => {
-        const actor = resolveActor(db, p.tokenHash, "full");
+        const actor = resolveActor(db, p, "full");
         await writer.run((d) =>
           suppress(d, actor.project, { address: p.email, scope: p.scope, reason: "manual" }, now()),
         );
@@ -181,11 +187,12 @@ export function feedbackMethods(deps: FeedbackDeps) {
     removeSuppression: method(
       b.object({
         tokenHash,
+        project,
         email: b.string().max(320),
         scope: b.enum(["all", "bulk"]).nullable().default(null),
       }),
       async (p) => {
-        const actor = resolveActor(db, p.tokenHash, "full");
+        const actor = resolveActor(db, p, "full");
         const n = await writer.run((d) => removeSuppression(d, actor.project, p.email, p.scope));
         if (n === 0) throw new RpcError("not-found", "that address is not suppressed");
         return { email: p.email.toLowerCase(), removed: n };
@@ -195,11 +202,12 @@ export function feedbackMethods(deps: FeedbackDeps) {
     createWebhook: method(
       b.object({
         tokenHash,
+        project,
         url: b.string().url().max(2048),
         events: b.array(b.enum(EVENT_TYPES)).max(EVENT_TYPES.length).default([]),
       }),
       async (p) => {
-        const actor = resolveActor(db, p.tokenHash, "full");
+        const actor = resolveActor(db, p, "full");
         const u = new URL(p.url);
         if (u.protocol !== "https:" && u.protocol !== "http:") {
           throw new RpcError("invalid", "webhook URLs must be http or https");
@@ -219,8 +227,8 @@ export function feedbackMethods(deps: FeedbackDeps) {
       },
     ),
 
-    listWebhooks: method(b.object({ tokenHash }), (p) => {
-      const actor = resolveActor(db, p.tokenHash, "read");
+    listWebhooks: method(b.object({ tokenHash, project }), (p) => {
+      const actor = resolveActor(db, p, "read");
       return listWebhooks(db, actor.project).map((h) => ({
         object: "webhook",
         id: h.id,
@@ -230,8 +238,8 @@ export function feedbackMethods(deps: FeedbackDeps) {
       }));
     }),
 
-    deleteWebhook: method(b.object({ tokenHash, id: b.string().max(64) }), async (p) => {
-      const actor = resolveActor(db, p.tokenHash, "full");
+    deleteWebhook: method(b.object({ tokenHash, project, id: b.string().max(64) }), async (p) => {
+      const actor = resolveActor(db, p, "full");
       if (!(await writer.run((d) => deleteWebhook(d, actor.project, p.id, now())))) {
         throw new RpcError("not-found", "webhook not found");
       }
@@ -239,7 +247,7 @@ export function feedbackMethods(deps: FeedbackDeps) {
     }),
   };
 
-  const project = () => writer.run((d) => projectEvents(d, now()));
+  const projectAll = () => writer.run((d) => projectEvents(d, now()));
 
   let sending = false;
   const dispatch = async () => {
@@ -300,5 +308,5 @@ export function feedbackMethods(deps: FeedbackDeps) {
 
   const recover = () => writer.run((d) => resetSending(d, now()));
 
-  return { methods, project, dispatch, recover };
+  return { methods, project: projectAll, dispatch, recover };
 }

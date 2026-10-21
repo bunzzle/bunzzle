@@ -6,9 +6,12 @@ export const API_METHODS = [
   "authenticate",
   "cancelEmail",
   "checkEmail",
+  "createProject",
+  "createProjectKey",
   "createRoute",
   "createTemplate",
   "createWebhook",
+  "deleteProject",
   "deleteRoute",
   "deleteTemplate",
   "deleteWebhook",
@@ -18,11 +21,13 @@ export const API_METHODS = [
   "enqueueBatch",
   "getDomain",
   "getEmail",
+  "getProject",
   "getTemplate",
   "holds",
   "ips",
   "listDomains",
   "listEmails",
+  "listProjects",
   "listRoutes",
   "listSuppressions",
   "listTemplates",
@@ -42,6 +47,7 @@ export const API_METHODS = [
   "stats",
   "suspend",
   "tracking",
+  "updateProject",
   "updateTemplate",
   "verifyDomain",
 ];
@@ -72,8 +78,13 @@ function withKey(methods: Methods): Methods {
     out[name] = {
       params: m.params,
       handle(params) {
-        const hash = (params as { tokenHash?: unknown } | null)?.tokenHash;
-        if (typeof hash !== "string") throw new RpcError("unauthenticated", "API key is required");
+        const p = params as { tokenHash?: unknown; project?: unknown } | null;
+        if (typeof p?.tokenHash !== "string") {
+          throw new RpcError("unauthenticated", "API key is required");
+        }
+        if (p.project !== undefined) {
+          throw new RpcError("forbidden", "an API key always works on its own project");
+        }
         return m.handle(params);
       },
     };

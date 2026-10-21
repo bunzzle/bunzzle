@@ -185,6 +185,7 @@ export const MESSAGE_ID = /^[A-Za-z0-9._-]{1,64}$/;
 
 export const TOKEN_HASH = /^[0-9a-f]{64}$/;
 export const tokenHash = b.string().regex(TOKEN_HASH).optional();
+export const project = b.string().max(64).optional();
 export const DOMAIN = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$/;
 
 export const emailMeta = b.object({
@@ -199,6 +200,7 @@ export const emailMeta = b.object({
 
 export const enqueueParams = b.object({
   tokenHash,
+  project,
   idempotencyKey: b.string().min(1).max(256).optional(),
   bodyHash: b.string().regex(TOKEN_HASH).optional(),
   scheduledAt: b.number().int().positive().optional(),

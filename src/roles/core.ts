@@ -32,6 +32,7 @@ import { coreMethods } from "./core-api.ts";
 import { doctorMethods, ipInfo } from "./core-doctor.ts";
 import { feedbackMethods } from "./core-feedback.ts";
 import { hookMethods } from "./core-hooks.ts";
+import { projectMethods } from "./core-projects.ts";
 import { rotation } from "./core-rotation.ts";
 import { routeMethods } from "./core-routes.ts";
 import { templateMethods } from "./core-templates.ts";
@@ -272,6 +273,7 @@ export async function runCore(config: Config, log: Logger) {
     ...feedback.methods,
     ...routes.methods,
     ...templateMethods({ db, writer }),
+    ...projectMethods({ db, writer, log, ips: config.sourceIps }),
     ...tracking.methods,
     ...hooks.methods,
     ...doctor,
