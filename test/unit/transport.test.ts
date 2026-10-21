@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { cachingLookups } from "../../src/delivery/lookups.ts";
 import {
   type DeliverRequest,
   type DeliveryTransport,
@@ -120,5 +121,61 @@ describe("rememberingTransport", () => {
     now = 5_000;
     t.forget([]);
     expect(t.remembered).toBe(0);
+  });
+});
+
+describe("cachingLookups", () => {
+  const counting = (fails = false) => {
+    let lookups = 0;
+    const inner: DeliveryTransport = {
+      ...fake([]).inner,
+      lookup: async (domain) => {
+        lookups++;
+        if (fails) throw new Error("delivery role unreachable");
+        return { kind: "defer", domain, code: "dns-temporary", reason: `${lookups}` };
+      },
+    };
+    return { inner, lookups: () => lookups };
+  };
+
+  test("one lookup per domain within the time limit, a new one after it", async () => {
+    let now = 0;
+    const f = counting();
+    const t = cachingLookups(f.inner, { ttlMs: 5_000, now: () => now });
+    await Promise.all([t.lookup("a.test"), t.lookup("a.test"), t.lookup("b.test")]);
+    now = 4_999;
+    await t.lookup("a.test");
+    expect(f.lookups()).toBe(2);
+    now = 5_000;
+    await t.lookup("a.test");
+    expect(f.lookups()).toBe(3);
+  });
+
+  test("a failed lookup is not kept", async () => {
+    const f = counting(true);
+    const t = cachingLookups(f.inner);
+    await expect(t.lookup("a.test")).rejects.toThrow("unreachable");
+    await expect(t.lookup("a.test")).rejects.toThrow("unreachable");
+    expect(f.lookups()).toBe(2);
+  });
+
+  test("the oldest domain goes first when full", async () => {
+    const f = counting();
+    const t = cachingLookups(f.inner, { maxEntries: 2 });
+    await t.lookup("a.test");
+    await t.lookup("b.test");
+    await t.lookup("c.test");
+    await t.lookup("b.test");
+    expect(f.lookups()).toBe(3);
+    await t.lookup("a.test");
+    expect(f.lookups()).toBe(4);
+  });
+
+  test("deliver and forget go to the inner transport", async () => {
+    const f = fake(["delivered"]);
+    const t = cachingLookups(rememberingTransport(f.inner));
+    await t.deliver(req("j#1"));
+    t.forget?.(["j#1"]);
+    expect(f.sends()).toBe(1);
   });
 });

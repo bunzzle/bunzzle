@@ -13,7 +13,7 @@ export type Outcome = (
   | { kind: "defer"; reason: string; delayMs?: number }
   | { kind: "unknown"; reason: string }
   | { kind: "requeue"; reason: string; delayMs: number }
-) & { apply?: Apply; committed?: Committed };
+) & { apply?: Apply; committed?: Committed; path?: string };
 
 export const ok = { continue: { kind: "continue" }, done: { kind: "done" } } as const;
 
