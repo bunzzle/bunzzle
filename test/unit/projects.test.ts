@@ -13,8 +13,11 @@ import {
 } from "../../src/domains/domains.ts";
 import { countEmail, searchEmails, statsFor } from "../../src/emails/search.ts";
 import { emailSummary, emailView } from "../../src/emails/view.ts";
+import { createHold, listHolds, releaseHold } from "../../src/guards/guards.ts";
 import { createRoute, deleteRoute, listRoutes } from "../../src/inbound/routes.ts";
-import { resolveActor } from "../../src/roles/actor.ts";
+import { collect, render } from "../../src/metrics/metrics.ts";
+import { queueSummary, removeQueued } from "../../src/queue/control.ts";
+import { requireServerWide, resolveActor, scopeOf } from "../../src/roles/actor.ts";
 import {
   listSuppressions,
   removeSuppression,
@@ -147,5 +150,32 @@ describe("projects", () => {
     expect(listRoutes(db, B)).toEqual([]);
     expect(deleteRoute(db, B, r?.id as string, T0)).toBe(false);
     expect(listRoutes(db, A).map((x) => x.id)).toEqual([r?.id as string]);
+  });
+
+  test("server endpoints show and change only the caller's project", () => {
+    const { db } = setup();
+    const held = createHold(db, "domain:a.test", "bulk", "test", T0).hold;
+    expect(listHolds(db, B).map((h) => h.id)).toEqual([]);
+    expect(listHolds(db, A).map((h) => h.id)).toEqual([held.id]);
+    expect(listHolds(db, null).map((h) => h.id)).toEqual([held.id]);
+    expect(releaseHold(db, B, held.id, T0)).toBe(false);
+    expect(queueSummary(db, B, T0).domains).toEqual([]);
+    expect(queueSummary(db, A, T0).domains.length).toBe(1);
+    const filter = { domain: "dest.test" };
+    expect(removeQueued(db, B, filter, "cancel", "x", T0, true).emails).toBe(0);
+    expect(removeQueued(db, A, filter, "cancel", "x", T0, true).emails).toBe(1);
+    expect(render(collect(db, B, [], T0, T0))).toContain('bunzzle_jobs{state="ready"} 0');
+    expect(render(collect(db, A, [], T0, T0))).toContain('bunzzle_jobs{state="ready"} 1');
+    expect(scopeOf(resolveActor(db, undefined))).toBeNull();
+  });
+
+  test("delivery-wide changes need the operator once a second project exists", () => {
+    const db = openDatabase({ path: ":memory:" });
+    const { token } = createKey(db, A, { name: "a", scope: "full" }, T0);
+    const key = resolveActor(db, hashToken(token), "full");
+    expect(() => requireServerWide(db, key)).not.toThrow();
+    db.run("INSERT INTO projects (id, name, created_at) VALUES (?, 'other', ?)", [B, T0]);
+    expect(() => requireServerWide(db, key)).toThrow("the operator must do it");
+    expect(() => requireServerWide(db, resolveActor(db, undefined))).not.toThrow();
   });
 });

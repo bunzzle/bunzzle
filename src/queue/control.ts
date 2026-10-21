@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { ProjectId } from "../accounts/projects.ts";
 import { appendEvent } from "../core/events.ts";
 
 export interface Suspension {
@@ -80,7 +81,7 @@ export interface QueueRow {
   oldest_age_s: number;
 }
 
-export function queueSummary(db: Database, now: number, limit = 100) {
+export function queueSummary(db: Database, project: ProjectId | null, now: number, limit = 100) {
   const rows = db
     .query<
       {
@@ -92,14 +93,14 @@ export function queueSummary(db: Database, now: number, limit = 100) {
         created_at: number;
         held: number;
       },
-      [string]
+      [string, string | null]
     >(
       `SELECT j.target, j.path, j.state, j.attempt, j.run_after, m.created_at,
-         EXISTS (SELECT 1 FROM recipients r WHERE r.job_id = j.id AND r.reply LIKE ? || '%') AS held
+         EXISTS (SELECT 1 FROM recipients r WHERE r.job_id = j.id AND r.reply LIKE ?1 || '%') AS held
        FROM jobs j JOIN messages m ON m.id = j.message_id
-       WHERE j.state IN ('ready', 'leased', 'unknown')`,
+       WHERE j.state IN ('ready', 'leased', 'unknown') AND (?2 IS NULL OR j.project_id = ?2)`,
     )
-    .all(SUSPENDED_PREFIX);
+    .all(SUSPENDED_PREFIX, project);
   const group = (key: (r: (typeof rows)[number]) => string | null) => {
     const out = new Map<string, QueueRow>();
     for (const r of rows) {
@@ -150,6 +151,7 @@ export interface Bulk {
 
 export function removeQueued(
   db: Database,
+  project: ProjectId | null,
   filter: QueueFilter,
   action: "fail" | "cancel",
   reason: string,
@@ -171,6 +173,10 @@ export function removeQueued(
     args.push(now - filter.olderThanMs);
   }
   if (where.length === 0) throw new Error("a filter is required");
+  if (project !== null) {
+    where.push("j.project_id = ?");
+    args.push(project);
+  }
   const cond = where.join(" AND ");
   const jobs = db
     .query<{ id: string; message_id: string; state: string }, (string | number)[]>(

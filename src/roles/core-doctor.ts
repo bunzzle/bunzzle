@@ -2,13 +2,13 @@ import type { Database } from "bun:sqlite";
 import type { ProjectId } from "../accounts/projects.ts";
 import type { Config } from "../config.ts";
 import type { StorageState } from "../core/storage.ts";
-import { domainPool, getDomain, listDomains } from "../domains/domains.ts";
+import { allDomains, domainPool, findDomain, getDomain, listDomains } from "../domains/domains.ts";
 import { latestPostmaster } from "../guards/gmail.ts";
 import { listHolds } from "../guards/guards.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import type { PathView } from "../shaping/shaper.ts";
 import { b } from "../validate/schema.ts";
-import { resolveActor } from "./actor.ts";
+import { resolveActor, scopeOf } from "./actor.ts";
 import type { rotation } from "./core-rotation.ts";
 import { tokenHash } from "./wire.ts";
 
@@ -59,7 +59,7 @@ export function doctorMethods(deps: DoctorDeps): Methods {
   const { db, config, delivery, rotation } = deps;
   const now = deps.now ?? Date.now;
 
-  const run = async (project: ProjectId): Promise<Check[]> => {
+  const run = async (scope: ProjectId | null): Promise<Check[]> => {
     const checks: Check[] = [];
     const add = (area: string, item: string, status: CheckStatus, detail: string) =>
       checks.push({ area, item, status, detail });
@@ -152,7 +152,7 @@ export function doctorMethods(deps: DoctorDeps): Methods {
       }
     }
 
-    const domains = listDomains(db, project);
+    const domains = scope === null ? allDomains(db) : listDomains(db, scope);
     if (domains.length === 0) add("domains", "sending domains", "warn", "no domain added yet");
     for (const d of domains) {
       const keys = await rotation.keys(d.name).catch(() => null);
@@ -218,7 +218,7 @@ export function doctorMethods(deps: DoctorDeps): Methods {
       }
     }
 
-    for (const h of listHolds(db)) {
+    for (const h of listHolds(db, scope)) {
       add(
         "guards",
         `${h.target} ${h.lane}`,
@@ -244,8 +244,8 @@ export function doctorMethods(deps: DoctorDeps): Methods {
 
   return {
     doctor: method(b.object({ tokenHash }), async (p) => {
-      const { project } = resolveActor(db, p.tokenHash, "full");
-      const checks = await run(project);
+      const actor = resolveActor(db, p.tokenHash, "full");
+      const checks = await run(scopeOf(actor));
       return {
         checks,
         summary: {
@@ -256,9 +256,10 @@ export function doctorMethods(deps: DoctorDeps): Methods {
       };
     }),
     rotateDomain: method(b.object({ tokenHash, name: b.string().max(253) }), async (p) => {
-      const { project } = resolveActor(db, p.tokenHash, "full");
+      const scope = scopeOf(resolveActor(db, p.tokenHash, "full"));
       const name = p.name.toLowerCase();
-      if (!getDomain(db, project, name)) throw new RpcError("not-found", "domain not found");
+      if (!(scope === null ? findDomain(db, name) : getDomain(db, scope, name)))
+        throw new RpcError("not-found", "domain not found");
       return { result: await rotation.step(name, true) };
     }),
   };

@@ -396,13 +396,16 @@ export function nextWakeAt(db: Database): number | undefined {
   return t ?? undefined;
 }
 
-export function countByState(db: Database): Record<JobState, number> {
+export function countByState(
+  db: Database,
+  project: string | null = null,
+): Record<JobState, number> {
   const counts: Record<JobState, number> = { ready: 0, leased: 0, unknown: 0, done: 0, dead: 0 };
   for (const r of db
-    .query<{ state: JobState; n: number }, []>(
-      "SELECT state, count(*) AS n FROM jobs GROUP BY state",
+    .query<{ state: JobState; n: number }, [string | null]>(
+      "SELECT state, count(*) AS n FROM jobs WHERE ?1 IS NULL OR project_id = ?1 GROUP BY state",
     )
-    .all()) {
+    .all(project)) {
     counts[r.state] = r.n;
   }
   return counts;

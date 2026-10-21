@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { ProjectId } from "../accounts/projects.ts";
 import type { Logger } from "../core/log.ts";
 import { bucketOf, DAY_MS } from "../ips/warmup.ts";
 
@@ -64,22 +65,32 @@ export function createHold(
   return { hold, created: true };
 }
 
-export function releaseHold(db: Database, id: string, now: number): boolean {
+export const PROJECT_HOLDS = `(?1 IS NULL
+  OR target IN (SELECT 'domain:' || name FROM domains WHERE project_id = ?1)
+  OR target IN (SELECT 'key:' || id FROM api_keys WHERE project_id = ?1))`;
+
+export function releaseHold(
+  db: Database,
+  project: ProjectId | null,
+  id: string,
+  now: number,
+): boolean {
   return (
     db
-      .query<unknown, [number, string]>(
-        "UPDATE holds SET released_at = ? WHERE id = ? AND released_at IS NULL",
+      .query<unknown, [string | null, number, string]>(
+        `UPDATE holds SET released_at = ?2 WHERE id = ?3 AND released_at IS NULL AND ${PROJECT_HOLDS}`,
       )
-      .run(now, id).changes > 0
+      .run(project, now, id).changes > 0
   );
 }
 
-export function listHolds(db: Database, all = false): Hold[] {
+export function listHolds(db: Database, project: ProjectId | null, all = false): Hold[] {
   return db
-    .query<HoldRow, []>(
-      `SELECT * FROM holds ${all ? "" : "WHERE released_at IS NULL"} ORDER BY created_at DESC`,
+    .query<HoldRow, [string | null]>(
+      `SELECT * FROM holds WHERE ${all ? "" : "released_at IS NULL AND "}${PROJECT_HOLDS}
+       ORDER BY created_at DESC`,
     )
-    .all()
+    .all(project)
     .map(fromRow);
 }
 
@@ -116,18 +127,20 @@ export interface SenderRates {
   bounceRate: number;
 }
 
-export function senderRates(db: Database, now: number): SenderRates[] {
+export function senderRates(db: Database, project: ProjectId | null, now: number): SenderRates[] {
   const since = Math.floor(now / DAY_MS) - 1;
   return db
     .query<
       { domain: string; lane: string; delivered: number; hard_bounced: number; complained: number },
-      [number]
+      [number, string | null]
     >(
       `SELECT domain, lane, sum(delivered) AS delivered, sum(hard_bounced) AS hard_bounced,
          sum(complained) AS complained
-       FROM sender_stats WHERE day >= ? GROUP BY domain, lane`,
+       FROM sender_stats WHERE day >= ?1
+         AND (?2 IS NULL OR domain IN (SELECT name FROM domains WHERE project_id = ?2))
+       GROUP BY domain, lane`,
     )
-    .all(since)
+    .all(since, project)
     .map((r) => ({
       domain: r.domain,
       lane: r.lane,
@@ -141,7 +154,7 @@ export function senderRates(db: Database, now: number): SenderRates[] {
 
 export function reputationGuard(db: Database, now: number, minVolume: number, log: Logger): Hold[] {
   const made: Hold[] = [];
-  for (const r of senderRates(db, now)) {
+  for (const r of senderRates(db, null, now)) {
     if (r.lane !== "bulk" || r.delivered + r.hardBounced < minVolume) continue;
     let reason: string | null = null;
     if (r.complaintRate >= 0.003) {
