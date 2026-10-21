@@ -17,6 +17,7 @@ export const LIVE: Record<Role, (keyof Config)[]> = {
   delivery: ["logLevel"],
   api: ["logLevel"],
   inbound: ["logLevel"],
+  ns: ["logLevel"],
 };
 
 export function parseEnvFile(text: string): Record<string, string> {

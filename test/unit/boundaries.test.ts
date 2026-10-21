@@ -88,6 +88,21 @@ const ROLE_LIMITS: Record<string, string[]> = {
     "mime/",
     "inbound/",
   ],
+  ns: [
+    "core/",
+    "signer/",
+    "dkim/",
+    "crypto/",
+    "smtp/",
+    "smtpd/",
+    "delivery/",
+    "mime/",
+    "inbound/",
+    "net/",
+    "acme/",
+    "dns/resolver.ts",
+    "dns/cache.ts",
+  ],
 };
 
 describe("role boundaries (what each process can even load)", () => {
@@ -100,14 +115,14 @@ describe("role boundaries (what each process can even load)", () => {
   }
 
   test("only core and the CLI know the admin socket", async () => {
-    for (const role of ["signer", "dns", "delivery", "api", "inbound"]) {
+    for (const role of ["signer", "dns", "delivery", "api", "inbound", "ns"]) {
       const files = await reachable(`${SRC}/roles/${role}.ts`);
       expect([...files].filter((f) => f === "roles/admin-socket.ts")).toEqual([]);
     }
   });
 
   test("only the signer and the CLI can load the master key", async () => {
-    for (const role of ["delivery", "api", "core", "inbound"]) {
+    for (const role of ["delivery", "api", "core", "inbound", "ns"]) {
       const files = await reachable(`${SRC}/roles/${role}.ts`);
       expect([...files].filter((f) => f === "crypto/load.ts" || f === "crypto/master.ts")).toEqual(
         [],

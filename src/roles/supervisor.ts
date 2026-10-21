@@ -44,6 +44,7 @@ export async function runSupervisor(
   await privateDir(config.dataDir);
   await privateDir(config.keysDir);
 
+  const roles = ROLES.filter((r) => r !== "ns" || config.ns !== null);
   const children = new Map<Role, Child>();
   const failures = new Map<Role, number>();
   let stopping = false;
@@ -103,7 +104,7 @@ export async function runSupervisor(
 
   const stopAll = async () => {
     stopping = true;
-    for (const role of [...ROLES].reverse()) {
+    for (const role of [...roles].reverse()) {
       const child = children.get(role);
       if (!child || child.proc.exitCode !== null) continue;
       child.proc.kill("SIGTERM");
@@ -119,7 +120,7 @@ export async function runSupervisor(
   let inboundPort: unknown = null;
   let submissionPorts: unknown = null;
   let trackPort: unknown = null;
-  for (const role of ROLES) {
+  for (const role of roles) {
     const child = spawn(role);
     children.set(role, child);
     try {

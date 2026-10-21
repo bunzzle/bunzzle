@@ -52,6 +52,7 @@ describe("loadConfig", () => {
       cloudflareUrl: "https://api.cloudflare.com/client/v4",
       route53: null,
       desec: null,
+      ns: null,
       postmaster: null,
     });
   });
@@ -197,5 +198,33 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...relay, BUNZZLE_RELAY_FOR: " , " })).toThrow(ConfigError);
     expect(() => loadConfig({ ...relay, BUNZZLE_RELAY_FOR: "bad_name" })).toThrow(ConfigError);
     expect(() => loadConfig({ BUNZZLE_RELAY_FOR: "blocked" })).toThrow("needs BUNZZLE_RELAY_HOST");
+  });
+});
+
+describe("ns", () => {
+  const ns = {
+    BUNZZLE_NS_ZONE: "DZ.mail.example.net.",
+    BUNZZLE_NS_NAMES: "ns1.mail.example.net, ns2.mail.example.net",
+    BUNZZLE_NS_LISTEN: "192.0.2.53,2001:db8::53",
+  };
+
+  test("reads the zone, names, listen addresses and limits", () => {
+    expect(loadConfig({ ...ns, BUNZZLE_NS_RRL_V6_PREFIX: "48" }).ns).toEqual({
+      zone: "dz.mail.example.net",
+      names: ["ns1.mail.example.net", "ns2.mail.example.net"],
+      listen: ["192.0.2.53", "2001:db8::53"],
+      port: 53,
+      v4Prefix: 24,
+      v6Prefix: 48,
+    });
+  });
+
+  test("rejects incomplete or inconsistent settings", () => {
+    expect(() => loadConfig({ BUNZZLE_NS_ZONE: ns.BUNZZLE_NS_ZONE })).toThrow(/NS_NAMES/);
+    expect(() => loadConfig({ BUNZZLE_NS_NAMES: ns.BUNZZLE_NS_NAMES })).toThrow(/NS_ZONE/);
+    expect(() => loadConfig({ ...ns, BUNZZLE_NS_NAMES: "ns1.dz.mail.example.net" })).toThrow(
+      /outside/,
+    );
+    expect(() => loadConfig({ ...ns, BUNZZLE_NS_LISTEN: "ns1.example.net" })).toThrow(/not an IP/);
   });
 });
