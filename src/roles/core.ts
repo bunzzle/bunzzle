@@ -1,3 +1,4 @@
+import { purgeDeletedProject } from "../accounts/purge.ts";
 import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { fail, type Outcome } from "../core/outcome.ts";
@@ -303,6 +304,16 @@ export async function runCore(config: Config, log: Logger) {
       pruneRouted(d, Date.now() - config.retentionDays * 24 * HOUR);
     }),
   );
+  const purge = async () => {
+    for (let i = 0; i < 20; i++) {
+      const r = await writer.run((d) => purgeDeletedProject(d));
+      if (r.finished) log.info("removed project purged", { project: r.project });
+      if (r.messages === 0) return;
+    }
+  };
+  const stopPurge = every(Math.max(1_000, scaled(10_000)), () =>
+    purge().catch((err: Error) => log.error("project purge failed", { error: err.message })),
+  );
   const stopTlsReports = every(Math.max(1_000, scaled(HOUR)), () =>
     sendTlsReports({
       db,
@@ -411,6 +422,7 @@ export async function runCore(config: Config, log: Logger) {
     stopSettled();
     stopShred();
     stopPrune();
+    stopPurge();
     stopSuspensions();
     stopTlsReports();
     stopVerify();

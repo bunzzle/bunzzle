@@ -211,7 +211,8 @@ export const OPERATIONS: Operation[] = [
     path: "/projects/:id",
     id: "updateProject",
     tag: "Projects",
-    summary: "Rename a project, set its limits and IP pool, suspend or resume it",
+    summary:
+      "Rename a project, set its limits and IP pool, suspend or resume it (suspended: sending answers 403, queued email waits)",
     scope: ["admin"],
     body: ["UpdateProject", s.updateProjectSchema],
     response: ["Project", s.project],
@@ -221,7 +222,8 @@ export const OPERATIONS: Operation[] = [
     path: "/projects/:id",
     id: "deleteProject",
     tag: "Projects",
-    summary: "Remove a project; its API keys stop working at once",
+    summary:
+      "Remove a project: keys revoked, queued email canceled, domains released, data deleted later",
     scope: ["admin"],
     response: ["ProjectDeleted", s.projectDeleted],
   },

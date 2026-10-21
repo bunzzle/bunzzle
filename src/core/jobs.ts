@@ -109,6 +109,9 @@ export function claim(
      WHERE id IN (
        SELECT id FROM jobs
        WHERE state = 'ready' AND priority = ? AND run_after <= ?
+         AND project_id NOT IN (
+           SELECT id FROM projects WHERE suspended_at IS NOT NULL OR deleted_at IS NOT NULL
+         )
          AND (path IS NULL OR (
            path NOT IN (SELECT value FROM json_each(?))
            AND (priority = 0 OR path NOT IN (SELECT value FROM json_each(?)))
@@ -394,6 +397,26 @@ export function nextWakeAt(db: Database): number | undefined {
     if (due !== undefined && (t === null || due < t)) t = due;
   }
   return t ?? undefined;
+}
+
+export const HELD_OFFSET = 1e15;
+
+export function holdProjectJobs(db: Database, project: string, now: number): number {
+  return db
+    .query<unknown, [number, number, string, number]>(
+      `UPDATE jobs SET run_after = run_after + ?1, updated_at = ?2
+       WHERE project_id = ?3 AND state = 'ready' AND run_after < ?4`,
+    )
+    .run(HELD_OFFSET, now, project, HELD_OFFSET).changes;
+}
+
+export function releaseProjectJobs(db: Database, project: string, now: number): number {
+  return db
+    .query<unknown, [number, number, string, number]>(
+      `UPDATE jobs SET run_after = max(run_after - ?1, 0), updated_at = ?2
+       WHERE project_id = ?3 AND state = 'ready' AND run_after >= ?4`,
+    )
+    .run(HELD_OFFSET, now, project, HELD_OFFSET).changes;
 }
 
 export function countByState(

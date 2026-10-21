@@ -176,3 +176,11 @@ export function resetSending(db: Database, now: number): number {
     )
     .run(now).changes;
 }
+
+export function disableProjectWebhooks(db: Database, project: ProjectId, now: number): number {
+  return db
+    .query<unknown, [number, string]>(
+      "UPDATE webhooks SET disabled_at = ? WHERE project_id = ? AND disabled_at IS NULL",
+    )
+    .run(now, project).changes;
+}

@@ -301,3 +301,13 @@ export function setDomainPool(
       .run(pool, now, name, project).changes > 0
   );
 }
+
+export function releaseProjectDomains(db: Database, project: ProjectId): string[] {
+  const names = db
+    .query<{ name: string }, [string]>("DELETE FROM domains WHERE project_id = ? RETURNING name")
+    .all(project)
+    .map((r) => r.name);
+  const c = domainCache(db);
+  for (const name of names) c.delete(name);
+  return names;
+}

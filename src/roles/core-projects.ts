@@ -11,6 +11,7 @@ import {
   DEFAULT_PROJECT,
   deleteProject,
   findProject,
+  findRemovedProject,
   listProjects,
   nameTaken,
   PROJECT_NAME,
@@ -20,10 +21,15 @@ import {
   updateProject,
 } from "../accounts/projects.ts";
 import type { SourceIp } from "../config.ts";
+import { holdProjectJobs, releaseProjectJobs } from "../core/jobs.ts";
 import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
+import { releaseProjectDomains } from "../domains/domains.ts";
+import { disableProjectRoutes } from "../inbound/routes.ts";
 import { type Methods, method, RpcError } from "../ipc/rpc.ts";
+import { cancelProjectQueue } from "../queue/control.ts";
 import { b } from "../validate/schema.ts";
+import { disableProjectWebhooks } from "../webhooks/store.ts";
 import { actorName, type Caller, resolveActor, resolveAdmin } from "./actor.ts";
 import { domainName, knownPool } from "./checks.ts";
 import { project, tokenHash } from "./wire.ts";
@@ -254,8 +260,12 @@ export function projectMethods(deps: ProjectDeps): Methods {
             ...(next.pool !== before.pool ? { ip_pool: next.pool } : {}),
           };
           if (Object.keys(changed).length > 0) record("project.updated", changed);
-          if (before.suspendedAt === null && next.suspendedAt !== null) record("project.suspended");
-          if (before.suspendedAt !== null && next.suspendedAt === null) record("project.resumed");
+          if (before.suspendedAt === null && next.suspendedAt !== null) {
+            record("project.suspended", { held_jobs: holdProjectJobs(d, next.id, now()) });
+          }
+          if (before.suspendedAt !== null && next.suspendedAt === null) {
+            record("project.resumed", { released_jobs: releaseProjectJobs(d, next.id, now()) });
+          }
           return next;
         });
         if (!after) throw new RpcError("not-found", "project not found");
@@ -265,25 +275,31 @@ export function projectMethods(deps: ProjectDeps): Methods {
 
     deleteProject: method(b.object({ tokenHash, id: b.string().max(64) }), async (p) => {
       const caller = resolveAdmin(db, p);
+      const removed = findRemovedProject(db, p.id);
+      if (removed) return { object: "project", id: removed.id, deleted: true };
       const t = target(p.id);
       if (t.id === DEFAULT_PROJECT) {
         throw new RpcError("invalid", "the default project cannot be removed");
       }
-      await writer.run((d) => {
-        if (deleteProject(d, t.id, now())) {
-          recordAdminEvent(
-            d,
-            {
-              kind: "project.deleted",
-              project: t.id,
-              actor: actorName(caller),
-              data: { name: t.name },
-            },
-            now(),
-          );
-        }
+      const done = await writer.run((d) => {
+        if (!deleteProject(d, t.id, now())) return null;
+        const queue = cancelProjectQueue(d, t.id, now());
+        const domains = releaseProjectDomains(d, t.id);
+        disableProjectWebhooks(d, t.id, now());
+        disableProjectRoutes(d, t.id, now());
+        recordAdminEvent(
+          d,
+          {
+            kind: "project.deleted",
+            project: t.id,
+            actor: actorName(caller),
+            data: { name: t.name, canceled_emails: queue.emails, released_domains: domains },
+          },
+          now(),
+        );
+        return { emails: queue.emails, domains };
       });
-      log.warn("project removed", { id: t.id, name: t.name });
+      if (done) log.warn("project removed", { id: t.id, name: t.name, ...done });
       return { object: "project", id: t.id, deleted: true };
     }),
 

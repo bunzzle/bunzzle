@@ -69,6 +69,15 @@ export function findProject(db: Database, idOrName: string): Project | null {
   return r ? fromRow(r) : null;
 }
 
+export function findRemovedProject(db: Database, idOrName: string): Project | null {
+  const r = db
+    .query<Row, [string]>(
+      "SELECT * FROM projects WHERE (id = ?1 OR name = ?1) AND deleted_at IS NOT NULL",
+    )
+    .get(idOrName);
+  return r ? fromRow(r) : null;
+}
+
 export function listProjects(db: Database): Project[] {
   return db
     .query<Row, []>("SELECT * FROM projects WHERE deleted_at IS NULL ORDER BY name")
