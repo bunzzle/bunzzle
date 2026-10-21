@@ -7,6 +7,7 @@ import {
   type Scope,
   touchKey,
 } from "../accounts/api-keys.ts";
+import { poolUsableBy } from "../accounts/pools.ts";
 import { findProject, projectOfMessage, SYSTEM_PROJECT } from "../accounts/projects.ts";
 import { type Over, takeQuota } from "../accounts/usage.ts";
 import type { SourceIp } from "../config.ts";
@@ -68,7 +69,7 @@ import {
   resolveServer,
   scopeOf,
 } from "./actor.ts";
-import { domainName, knownPool } from "./checks.ts";
+import { domainName, usablePool } from "./checks.ts";
 import { DOMAIN, enqueueParams, MESSAGE_ID, project, tokenHash } from "./wire.ts";
 
 const SUSPEND_TARGET =
@@ -323,6 +324,11 @@ export function coreMethods(deps: CoreDeps): {
             return { id: prev.messageId, existed: true };
           }
         }
+        const chosen = key?.pool ?? domainPool(d, headerDomain) ?? settings?.pool ?? null;
+        const pool =
+          chosen !== null && (project === SYSTEM_PROJECT || poolUsableBy(d, chosen, project))
+            ? chosen
+            : null;
         const quota = takeQuota(d, project, limits, counted, t);
         if (!quota.ok) throw limitError(quota.over);
         enqueueEmail(
@@ -341,9 +347,7 @@ export function coreMethods(deps: CoreDeps): {
               apiKeyId: key?.id ?? null,
               scheduledAt: p.scheduledAt ?? null,
               ...(key?.test ? { test: true } : {}),
-              ...((key?.pool ?? domainPool(db, headerDomain))
-                ? { pool: key?.pool ?? domainPool(db, headerDomain) }
-                : {}),
+              ...(pool ? { pool } : {}),
             },
             ...(p.expiresAt !== undefined ? { expiresAt: p.expiresAt } : {}),
             ...(p.scheduledAt !== undefined ? { runAfter: p.scheduledAt } : {}),
@@ -659,7 +663,7 @@ export function coreMethods(deps: CoreDeps): {
       }),
       async (p) => {
         const { project } = caller(p, "full");
-        if (p.pool !== null) knownPool(deps.ips, p.pool);
+        if (p.pool !== null) usablePool(db, deps.ips, project, p.pool);
         const name = domainName(p.name);
         if (!(await writer.run((d) => setDomainPool(d, project, name, p.pool, now())))) {
           throw new RpcError("not-found", "domain not found");

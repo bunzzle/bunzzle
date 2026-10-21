@@ -23,6 +23,7 @@ import projectKeys from "./0022_project_keys.sql" with { type: "text" };
 import adminKeys from "./0023_admin_keys.sql" with { type: "text" };
 import jobsProject from "./0024_jobs_project.sql" with { type: "text" };
 import projectUsage from "./0025_project_usage.sql" with { type: "text" };
+import poolOwners from "./0026_pool_owners.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -56,4 +57,5 @@ export const migrations: readonly Migration[] = [
   { version: 23, name: "admin keys", sql: adminKeys },
   { version: 24, name: "jobs by project", sql: jobsProject },
   { version: 25, name: "project usage", sql: projectUsage },
+  { version: 26, name: "pool owners", sql: poolOwners },
 ];

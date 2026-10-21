@@ -48,6 +48,20 @@ sudo bunzzle domains move shop.example shop
 
 Email already queued for the old project is still sent. Its stats and suppressions stay with the old project.
 
+## IP pools
+
+The operator can give a pool from `BUNZZLE_SOURCE_IPS` to one project:
+
+```sh
+sudo bunzzle pools list
+sudo bunzzle pools own acme shop
+sudo bunzzle pools share acme
+```
+
+An owned pool is used only by its project: its domains, keys and the project itself (`PATCH /projects/shop` with `{"ip_pool": "acme"}`) can choose it, other projects cannot. `main` and `bulk` are always shared. When a pool gets an owner, other projects' domains and keys that chose it go back to the shared IPs; email they already queued keeps its pool.
+
+A key's pool comes first, then the domain's, then the project's.
+
 ## Send limits
 
 ```sh

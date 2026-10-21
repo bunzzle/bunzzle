@@ -26,6 +26,7 @@ import {
   ipsCommand,
   keysCommand,
   pathsCommand,
+  poolsCommand,
   projectsCommand,
   queueCommand,
   routesCommand,
@@ -52,6 +53,7 @@ Usage:
   bunzzle domains     add|verify|show|list|reports sending domains and their DMARC reports (needs \`serve\` running)
   bunzzle keys        create|list|revoke API keys; --admin for a key that manages projects (needs \`serve\` running)
   bunzzle projects    add|list|show|limits|suspend|resume|remove projects (needs \`serve\` running)
+  bunzzle pools       list IP pools; own POOL PROJECT gives a pool to one project; share POOL (needs \`serve\` running)
   bunzzle paths       sending speed per destination and why it changed (needs \`serve\` running)
   bunzzle webhooks    add|list|remove event webhooks (needs \`serve\` running)
   bunzzle routes      add|list|remove|retry inbound routes: mail for an address posted to a URL (needs \`serve\` running)
@@ -224,6 +226,8 @@ async function main(input: string[]) {
       return keysCommand(argv.slice(1), loadConfig());
     case "projects":
       return projectsCommand(argv.slice(1), loadConfig());
+    case "pools":
+      return poolsCommand(argv.slice(1), loadConfig());
     case "paths":
       return pathsCommand(argv.slice(1), loadConfig());
     case "doctor":
