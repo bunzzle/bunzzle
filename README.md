@@ -238,6 +238,8 @@ curl localhost:3000/health
 
 Configuration is read from environment variables. Every setting is listed in [docs/configuration.md](docs/configuration.md).
 
+One server can hold several projects, each with its own keys, domains and data: see [docs/projects.md](docs/projects.md).
+
 ## License
 
 [AGPL-3.0](LICENSE). The SDK in [sdk/typescript](sdk/typescript) is [MIT](sdk/typescript/LICENSE).

@@ -9,6 +9,12 @@ export type JobState = "ready" | "leased" | "unknown" | "done" | "dead";
 
 const SOURCE = "queue";
 
+const PAUSED_PROJECTS =
+  "SELECT id FROM projects WHERE suspended_at IS NOT NULL OR deleted_at IS NOT NULL";
+
+const SENDABLE = (now: string) =>
+  `(project_id NOT IN (${PAUSED_PROJECTS}) OR (expires_at IS NOT NULL AND expires_at <= ${now}))`;
+
 export interface NewMessage {
   id?: string;
   project: string;
@@ -109,9 +115,7 @@ export function claim(
      WHERE id IN (
        SELECT id FROM jobs
        WHERE state = 'ready' AND priority = ? AND run_after <= ?
-         AND project_id NOT IN (
-           SELECT id FROM projects WHERE suspended_at IS NOT NULL OR deleted_at IS NOT NULL
-         )
+         AND ${SENDABLE("?4")}
          AND (path IS NULL OR (
            path NOT IN (SELECT value FROM json_each(?))
            AND (priority = 0 OR path NOT IN (SELECT value FROM json_each(?)))
@@ -372,12 +376,13 @@ export function resendUnresolved(db: Database, now: number): number {
   return rows.length;
 }
 
-export function nextWakeAt(db: Database): number | undefined {
+export function nextWakeAt(db: Database, now = Date.now()): number | undefined {
   const nextPriority = db.query<{ p: number | null }, [number]>(
     "SELECT MIN(priority) AS p FROM jobs WHERE state = 'ready' AND priority > ?",
   );
-  const firstDue = db.query<{ t: number }, [number]>(
-    "SELECT run_after AS t FROM jobs WHERE state = 'ready' AND priority = ? ORDER BY run_after LIMIT 1",
+  const firstDue = db.query<{ t: number }, [number, number]>(
+    `SELECT run_after AS t FROM jobs WHERE state = 'ready' AND priority = ?1 AND ${SENDABLE("?2")}
+     ORDER BY run_after LIMIT 1`,
   );
   let t =
     db
@@ -393,7 +398,7 @@ export function nextWakeAt(db: Database): number | undefined {
     const next = nextPriority.get(priority)?.p;
     if (next === null || next === undefined) break;
     priority = next;
-    const due = firstDue.get(priority)?.t;
+    const due = firstDue.get(priority, now)?.t;
     if (due !== undefined && (t === null || due < t)) t = due;
   }
   return t ?? undefined;
@@ -408,6 +413,16 @@ export function holdProjectJobs(db: Database, project: string, now: number): num
        WHERE project_id = ?3 AND state = 'ready' AND run_after < ?4`,
     )
     .run(HELD_OFFSET, now, project, HELD_OFFSET).changes;
+}
+
+export function expireHeldJobs(db: Database, now: number): number {
+  return db
+    .query<unknown, [number, number]>(
+      `UPDATE jobs SET run_after = ?1, updated_at = ?1
+       WHERE state = 'ready' AND project_id IN (${PAUSED_PROJECTS})
+         AND run_after >= ?2 AND expires_at IS NOT NULL AND expires_at <= ?1`,
+    )
+    .run(now, HELD_OFFSET).changes;
 }
 
 export function releaseProjectJobs(db: Database, project: string, now: number): number {

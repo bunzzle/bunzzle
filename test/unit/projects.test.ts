@@ -14,13 +14,25 @@ import {
   findProject,
   listProjects,
   type ProjectId,
+  projectOfMessage,
   recordAdminEvent,
+  SYSTEM_PROJECT,
   updateProject,
 } from "../../src/accounts/projects.ts";
 import { purgeDeletedProject } from "../../src/accounts/purge.ts";
 import { appendEvent } from "../../src/core/events.ts";
-import { claim, HELD_OFFSET, holdProjectJobs, releaseProjectJobs } from "../../src/core/jobs.ts";
+import {
+  claim,
+  expireHeldJobs,
+  HELD_OFFSET,
+  holdProjectJobs,
+  nextWakeAt,
+  releaseProjectJobs,
+} from "../../src/core/jobs.ts";
+import { createLogger } from "../../src/core/log.ts";
 import { openDatabase } from "../../src/core/store/db.ts";
+import { Writer } from "../../src/core/store/writer.ts";
+import { epochKeyPair, newEpochSeed } from "../../src/crypto/envelope.ts";
 import { cancelEmail, enqueueEmail, scheduledEmail } from "../../src/delivery/queue.ts";
 import {
   findDomain,
@@ -35,6 +47,7 @@ import { emailSummary, emailView } from "../../src/emails/view.ts";
 import { nextAdminBatch } from "../../src/eventlog/export.ts";
 import { createHold, listHolds, releaseHold } from "../../src/guards/guards.ts";
 import { createRoute, deleteRoute, listRoutes } from "../../src/inbound/routes.ts";
+import type { RpcClient } from "../../src/ipc/rpc.ts";
 import { collect, render } from "../../src/metrics/metrics.ts";
 import { cancelProjectQueue, queueSummary, removeQueued } from "../../src/queue/control.ts";
 import {
@@ -44,6 +57,7 @@ import {
   resolveServer,
   scopeOf,
 } from "../../src/roles/actor.ts";
+import { coreMethods } from "../../src/roles/core-api.ts";
 import {
   listSuppressions,
   removeSuppression,
@@ -345,5 +359,87 @@ describe("projects", () => {
     deleteProject(db, B, T0);
     expect(purgeDeletedProject(db)).toEqual({ project: null, messages: 0, finished: false });
     expect(db.query("SELECT 1 FROM projects WHERE id = ?").get(B)).not.toBeNull();
+  });
+
+  test("held email fails as expired when its expiry passes, without waiting for resume", () => {
+    const db = openDatabase({ path: ":memory:" });
+    db.run("INSERT INTO projects (id, name, created_at) VALUES (?, 'other', ?)", [B, T0]);
+    const id = Bun.randomUUIDv7();
+    enqueueEmail(
+      db,
+      B,
+      {
+        id,
+        body: sealed,
+        from: "x@a.test",
+        recipients: ["r@dest.test"],
+        smtpUtf8: false,
+        requireTls: false,
+        expiresAt: T0 + 60_000,
+      },
+      T0,
+    );
+    db.run("UPDATE projects SET suspended_at = ? WHERE id = ?", [T0, B]);
+    holdProjectJobs(db, B, T0);
+    expect(expireHeldJobs(db, T0 + 59_999)).toBe(0);
+    expect(claim(db, T0 + 59_999, 10, 60_000)).toEqual([]);
+    expect(expireHeldJobs(db, T0 + 60_000)).toBe(1);
+    const [job] = claim(db, T0 + 60_000, 10, 60_000);
+    expect(job).toMatchObject({ messageId: id, expiresAt: T0 + 60_000 });
+  });
+
+  test("the scheduler does not wake for email it cannot send", () => {
+    const { db } = withMail(B);
+    db.run("UPDATE projects SET suspended_at = ? WHERE id = ?", [T0, B]);
+    expect(nextWakeAt(db, T0 + 1_000)).toBeUndefined();
+    db.run("UPDATE projects SET suspended_at = NULL WHERE id = ?", [B]);
+    expect(nextWakeAt(db, T0 + 1_000)).toBe(T0);
+  });
+
+  test("server email is sent for a suspended project's domain; the project's own email is refused", async () => {
+    const db = openDatabase({ path: ":memory:" });
+    db.run("INSERT INTO projects (id, name, created_at, suspended_at) VALUES (?, 'other', ?, ?)", [
+      B,
+      T0,
+      T0,
+    ]);
+    saveDomain(
+      db,
+      {
+        project: B,
+        name: "b.test",
+        status: "verified",
+        records: [],
+        createdAt: T0,
+        checkedAt: null,
+      },
+      T0,
+    );
+    const epoch = await epochKeyPair(1, newEpochSeed());
+    const stub = {
+      call: async (m: string) => (m === "domains" ? ["b.test"] : null),
+    } as unknown as RpcClient;
+    const { methods, enqueueInternal } = coreMethods({
+      db,
+      writer: new Writer(db),
+      log: createLogger("error", {}, () => {}),
+      signer: stub,
+      delivery: stub,
+      currentKey: async () => epoch,
+      sourceIp: null,
+    });
+    const data = "From: tlsrpt@b.test\r\nTo: r@dest.test\r\nSubject: report\r\n\r\nhi\r\n";
+    const id = await enqueueInternal("tlsrpt@b.test", "r@dest.test", data);
+    expect(projectOfMessage(db, id)).toBe(SYSTEM_PROJECT);
+    expect(claim(db, Date.now() + 1_000, 10, 60_000).map((j) => j.messageId)).toEqual([id]);
+    const send = methods["enqueue"]?.handle({
+      project: "other",
+      from: "tlsrpt@b.test",
+      recipients: ["r@dest.test"],
+      data,
+      smtpUtf8: false,
+      requireTls: false,
+    });
+    await expect(send).rejects.toThrow("suspended");
   });
 });
