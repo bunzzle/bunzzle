@@ -26,6 +26,8 @@ import { type ControlState, DEFAULT_TUNING } from "../shaping/control.ts";
 import { Shaper } from "../shaping/shaper.ts";
 import { sendTlsReports } from "../tlsrpt/job.ts";
 import { b } from "../validate/schema.ts";
+import { adminSocket } from "./admin-socket.ts";
+import { apiMethods, inboundMethods } from "./core-access.ts";
 import { coreMethods } from "./core-api.ts";
 import { doctorMethods, ipInfo } from "./core-doctor.ts";
 import { feedbackMethods } from "./core-feedback.ts";
@@ -265,7 +267,7 @@ export async function runCore(config: Config, log: Logger) {
     paths: () => shaper.views(),
     storage: () => storage.state(),
   });
-  const server = await serveRpc(sock.core, {
+  const all = {
     ...api.methods,
     ...feedback.methods,
     ...routes.methods,
@@ -273,7 +275,12 @@ export async function runCore(config: Config, log: Logger) {
     ...tracking.methods,
     ...hooks.methods,
     ...doctor,
+  };
+  const admin = await serveRpc(adminSocket(config.runDir), all, { mode: "600" });
+  const inbound = await serveRpc(sock.coreInbound, inboundMethods(all), {
+    group: config.inboundSocketGroup,
   });
+  const server = await serveRpc(sock.core, apiMethods(all));
 
   const shred = async () => {
     const ids = await writer.run((d) =>
@@ -412,6 +419,8 @@ export async function runCore(config: Config, log: Logger) {
     stopEventLog();
     await eventLog?.stop();
     server.stop();
+    inbound.stop();
+    admin.stop();
     shaper.stop();
     await scheduler.stop();
     writer.close();

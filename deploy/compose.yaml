@@ -71,11 +71,12 @@ services:
     <<: *role
     command: ["role", "core"]
     user: "10012:10012"
-    group_add: ["10010", "10011", "10013", "10016"]
+    group_add: ["10010", "10011", "10013", "10016", "10018"]
     network_mode: none
     environment:
       BUNZZLE_RUN_DIR: /run/bunzzle
       BUNZZLE_DATA_DIR: /var/lib/bunzzle/data
+      BUNZZLE_INBOUND_SOCKET_GROUP: "10018"
     volumes:
       - run:/run/bunzzle
       - data:/var/lib/bunzzle/data
@@ -122,7 +123,7 @@ services:
     <<: *role
     command: ["role", "inbound"]
     user: "10015:10015"
-    group_add: ["10010", "10012", "10017"]
+    group_add: ["10010", "10018", "10017"]
     environment:
       BUNZZLE_RUN_DIR: /run/bunzzle
       BUNZZLE_INBOUND_HOST: 0.0.0.0

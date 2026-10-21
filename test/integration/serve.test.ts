@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { generateMasterKey } from "../../src/crypto/master.ts";
+import { RpcClient, type RpcError } from "../../src/ipc/rpc.ts";
 import { alive, type Served, startServe } from "../support/serve.ts";
 
 const MAIN = `${import.meta.dir}/../../src/cli/main.ts`;
@@ -51,6 +52,31 @@ describe("bunzzle serve", () => {
     expect(await mode("keys")).toBe(0o700);
     expect(await mode("run")).toBe(0o750);
     expect(await mode("keys/epochs.json")).toBe(0o600);
+  });
+
+  test("operator methods only on admin.sock; core.sock needs a key", async () => {
+    const mode = async (p: string) => (await Bun.file(`${served.dir}/${p}`).stat()).mode & 0o777;
+    expect(await mode("run/admin.sock")).toBe(0o600);
+    expect(await mode("run/core.sock")).toBe(0o660);
+    expect(await mode("run/core-inbound.sock")).toBe(0o660);
+    const roles = new RpcClient(`${served.dir}/run/core.sock`);
+    const inbound = new RpcClient(`${served.dir}/run/core-inbound.sock`);
+    const admin = new RpcClient(`${served.dir}/run/admin.sock`);
+    try {
+      const code = (p: Promise<unknown>) =>
+        p.then(
+          () => "ok",
+          (e: RpcError) => e.code,
+        );
+      expect(await code(roles.call("ips", {}))).toBe("unauthenticated");
+      expect(await code(roles.call("createKey", { name: "x", scope: "full" }))).toBe("invalid");
+      expect(await code(inbound.call("listEmails", {}))).toBe("invalid");
+      expect(await code(admin.call("listKeys", {}))).toBe("ok");
+    } finally {
+      roles.close();
+      inbound.close();
+      admin.close();
+    }
   });
 
   test("a killed role is restarted and health recovers", async () => {

@@ -94,7 +94,7 @@ async function callRetrying<T>(client: RpcClient, method: string, params: unknow
 test(
   "no email is lost or silently duplicated while roles are killed at random",
   async () => {
-    const core = new RpcClient(`${served.dir}/run/core.sock`);
+    const core = new RpcClient(`${served.dir}/run/admin.sock`);
     await verifiedDomain(core, "bunzzle.test");
     let kills = 0;
     const killer = (async () => {
@@ -195,7 +195,7 @@ test("core refuses email from a domain the signer has no key for", async () => {
     BUNZZLE_KEYS_DIR: keysDir,
     BUNZZLE_EHLO_NAME: "out.bunzzle.test",
   });
-  const core = new RpcClient(`${again.dir}/run/core.sock`);
+  const core = new RpcClient(`${again.dir}/run/admin.sock`);
   const err = await core
     .call("enqueue", {
       from: "ceo@other.test",

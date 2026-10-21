@@ -1,6 +1,6 @@
 import type { Config } from "../config.ts";
 import { RpcClient, RpcError } from "../ipc/rpc.ts";
-import { sockets } from "../roles/wire.ts";
+import { adminSocket } from "../roles/admin-socket.ts";
 import { parseArgs, UsageError } from "./args.ts";
 
 interface DomainRecordView {
@@ -22,7 +22,7 @@ const SYSTEM_RUN_DIR = "/run/bunzzle";
 
 export async function runDirOf(config: Config): Promise<string> {
   if (Bun.env["BUNZZLE_RUN_DIR"]) return config.runDir;
-  const system = sockets(SYSTEM_RUN_DIR).core;
+  const system = adminSocket(SYSTEM_RUN_DIR);
   const isSocket = await Bun.file(system)
     .stat()
     .then((s) => s.isSocket())
@@ -32,13 +32,13 @@ export async function runDirOf(config: Config): Promise<string> {
 
 async function call<T>(config: Config, method: string, params: unknown): Promise<T> {
   const runDir = await runDirOf(config);
-  const core = new RpcClient(sockets(runDir).core);
+  const core = new RpcClient(adminSocket(runDir));
   try {
     return await core.call<T>(method, params, { timeoutMs: 60_000 });
   } catch (err) {
     if (err instanceof RpcError && err.code === "unavailable") {
       throw new UsageError(
-        `cannot reach Bunzzle at ${runDir}/core.sock: is \`bunzzle serve\` running (same BUNZZLE_RUN_DIR)?`,
+        `cannot reach Bunzzle at ${adminSocket(runDir)}: is \`bunzzle serve\` running (same BUNZZLE_RUN_DIR)?`,
       );
     }
     if (err instanceof RpcError && (err.code === "invalid" || err.code === "not-found")) {

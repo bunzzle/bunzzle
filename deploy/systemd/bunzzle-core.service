@@ -12,6 +12,7 @@ Group=bunzzle-core
 EnvironmentFile=/etc/bunzzle/bunzzle.env
 Environment=BUNZZLE_RUN_DIR=/run/bunzzle
 Environment=BUNZZLE_ENV_FILE=/etc/bunzzle/bunzzle.env
+Environment=BUNZZLE_INBOUND_SOCKET_GROUP=bunzzle-core-inbound
 ExecStart=/usr/local/bin/bunzzle role core
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always

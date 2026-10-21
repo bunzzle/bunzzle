@@ -54,6 +54,7 @@ const schema = b.object({
   BUNZZLE_INBOUND_HOSTNAME: optional,
   BUNZZLE_INBOUND_BLOCKLISTS: b.string().default(""),
   BUNZZLE_INBOUND_REFUSE: b.string().default(""),
+  BUNZZLE_INBOUND_SOCKET_GROUP: optional,
   BUNZZLE_INBOUND_TLS_CERT_FILE: optional,
   BUNZZLE_INBOUND_TLS_KEY_FILE: optional,
   BUNZZLE_DANE: b.enum(["auto", "off"]).default("auto"),
@@ -171,6 +172,7 @@ export interface Config {
   inboundHostname: string | null;
   inboundBlocklists: string[];
   inboundRefuse: ("spf" | "dmarc" | "blocklist")[];
+  inboundSocketGroup: string | null;
   inboundTlsCertFile: string | null;
   inboundTlsKeyFile: string | null;
   dane: "auto" | "off";
@@ -392,6 +394,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     inboundHostname: c.BUNZZLE_INBOUND_HOSTNAME ?? c.BUNZZLE_EHLO_NAME,
     inboundBlocklists,
     inboundRefuse: inboundRefuse as Config["inboundRefuse"],
+    inboundSocketGroup: c.BUNZZLE_INBOUND_SOCKET_GROUP,
     inboundTlsCertFile: c.BUNZZLE_INBOUND_TLS_CERT_FILE ?? (acme ? `${certsDir}/cert.pem` : null),
     inboundTlsKeyFile: c.BUNZZLE_INBOUND_TLS_KEY_FILE ?? (acme ? `${certsDir}/key.pem` : null),
     acme,
