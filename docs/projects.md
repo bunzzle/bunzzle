@@ -48,6 +48,10 @@ sudo bunzzle domains move shop.example shop
 
 Email already queued for the old project is still sent. Its stats and suppressions stay with the old project.
 
+## Reputation
+
+With more than one project, bulk email of a project that sends from several domains is also checked across all of them: a hard bounce rate of 5 % or a complaint rate of 0.3 % over the last two days holds the whole project's bulk lane, even when no single domain is over. Transactional email keeps going. `bunzzle holds` shows the hold, and only the operator releases it with `bunzzle holds release ID`.
+
 ## Suppressions
 
 Complaints, unsubscribes and addresses added by hand belong to one project. An address that bounced because it does not exist, or whose domain takes no email, is suppressed for every project: other projects see it as reason `invalid`, without the bounce text or which project sent to it. A project cannot remove such an address. `BUNZZLE_SHARED_BOUNCES=false` keeps these bounces per project too.

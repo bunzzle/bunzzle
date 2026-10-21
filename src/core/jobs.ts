@@ -69,6 +69,7 @@ export function enqueue(db: Database, m: NewMessage, now: number): string {
 export interface ClaimedJob {
   id: string;
   messageId: string;
+  project: string;
   target: string;
   type: string;
   payload: unknown;
@@ -230,6 +231,7 @@ export function claim(
       {
         id: r.id,
         messageId: r.message_id,
+        project: r.project_id,
         target: r.target,
         type: m.type,
         payload: JSON.parse(m.payload),

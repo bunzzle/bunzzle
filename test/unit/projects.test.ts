@@ -47,7 +47,13 @@ import {
 import { countEmail, searchEmails, statsFor } from "../../src/emails/search.ts";
 import { emailSummary, emailView } from "../../src/emails/view.ts";
 import { nextAdminBatch } from "../../src/eventlog/export.ts";
-import { createHold, listHolds, releaseHold } from "../../src/guards/guards.ts";
+import {
+  countSender,
+  createHold,
+  listHolds,
+  releaseHold,
+  reputationGuard,
+} from "../../src/guards/guards.ts";
 import {
   createRoute,
   deleteRoute,
@@ -637,5 +643,31 @@ describe("projects", () => {
     expect(suppressionFor(db, A, "gone@dest.test", "transactional", T0, true)?.reason).toBe(
       "manual",
     );
+  });
+
+  test("bad bulk mail spread over a project's domains holds the whole project", () => {
+    const db = openDatabase({ path: ":memory:" });
+    const log = createLogger("error", {}, () => {});
+    const add = (project: ProjectId, name: string) =>
+      saveDomain(
+        db,
+        { project, name, status: "verified", records: [], createdAt: T0, checkedAt: null },
+        T0,
+      );
+    add(A, "a1.test");
+    add(A, "a2.test");
+    for (const d of ["a1.test", "a2.test"]) {
+      countSender(db, d, "bulk", { delivered: 100, hardBounced: 6 }, T0);
+    }
+    expect(reputationGuard(db, T0, 150, log)).toEqual([]);
+
+    db.run("INSERT INTO projects (id, name, created_at) VALUES (?, 'other', ?)", [B, T0]);
+    const [hold] = reputationGuard(db, T0, 150, log);
+    expect(hold).toMatchObject({ target: `project:${A}`, lane: "bulk" });
+    expect(reputationGuard(db, T0, 150, log)).toEqual([]);
+    expect(listHolds(db, A).map((h) => h.target)).toEqual([`project:${A}`]);
+    expect(listHolds(db, B)).toEqual([]);
+    expect(releaseHold(db, A, hold?.id as string, T0)).toBe(false);
+    expect(releaseHold(db, null, hold?.id as string, T0)).toBe(true);
   });
 });

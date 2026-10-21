@@ -289,6 +289,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
     if (lane === "bulk") {
       const hold =
         activeHold(db, `domain:${senderDomain}`, "bulk") ??
+        activeHold(db, `project:${job.project}`, "bulk") ??
         (apiKeyId ? activeHold(db, `key:${apiKeyId}`, "bulk") : null);
       if (hold) return waitFor(`bulk mail on hold: ${hold.reason}`, holdRetryMs, true, null);
     }
