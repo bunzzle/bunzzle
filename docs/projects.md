@@ -50,7 +50,7 @@ Email already queued for the old project is still sent. Its stats and suppressio
 
 ## Reputation
 
-With more than one project, bulk email of a project that sends from several domains is also checked across all of them: a hard bounce rate of 5 % or a complaint rate of 0.3 % over the last two days holds the whole project's bulk lane, even when no single domain is over. Transactional email keeps going. `bunzzle holds` shows the hold, and only the operator releases it with `bunzzle holds release ID`.
+Each sending domain's bulk email is checked on its own. When the server has two or more projects (removed ones do not count), the bulk email of a project that sends it from two or more domains is also checked over all those domains together: a hard bounce rate of 5 % or a complaint rate of 0.3 % over the last two days holds the whole project's bulk lane. The total must reach `BUNZZLE_GUARD_MIN_VOLUME` emails, which each domain alone may not, so spreading email over many domains does not avoid the check. A project with one domain, or a server with one project, is checked per domain only. Transactional email keeps going. `bunzzle holds` shows the hold, and only the operator releases it with `bunzzle holds release ID`.
 
 ## Suppressions
 

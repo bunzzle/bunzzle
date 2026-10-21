@@ -670,4 +670,42 @@ describe("projects", () => {
     expect(releaseHold(db, A, hold?.id as string, T0)).toBe(false);
     expect(releaseHold(db, null, hold?.id as string, T0)).toBe(true);
   });
+
+  test("no project hold for a project with one domain, or when the other project is removed", () => {
+    const db = openDatabase({ path: ":memory:" });
+    const log = createLogger("error", {}, () => {});
+    db.run("INSERT INTO projects (id, name, created_at) VALUES (?, 'other', ?)", [B, T0]);
+    saveDomain(
+      db,
+      {
+        project: A,
+        name: "a1.test",
+        status: "verified",
+        records: [],
+        createdAt: T0,
+        checkedAt: null,
+      },
+      T0,
+    );
+    countSender(db, "a1.test", "bulk", { delivered: 200, hardBounced: 20 }, T0);
+    expect(reputationGuard(db, T0, 150, log).map((h) => h.target)).toEqual(["domain:a1.test"]);
+
+    saveDomain(
+      db,
+      {
+        project: A,
+        name: "a2.test",
+        status: "verified",
+        records: [],
+        createdAt: T0,
+        checkedAt: null,
+      },
+      T0,
+    );
+    countSender(db, "a2.test", "bulk", { delivered: 100, hardBounced: 10 }, T0);
+    db.run("UPDATE projects SET deleted_at = ? WHERE id = ?", [T0, B]);
+    expect(reputationGuard(db, T0, 150, log).map((h) => h.target)).toEqual([]);
+    db.run("UPDATE projects SET deleted_at = NULL WHERE id = ?", [B]);
+    expect(reputationGuard(db, T0, 150, log).map((h) => h.target)).toEqual([`project:${A}`]);
+  });
 });
