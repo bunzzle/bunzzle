@@ -40,6 +40,7 @@ import { rotation } from "./core-rotation.ts";
 import { routeMethods } from "./core-routes.ts";
 import { templateMethods } from "./core-templates.ts";
 import { trackingMethods } from "./core-tracking.ts";
+import { zonePublisher } from "./core-zone.ts";
 import { every, onStop, privateDir, ready } from "./runtime.ts";
 import {
   deliveryReportWire,
@@ -86,6 +87,7 @@ export async function runCore(config: Config, log: Logger) {
   const signer = new RpcClient(sock.signer);
   const delivery = new RpcClient(sock.delivery);
   const dns = new RpcClient(sock.dns);
+  const ns = config.ns ? new RpcClient(sock.ns) : null;
 
   let settled: string[] = [];
   const takeSettled = () => settled.splice(0, 5000);
@@ -427,9 +429,25 @@ export async function runCore(config: Config, log: Logger) {
 
   const stopSettled = every(5_000, flushSettled);
 
+  const zone =
+    config.ns && ns
+      ? zonePublisher({
+          ns,
+          zone: config.ns.zone,
+          ttl: config.ns.ttl,
+          sourceIps: config.sourceIps.map((x) => x.ip),
+          inboundHost: config.inboundHostname,
+          domains: () => [],
+          log,
+        })
+      : null;
+  const stopZone = zone ? every(10_000, () => zone.tick()) : () => {};
+  if (zone) setTimeout(() => void zone.tick(), 1_000);
+
   await scheduler.start();
   onStop(log, async () => {
     stopSettled();
+    stopZone();
     stopShred();
     stopPrune();
     stopPurge();

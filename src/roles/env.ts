@@ -42,6 +42,7 @@ const BY_ROLE: Record<Role, string[]> = {
     "BUNZZLE_TLSRPT_CONTACT",
     "BUNZZLE_RELAY_HOST",
     "BUNZZLE_RELAY_FOR",
+    "BUNZZLE_NS_TTL",
     "BUNZZLE_NS_ZONE",
     "BUNZZLE_NS_NAMES",
     "BUNZZLE_NS_LISTEN",

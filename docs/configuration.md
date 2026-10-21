@@ -200,7 +200,7 @@ Add and verify your domains in Postmaster Tools first. Then, on a machine with a
 
 ## Delegated DNS zone
 
-With these settings the `ns` role answers DNS for one zone over UDP and TCP. Set the zone's NS records and glue at the parent to the names and addresses below. The role answers only for this zone and never resolves other names; zone transfers and dynamic updates are refused. Each client network gets a response rate limit, separately for answers, negative answers and errors; answers over the limit are dropped. Queries are not logged one by one; when limits were hit, one warning per minute gives the counts. The zone is saved to `BUNZZLE_DATA_DIR/ns-zone.json` and served from there after a restart.
+With these settings the `ns` role answers DNS for one zone over UDP and TCP. Set the zone's NS records and glue at the parent to the names and addresses below. The role answers only for this zone and never resolves other names; zone transfers and dynamic updates are refused. Each client network gets a response rate limit, separately for answers, negative answers and errors; answers over the limit are dropped. Queries are not logged one by one; when limits were hit, one warning per minute gives the counts. The zone is saved to `BUNZZLE_DATA_DIR/ns-zone.json` and served from there after a restart. Core builds the zone and sends it to the `ns` role at start and after every change: `_spf.<zone>` with the sending IPs, `_check.<zone>` with the zone serial, and for each delegated domain a return-path MX and SPF record and its DKIM keys.
 
 | Variable | Default | |
 |---|---|---|
@@ -208,6 +208,7 @@ With these settings the `ns` role answers DNS for one zone over UDP and TCP. Set
 | `BUNZZLE_NS_NAMES` | | Comma-separated name server host names outside the zone, for example `ns1.mail.example.net,ns2.mail.example.net`. |
 | `BUNZZLE_NS_LISTEN` | | Comma-separated public IP addresses to listen on. |
 | `BUNZZLE_NS_PORT` | `53` | Port for UDP and TCP. |
+| `BUNZZLE_NS_TTL` | `300` | TTL in seconds for the records in the zone (60 to 86400). |
 | `BUNZZLE_NS_RRL_V4_PREFIX` | `24` | IPv4 prefix length that counts as one client network for the rate limit. |
 | `BUNZZLE_NS_RRL_V6_PREFIX` | `56` | IPv6 prefix length that counts as one client network for the rate limit. |
 | `BUNZZLE_NS_RRL_SLIP` | `0` | Send every Nth answer over the limit as an empty truncated reply, so real resolvers in a limited network can retry over TCP. `0` drops them all. |
