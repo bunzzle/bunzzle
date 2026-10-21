@@ -25,3 +25,19 @@ export function resolveActor(db: Database, hash: string | undefined, ...needed: 
   }
   return { kind: "project", project: key.projectId, key };
 }
+
+export const scopeOf = (actor: Actor): ProjectId | null =>
+  actor.kind === "operator" ? null : actor.project;
+
+export function requireServerWide(db: Database, actor: Actor): void {
+  if (actor.kind === "operator") return;
+  const n =
+    db.query<{ n: number }, []>("SELECT count(*) AS n FROM projects WHERE deleted_at IS NULL").get()
+      ?.n ?? 0;
+  if (n > 1) {
+    throw new RpcError(
+      "forbidden",
+      "this changes delivery for every project; the operator must do it",
+    );
+  }
+}

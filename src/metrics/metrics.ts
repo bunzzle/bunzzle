@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
+import type { ProjectId } from "../accounts/projects.ts";
 import { countByState } from "../core/jobs.ts";
 import type { StorageState } from "../core/storage.ts";
+import { PROJECT_HOLDS } from "../guards/guards.ts";
 import type { PathView } from "../shaping/shaper.ts";
 import { VERSION } from "../version.ts";
 
@@ -40,18 +42,20 @@ export function render(families: Family[]): string {
 
 export function collect(
   db: Database,
+  project: ProjectId | null,
   paths: PathView[],
   now: number,
   startedAt: number,
   storage?: StorageState,
 ): Family[] {
-  const jobs = countByState(db);
+  const jobs = countByState(db, project);
   const recipients = db
-    .query<{ status: string; target: string; n: number }, []>(
+    .query<{ status: string; target: string; n: number }, [string | null]>(
       `SELECT r.status, j.target, count(*) AS n FROM recipients r JOIN jobs j ON j.id = r.job_id
+       WHERE ?1 IS NULL OR j.project_id = ?1
        GROUP BY r.status, j.target`,
     )
-    .all();
+    .all(project);
   const busiest = new Map<string, number>();
   for (const r of recipients) busiest.set(r.target, (busiest.get(r.target) ?? 0) + r.n);
   const top = new Set(
@@ -65,8 +69,8 @@ export function collect(
     const key = `${r.status}\u0000${top.has(r.target) ? r.target : "other"}`;
     byStatus.set(key, (byStatus.get(key) ?? 0) + r.n);
   }
-  const one = (sql: string, ...args: number[]) =>
-    db.query<{ n: number }, number[]>(sql).get(...args)?.n ?? 0;
+  const one = (sql: string, ...args: (number | string | null)[]) =>
+    db.query<{ n: number }, (number | string | null)[]>(sql).get(...args)?.n ?? 0;
   return [
     {
       name: "bunzzle_build",
@@ -170,7 +174,9 @@ export function collect(
         {
           labels: {},
           value: one(
-            "SELECT count(*) AS n FROM webhook_deliveries WHERE state IN ('pending', 'sending')",
+            `SELECT count(*) AS n FROM webhook_deliveries d JOIN webhooks w ON w.id = d.webhook_id
+             WHERE d.state IN ('pending', 'sending') AND (?1 IS NULL OR w.project_id = ?1)`,
+            project,
           ),
         },
       ],
@@ -183,7 +189,9 @@ export function collect(
         {
           labels: {},
           value: one(
-            "SELECT count(*) AS n FROM suppressions WHERE expires_at IS NULL OR expires_at > ?",
+            `SELECT count(*) AS n FROM suppressions
+             WHERE (expires_at IS NULL OR expires_at > ?2) AND (?1 IS NULL OR project_id = ?1)`,
+            project,
             now,
           ),
         },
@@ -194,7 +202,13 @@ export function collect(
       type: "gauge",
       help: "Active holds on bulk mail by the reputation or anomaly guard.",
       samples: [
-        { labels: {}, value: one("SELECT count(*) AS n FROM holds WHERE released_at IS NULL") },
+        {
+          labels: {},
+          value: one(
+            `SELECT count(*) AS n FROM holds WHERE released_at IS NULL AND ${PROJECT_HOLDS}`,
+            project,
+          ),
+        },
       ],
     },
   ];

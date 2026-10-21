@@ -57,7 +57,7 @@ import { queueSummary, removeQueued, resume, type Suspension, suspend } from "..
 import type { PathView } from "../shaping/shaper.ts";
 import { suppressionFor } from "../suppressions/store.ts";
 import { b } from "../validate/schema.ts";
-import { type Actor, resolveActor } from "./actor.ts";
+import { type Actor, requireServerWide, resolveActor, scopeOf } from "./actor.ts";
 import { DOMAIN, enqueueParams, MESSAGE_ID, tokenHash } from "./wire.ts";
 
 const SUSPEND_TARGET =
@@ -754,9 +754,9 @@ export function coreMethods(deps: CoreDeps): {
     }),
 
     holds: method(b.object({ tokenHash, all: b.boolean().default(false) }), (p) => {
-      caller(p.tokenHash, "read");
+      const scope = scopeOf(caller(p.tokenHash, "read"));
       return {
-        holds: listHolds(db, p.all).map((h) => ({
+        holds: listHolds(db, scope, p.all).map((h) => ({
           object: "hold",
           id: h.id,
           target: h.target,
@@ -765,7 +765,7 @@ export function coreMethods(deps: CoreDeps): {
           created_at: new Date(h.createdAt).toISOString(),
           released_at: h.releasedAt === null ? null : new Date(h.releasedAt).toISOString(),
         })),
-        senders: senderRates(db, now()).map((r) => ({
+        senders: senderRates(db, scope, now()).map((r) => ({
           domain: r.domain,
           lane: r.lane,
           delivered: r.delivered,
@@ -778,8 +778,8 @@ export function coreMethods(deps: CoreDeps): {
     }),
 
     releaseHold: method(b.object({ tokenHash, id: b.string().max(64) }), async (p) => {
-      caller(p.tokenHash, "full");
-      if (!(await writer.run((d) => releaseHold(d, p.id, now())))) {
+      const scope = scopeOf(caller(p.tokenHash, "full"));
+      if (!(await writer.run((d) => releaseHold(d, scope, p.id, now())))) {
         throw new RpcError("not-found", "no active hold with that id");
       }
       log.info("hold released", { id: p.id });
@@ -787,8 +787,7 @@ export function coreMethods(deps: CoreDeps): {
     }),
 
     queue: method(b.object({ tokenHash }), (p) => {
-      caller(p.tokenHash, "read");
-      const q = queueSummary(db, now());
+      const q = queueSummary(db, scopeOf(caller(p.tokenHash, "read")), now());
       return { ...q, suspensions: q.suspensions.map(suspensionView) };
     }),
 
@@ -800,7 +799,7 @@ export function coreMethods(deps: CoreDeps): {
         until: b.number().int().positive().nullable().default(null),
       }),
       async (p) => {
-        caller(p.tokenHash, "full");
+        requireServerWide(db, caller(p.tokenHash, "full"));
         const t = now();
         if (p.until !== null && p.until <= t) throw new RpcError("invalid", "until is in the past");
         const s = await writer.run((d) => suspend(d, p.target, p.reason, p.until, t));
@@ -810,7 +809,7 @@ export function coreMethods(deps: CoreDeps): {
     ),
 
     resume: method(b.object({ tokenHash, target: b.string().max(300) }), async (p) => {
-      caller(p.tokenHash, "full");
+      requireServerWide(db, caller(p.tokenHash, "full"));
       const r = await writer.run((d) => resume(d, p.target, now()));
       if (!r.resumed) throw new RpcError("not-found", `${p.target} is not suspended`);
       log.info("delivery resumed by an operator", { target: p.target, woken: r.woken });
@@ -828,7 +827,7 @@ export function coreMethods(deps: CoreDeps): {
         dryRun: b.boolean().default(false),
       }),
       async (p) => {
-        caller(p.tokenHash, "full");
+        const scope = scopeOf(caller(p.tokenHash, "full"));
         const filter = {
           ...(p.domain !== undefined ? { domain: p.domain } : {}),
           ...(p.senderDomain !== undefined ? { senderDomain: p.senderDomain } : {}),
@@ -838,7 +837,7 @@ export function coreMethods(deps: CoreDeps): {
           throw new RpcError("invalid", "give at least one filter: domain, sender domain or age");
         }
         const r = await writer.run((d) =>
-          removeQueued(d, filter, p.action, p.reason, now(), p.dryRun),
+          removeQueued(d, scope, filter, p.action, p.reason, now(), p.dryRun),
         );
         if (!p.dryRun && r.jobs > 0) {
           log.warn(`queued email ${p.action === "cancel" ? "canceled" : "failed"} by an operator`, {
@@ -857,9 +856,9 @@ export function coreMethods(deps: CoreDeps): {
     ),
 
     metrics: method(b.object({ tokenHash }), (p) => {
-      caller(p.tokenHash, "read");
+      const scope = scopeOf(caller(p.tokenHash, "read"));
       return {
-        text: render(collect(db, deps.paths?.() ?? [], now(), startedAt, deps.storage?.())),
+        text: render(collect(db, scope, deps.paths?.() ?? [], now(), startedAt, deps.storage?.())),
       };
     }),
 
