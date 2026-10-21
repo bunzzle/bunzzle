@@ -9,7 +9,7 @@ import { countByState } from "../core/jobs.ts";
 import type { Logger } from "../core/log.ts";
 import type { StorageState } from "../core/storage.ts";
 import type { Writer } from "../core/store/writer.ts";
-import { type EpochPublicKey, sealBody } from "../crypto/envelope.ts";
+import { BodySealer, type EpochPublicKey } from "../crypto/envelope.ts";
 import {
   cancelEmail,
   enqueueEmail,
@@ -133,6 +133,7 @@ export function coreMethods(deps: CoreDeps): {
   enqueueInternal(from: string, to: string, data: string): Promise<string>;
 } {
   const { db, writer, log, signer, delivery } = deps;
+  const sealer = new BodySealer();
   const now = deps.now ?? Date.now;
   const startedAt = now();
 
@@ -302,7 +303,7 @@ export function coreMethods(deps: CoreDeps): {
     }
     const counted = key?.test ? 0 : sending.size;
     await deps.scan?.(p.data, envelopeFrom, p.recipients);
-    const body = await sealBody(await deps.currentKey(), id, p.data);
+    const body = await sealer.seal(await deps.currentKey(), id, p.data);
     return {
       id,
       existed: false as const,

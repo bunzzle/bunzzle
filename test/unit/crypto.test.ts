@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { epochKeyPair, newEpochSeed, openBody, sealBody } from "../../src/crypto/envelope.ts";
+import {
+  BodySealer,
+  epochKeyPair,
+  newEpochSeed,
+  openBody,
+  sealBody,
+} from "../../src/crypto/envelope.ts";
 import { generateMasterKey, MasterKeyError, masterKeyFrom } from "../../src/crypto/master.ts";
 import { Keystore } from "../../src/signer/keystore.ts";
 
@@ -21,6 +27,39 @@ describe("master key", () => {
   test("rejects keys that are not 32 bytes of base64", async () => {
     expect(masterKeyFrom("short")).rejects.toThrow(MasterKeyError);
     expect(masterKeyFrom(new Uint8Array(16).toBase64())).rejects.toThrow("32 bytes");
+  });
+});
+
+describe("body sealer", () => {
+  test("bodies sealed in one window share the ephemeral key but not the wrapped key, and open as before", async () => {
+    const pair = await epochKeyPair(20_000, newEpochSeed());
+    let t = 0;
+    const sealer = new BodySealer({ reuseMs: 1_000, now: () => t });
+    const [a, b] = await Promise.all([
+      sealer.seal(pair, "m1", "Subject: a\r\n\r\none"),
+      sealer.seal(pair, "m2", "Subject: b\r\n\r\ntwo"),
+    ]);
+    expect(a.wrapped.subarray(0, 32)).toEqual(b.wrapped.subarray(0, 32));
+    expect(a.wrapped.subarray(32)).not.toEqual(b.wrapped.subarray(32));
+    expect(await openBody(pair, "m1", a)).toBe("Subject: a\r\n\r\none");
+    expect(await openBody(pair, "m2", b)).toBe("Subject: b\r\n\r\ntwo");
+    expect(openBody(pair, "m2", a)).rejects.toThrow();
+    t = 1_000;
+    const c = await sealer.seal(pair, "m3", "three");
+    expect(c.wrapped.subarray(0, 32)).not.toEqual(a.wrapped.subarray(0, 32));
+    expect(await openBody(pair, "m3", c)).toBe("three");
+  });
+
+  test("a new epoch gets a new ephemeral key at once", async () => {
+    const one = await epochKeyPair(20_000, newEpochSeed());
+    const two = await epochKeyPair(20_001, newEpochSeed());
+    const sealer = new BodySealer({ reuseMs: 60_000 });
+    const a = await sealer.seal(one, "m1", "x");
+    const b = await sealer.seal(two, "m2", "y");
+    expect(b.epoch).toBe(20_001);
+    expect(b.wrapped.subarray(0, 32)).not.toEqual(a.wrapped.subarray(0, 32));
+    expect(await openBody(two, "m2", b)).toBe("y");
+    expect(openBody(one, "m2", b)).rejects.toThrow();
   });
 });
 
