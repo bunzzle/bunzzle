@@ -66,6 +66,7 @@ export function createHold(
 }
 
 export const PROJECT_HOLDS = `(?1 IS NULL
+  OR target = 'project:' || ?1
   OR target IN (SELECT 'domain:' || name FROM domains WHERE project_id = ?1)
   OR target IN (SELECT 'key:' || id FROM api_keys WHERE project_id = ?1))`;
 
@@ -78,7 +79,8 @@ export function releaseHold(
   return (
     db
       .query<unknown, [string | null, number, string]>(
-        `UPDATE holds SET released_at = ?2 WHERE id = ?3 AND released_at IS NULL AND ${PROJECT_HOLDS}`,
+        `UPDATE holds SET released_at = ?2 WHERE id = ?3 AND released_at IS NULL AND ${PROJECT_HOLDS}
+         AND (?1 IS NULL OR target NOT LIKE 'project:%')`,
       )
       .run(project, now, id).changes > 0
   );
@@ -174,7 +176,68 @@ export function reputationGuard(db: Database, now: number, minVolume: number, lo
       made.push(hold);
     }
   }
+  const projects =
+    db.query<{ n: number }, []>("SELECT count(*) AS n FROM projects WHERE deleted_at IS NULL").get()
+      ?.n ?? 0;
+  if (projects < 2) return made;
+  for (const r of projectRates(db, now)) {
+    if (r.domains < 2 || r.delivered + r.hardBounced < minVolume) continue;
+    const reason =
+      r.complaintRate >= 0.003
+        ? `complaint rate ${(r.complaintRate * 100).toFixed(2)}% across the project's domains over the last two days`
+        : r.bounceRate >= 0.05
+          ? `hard bounce rate ${(r.bounceRate * 100).toFixed(1)}% across the project's domains over the last two days`
+          : null;
+    if (!reason) continue;
+    const { hold, created } = createHold(db, `project:${r.project}`, "bulk", reason, now);
+    if (created) {
+      log.error("bulk mail paused for a project", { project: r.project, reason });
+      made.push(hold);
+    }
+  }
   return made;
+}
+
+export interface ProjectRates {
+  project: string;
+  domains: number;
+  delivered: number;
+  hardBounced: number;
+  complained: number;
+  complaintRate: number;
+  bounceRate: number;
+}
+
+export function projectRates(db: Database, now: number): ProjectRates[] {
+  const since = Math.floor(now / DAY_MS) - 1;
+  return db
+    .query<
+      {
+        project: string;
+        domains: number;
+        delivered: number;
+        hard_bounced: number;
+        complained: number;
+      },
+      [number]
+    >(
+      `SELECT d.project_id AS project, count(DISTINCT s.domain) AS domains,
+         sum(s.delivered) AS delivered, sum(s.hard_bounced) AS hard_bounced,
+         sum(s.complained) AS complained
+       FROM sender_stats s JOIN domains d ON d.name = s.domain
+       WHERE s.day >= ? AND s.lane = 'bulk'
+       GROUP BY d.project_id`,
+    )
+    .all(since)
+    .map((r) => ({
+      project: r.project,
+      domains: r.domains,
+      delivered: r.delivered,
+      hardBounced: r.hard_bounced,
+      complained: r.complained,
+      complaintRate: r.complained / Math.max(1, r.delivered),
+      bounceRate: r.hard_bounced / Math.max(1, r.delivered + r.hard_bounced),
+    }));
 }
 
 export function countKeyBulk(db: Database, keyId: string, n: number, now: number): number {

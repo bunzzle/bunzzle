@@ -263,6 +263,7 @@ export function coreMethods(deps: CoreDeps): {
     if (lane === "bulk") {
       const hold =
         activeHold(db, `domain:${headerDomain}`, "bulk") ??
+        activeHold(db, `project:${project}`, "bulk") ??
         (key ? activeHold(db, `key:${key.id}`, "bulk") : null);
       if (hold) {
         throw new RpcError(

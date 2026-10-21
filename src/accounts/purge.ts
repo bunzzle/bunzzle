@@ -21,6 +21,7 @@ const MESSAGE_CHILDREN = [
 
 const PROJECT_ROWS = [
   "DELETE FROM holds WHERE target IN (SELECT 'key:' || id FROM api_keys WHERE project_id = ?)",
+  "DELETE FROM holds WHERE target = 'project:' || ?",
   "DELETE FROM api_keys WHERE project_id = ?",
   "DELETE FROM webhook_deliveries WHERE webhook_id IN (SELECT id FROM webhooks WHERE project_id = ?)",
   "DELETE FROM webhooks WHERE project_id = ?",
