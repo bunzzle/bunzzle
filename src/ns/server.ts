@@ -26,6 +26,7 @@ export interface NsOptions {
   names: string[];
   limits?: LimitOptions;
   tcp?: TcpLimits;
+  now?: () => number;
 }
 
 export interface NsStats {
@@ -66,7 +67,7 @@ export class NsServer {
   constructor(opts: NsOptions) {
     this.apex = opts.apex;
     this.names = opts.names;
-    this.#limiter = new ResponseLimiter(opts.limits ?? DEFAULT_LIMITS);
+    this.#limiter = new ResponseLimiter(opts.limits ?? DEFAULT_LIMITS, opts.now);
     this.#tcp = opts.tcp ?? DEFAULT_TCP;
   }
 
@@ -237,4 +238,18 @@ export class NsServer {
       },
     });
   }
+}
+
+export type LimitSummary = NsStats["dropped"] & { refused: number; timeouts: number };
+
+export function limitSummary(prev: NsStats, next: NsStats): LimitSummary | null {
+  const d = {
+    malformed: next.dropped.malformed - prev.dropped.malformed,
+    slipped: next.dropped.slipped - prev.dropped.slipped,
+    limited: next.dropped.limited - prev.dropped.limited,
+    global: next.dropped.global - prev.dropped.global,
+    refused: next.tcp.refused - prev.tcp.refused,
+    timeouts: next.tcp.timeouts - prev.tcp.timeouts,
+  };
+  return d.slipped + d.limited + d.global + d.refused > 0 ? d : null;
 }

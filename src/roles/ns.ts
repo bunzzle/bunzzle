@@ -2,10 +2,10 @@ import { type Config, ConfigError } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { method, RpcError, serveRpc } from "../ipc/rpc.ts";
 import { DEFAULT_LIMITS } from "../ns/limits.ts";
-import { NsServer } from "../ns/server.ts";
+import { limitSummary, NsServer } from "../ns/server.ts";
 import { ZoneError, zoneWire } from "../ns/zone.ts";
 import { b } from "../validate/schema.ts";
-import { onStop, privateDir, ready } from "./runtime.ts";
+import { every, onStop, privateDir, ready } from "./runtime.ts";
 import { sockets } from "./wire.ts";
 
 export async function runNs(config: Config, log: Logger) {
@@ -14,7 +14,7 @@ export async function runNs(config: Config, log: Logger) {
   const server = new NsServer({
     apex: ns.zone,
     names: ns.names,
-    limits: { ...DEFAULT_LIMITS, v4Prefix: ns.v4Prefix, v6Prefix: ns.v6Prefix },
+    limits: { ...DEFAULT_LIMITS, v4Prefix: ns.v4Prefix, v6Prefix: ns.v6Prefix, slip: ns.slip },
   });
 
   await privateDir(config.dataDir);
@@ -49,7 +49,16 @@ export async function runNs(config: Config, log: Logger) {
   const ports: number[] = [];
   for (const ip of ns.listen) ports.push(await server.listen(ip, ns.port));
 
+  let last = server.snapshot();
+  const stopSummary = every(60_000, () => {
+    const now = server.snapshot();
+    const hit = limitSummary(last, now);
+    last = now;
+    if (hit) log.warn("ns limits hit in the last minute", hit);
+  });
+
   onStop(log, () => {
+    stopSummary();
     server.stop();
     rpc.stop();
   });

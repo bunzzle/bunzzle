@@ -115,6 +115,7 @@ const schema = b.object({
   BUNZZLE_NS_PORT: b.coerce.number().int().min(0).max(65535).default(53),
   BUNZZLE_NS_RRL_V4_PREFIX: b.coerce.number().int().min(8).max(32).default(24),
   BUNZZLE_NS_RRL_V6_PREFIX: b.coerce.number().int().min(16).max(128).default(56),
+  BUNZZLE_NS_RRL_SLIP: b.coerce.number().int().min(0).max(10).default(0),
 });
 
 export interface SourceIp {
@@ -228,6 +229,7 @@ export interface Config {
     port: number;
     v4Prefix: number;
     v6Prefix: number;
+    slip: number;
   } | null;
   postmaster: {
     clientId: string;
@@ -257,6 +259,7 @@ function nsConfig(c: {
   BUNZZLE_NS_PORT: number;
   BUNZZLE_NS_RRL_V4_PREFIX: number;
   BUNZZLE_NS_RRL_V6_PREFIX: number;
+  BUNZZLE_NS_RRL_SLIP: number;
 }): Config["ns"] {
   const names = list(c.BUNZZLE_NS_NAMES);
   const listen = list(c.BUNZZLE_NS_LISTEN);
@@ -303,6 +306,7 @@ function nsConfig(c: {
     port: c.BUNZZLE_NS_PORT,
     v4Prefix: c.BUNZZLE_NS_RRL_V4_PREFIX,
     v6Prefix: c.BUNZZLE_NS_RRL_V6_PREFIX,
+    slip: c.BUNZZLE_NS_RRL_SLIP,
   };
 }
 

@@ -7,6 +7,7 @@ export interface LimitOptions {
   rates: Record<Kind, { perSec: number; burst: number }>;
   globalPerSec: number;
   maxEntries: number;
+  slip: number;
 }
 
 export const DEFAULT_LIMITS: LimitOptions = {
@@ -19,6 +20,7 @@ export const DEFAULT_LIMITS: LimitOptions = {
   },
   globalPerSec: 20_000,
   maxEntries: 100_000,
+  slip: 0,
 };
 
 export type Verdict = "send" | "slip" | "drop" | "global";
@@ -84,7 +86,10 @@ export class ResponseLimiter {
       }
     }
     this.#buckets.set(key, b);
-    if (!this.#take(b, rate.perSec, rate.burst, t)) return ++b.over % 2 === 0 ? "drop" : "slip";
+    if (!this.#take(b, rate.perSec, rate.burst, t)) {
+      const slip = this.opts.slip;
+      return slip > 0 && b.over++ % slip === 0 ? "slip" : "drop";
+    }
     b.over = 0;
     const g = this.opts.globalPerSec;
     return this.#take(this.#global, g, g, t) ? "send" : "global";

@@ -200,7 +200,7 @@ Add and verify your domains in Postmaster Tools first. Then, on a machine with a
 
 ## Delegated DNS zone
 
-With these settings the `ns` role answers DNS for one zone over UDP and TCP. Set the zone's NS records and glue at the parent to the names and addresses below. The role answers only for this zone and never resolves other names; zone transfers and dynamic updates are refused. Each client network gets a response rate limit, separately for answers, negative answers and errors; over the limit, every second reply is an empty truncated one that sends real resolvers to TCP. The zone is saved to `BUNZZLE_DATA_DIR/ns-zone.json` and served from there after a restart.
+With these settings the `ns` role answers DNS for one zone over UDP and TCP. Set the zone's NS records and glue at the parent to the names and addresses below. The role answers only for this zone and never resolves other names; zone transfers and dynamic updates are refused. Each client network gets a response rate limit, separately for answers, negative answers and errors; answers over the limit are dropped. Queries are not logged one by one; when limits were hit, one warning per minute gives the counts. The zone is saved to `BUNZZLE_DATA_DIR/ns-zone.json` and served from there after a restart.
 
 | Variable | Default | |
 |---|---|---|
@@ -210,6 +210,7 @@ With these settings the `ns` role answers DNS for one zone over UDP and TCP. Set
 | `BUNZZLE_NS_PORT` | `53` | Port for UDP and TCP. |
 | `BUNZZLE_NS_RRL_V4_PREFIX` | `24` | IPv4 prefix length that counts as one client network for the rate limit. |
 | `BUNZZLE_NS_RRL_V6_PREFIX` | `56` | IPv6 prefix length that counts as one client network for the rate limit. |
+| `BUNZZLE_NS_RRL_SLIP` | `0` | Send every Nth answer over the limit as an empty truncated reply, so real resolvers in a limited network can retry over TCP. `0` drops them all. |
 
 ## Testing the DNS provider
 
