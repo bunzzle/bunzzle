@@ -109,6 +109,12 @@ const schema = b.object({
     .url()
     .default("https://gmailpostmastertools.googleapis.com"),
   BUNZZLE_POSTMASTER_TOKEN_URL: b.string().url().default("https://oauth2.googleapis.com/token"),
+  BUNZZLE_NS_ZONE: optional,
+  BUNZZLE_NS_NAMES: optional,
+  BUNZZLE_NS_LISTEN: optional,
+  BUNZZLE_NS_PORT: b.coerce.number().int().min(0).max(65535).default(53),
+  BUNZZLE_NS_RRL_V4_PREFIX: b.coerce.number().int().min(8).max(32).default(24),
+  BUNZZLE_NS_RRL_V6_PREFIX: b.coerce.number().int().min(16).max(128).default(56),
 });
 
 export interface SourceIp {
@@ -215,6 +221,14 @@ export interface Config {
   cloudflareUrl: string;
   route53: { accessKeyId: string; secretKeyFile: string; url: string } | null;
   desec: { tokenFile: string; url: string } | null;
+  ns: {
+    zone: string;
+    names: string[];
+    listen: string[];
+    port: number;
+    v4Prefix: number;
+    v6Prefix: number;
+  } | null;
   postmaster: {
     clientId: string;
     clientSecretFile: string;
@@ -225,6 +239,72 @@ export interface Config {
 }
 
 export class ConfigError extends Error {}
+
+const HOSTNAME =
+  /^(?=.{1,253}$)([a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+function list(value: string | null): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase().replace(/\.$/, ""))
+    .filter(Boolean);
+}
+
+function nsConfig(c: {
+  BUNZZLE_NS_ZONE: string | null;
+  BUNZZLE_NS_NAMES: string | null;
+  BUNZZLE_NS_LISTEN: string | null;
+  BUNZZLE_NS_PORT: number;
+  BUNZZLE_NS_RRL_V4_PREFIX: number;
+  BUNZZLE_NS_RRL_V6_PREFIX: number;
+}): Config["ns"] {
+  const names = list(c.BUNZZLE_NS_NAMES);
+  const listen = list(c.BUNZZLE_NS_LISTEN);
+  if (!c.BUNZZLE_NS_ZONE) {
+    if (names.length > 0 || listen.length > 0) {
+      throw new ConfigError(
+        "invalid configuration:\n  BUNZZLE_NS_NAMES and BUNZZLE_NS_LISTEN need BUNZZLE_NS_ZONE",
+      );
+    }
+    return null;
+  }
+  const zone = list(c.BUNZZLE_NS_ZONE)[0] ?? "";
+  if (!HOSTNAME.test(zone)) {
+    throw new ConfigError(
+      `invalid configuration:\n  BUNZZLE_NS_ZONE: ${zone} is not a domain name`,
+    );
+  }
+  if (names.length === 0 || listen.length === 0) {
+    throw new ConfigError(
+      "invalid configuration:\n  BUNZZLE_NS_ZONE needs BUNZZLE_NS_NAMES and BUNZZLE_NS_LISTEN",
+    );
+  }
+  for (const n of names) {
+    if (!HOSTNAME.test(n)) {
+      throw new ConfigError(`invalid configuration:\n  BUNZZLE_NS_NAMES: ${n} is not a host name`);
+    }
+    if (n === zone || n.endsWith(`.${zone}`)) {
+      throw new ConfigError(
+        `invalid configuration:\n  BUNZZLE_NS_NAMES: ${n} must be outside BUNZZLE_NS_ZONE`,
+      );
+    }
+  }
+  for (const ip of listen) {
+    if (!familyOf(ip)) {
+      throw new ConfigError(
+        `invalid configuration:\n  BUNZZLE_NS_LISTEN: ${ip} is not an IP address`,
+      );
+    }
+  }
+  return {
+    zone,
+    names,
+    listen,
+    port: c.BUNZZLE_NS_PORT,
+    v4Prefix: c.BUNZZLE_NS_RRL_V4_PREFIX,
+    v6Prefix: c.BUNZZLE_NS_RRL_V6_PREFIX,
+  };
+}
 
 export function loadConfig(env: Record<string, string | undefined> = Bun.env): Config {
   const parsed = schema.safeParse(env);
@@ -464,6 +544,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
             url: c.BUNZZLE_ROUTE53_API_URL.replace(/\/+$/, ""),
           }
         : null,
+    ns: nsConfig(c),
     postmaster:
       c.BUNZZLE_POSTMASTER_CLIENT_ID &&
       c.BUNZZLE_POSTMASTER_CLIENT_SECRET_FILE &&

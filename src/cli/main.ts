@@ -12,6 +12,7 @@ import { runCore } from "../roles/core.ts";
 import { runDelivery } from "../roles/delivery.ts";
 import { runDns } from "../roles/dns.ts";
 import { runInbound } from "../roles/inbound.ts";
+import { runNs } from "../roles/ns.ts";
 import { Reloader } from "../roles/reload.ts";
 import { runSigner } from "../roles/signer.ts";
 import { runSupervisor } from "../roles/supervisor.ts";
@@ -178,6 +179,8 @@ async function role(name: string | undefined) {
       return runApi(config, log);
     case "inbound":
       return runInbound(config, log);
+    case "ns":
+      return runNs(config, log);
   }
 }
 

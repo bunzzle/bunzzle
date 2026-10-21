@@ -42,6 +42,10 @@ const BY_ROLE: Record<Role, string[]> = {
     "BUNZZLE_TLSRPT_CONTACT",
     "BUNZZLE_RELAY_HOST",
     "BUNZZLE_RELAY_FOR",
+    "BUNZZLE_NS_ZONE",
+    "BUNZZLE_NS_NAMES",
+    "BUNZZLE_NS_LISTEN",
+    "BUNZZLE_NS_PORT",
   ],
   delivery: [
     "BUNZZLE_EHLO_NAME",
@@ -124,6 +128,15 @@ const BY_ROLE: Record<Role, string[]> = {
     "BUNZZLE_DNS_SERVERS",
     "BUNZZLE_ACME_EMAIL",
     "BUNZZLE_CERTS_DIR",
+  ],
+  ns: [
+    "BUNZZLE_DATA_DIR",
+    "BUNZZLE_NS_ZONE",
+    "BUNZZLE_NS_NAMES",
+    "BUNZZLE_NS_LISTEN",
+    "BUNZZLE_NS_PORT",
+    "BUNZZLE_NS_RRL_V4_PREFIX",
+    "BUNZZLE_NS_RRL_V6_PREFIX",
   ],
 };
 

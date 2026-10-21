@@ -198,6 +198,19 @@ Gmail does not send a report for each complaint, so its spam rate is only visibl
 
 Add and verify your domains in Postmaster Tools first. Then, on a machine with a browser, run `bunzzle postmaster auth --client-id ID --client-secret-file FILE --out FILE`, sign in with the same Google account, and copy the file it writes to the server. The command asks only for read access to Postmaster Tools, and prints neither the secret nor the token.
 
+## Delegated DNS zone
+
+With these settings the `ns` role answers DNS for one zone over UDP and TCP. Set the zone's NS records and glue at the parent to the names and addresses below. The role answers only for this zone and never resolves other names; zone transfers and dynamic updates are refused. Each client network gets a response rate limit, separately for answers, negative answers and errors; over the limit, every second reply is an empty truncated one that sends real resolvers to TCP. The zone is saved to `BUNZZLE_DATA_DIR/ns-zone.json` and served from there after a restart.
+
+| Variable | Default | |
+|---|---|---|
+| `BUNZZLE_NS_ZONE` | | The delegated zone, for example `dz.mail.example.net`. Turns on the `ns` role. |
+| `BUNZZLE_NS_NAMES` | | Comma-separated name server host names outside the zone, for example `ns1.mail.example.net,ns2.mail.example.net`. |
+| `BUNZZLE_NS_LISTEN` | | Comma-separated public IP addresses to listen on. |
+| `BUNZZLE_NS_PORT` | `53` | Port for UDP and TCP. |
+| `BUNZZLE_NS_RRL_V4_PREFIX` | `24` | IPv4 prefix length that counts as one client network for the rate limit. |
+| `BUNZZLE_NS_RRL_V6_PREFIX` | `56` | IPv6 prefix length that counts as one client network for the rate limit. |
+
 ## Testing the DNS provider
 
 `bunzzle dns-test DOMAIN` checks the configured provider without `serve` running, so you can try it from any machine with the same variables. It publishes a TXT record at `_bunzzle-test.DOMAIN` with a random value longer than 255 characters, asks the provider for it again, waits up to two minutes until every name server of the zone answers with it, and removes it, also when a step fails. Each step prints `[ok]` or `[FAIL]`, and the command exits with 1 when one fails. The time it prints is how long the provider takes to publish a change.
