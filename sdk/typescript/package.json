@@ -1,9 +1,8 @@
 {
   "name": "@bunzzle/sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Client for the Bunzzle API",
   "license": "MIT",
-  "private": true,
   "type": "module",
   "exports": {
     ".": {
@@ -15,11 +14,15 @@
     "index.js",
     "index.d.ts",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bunzzle/bunzzle.git",
     "directory": "sdk/typescript"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

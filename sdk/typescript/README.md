@@ -1,6 +1,6 @@
 # Bunzzle SDK for TypeScript and JavaScript
 
-A client for the Bunzzle API. It uses `fetch` and has no dependencies, so it runs in Bun, Deno, Node.js 18+ and browsers. The code and types are generated from [openapi.json](../../openapi.json), so every API operation is here.
+A client for the Bunzzle API. It uses `fetch` and has no dependencies, so it runs in Bun, Deno, Node.js 18+ and browsers. It needs Bunzzle 0.2.0 or later. The code and types are generated from [openapi.json](../../openapi.json), so every API operation is here.
 
 ## Use
 
