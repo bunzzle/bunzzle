@@ -109,7 +109,15 @@ export interface RpcServer {
   stop(): void;
 }
 
-export async function serveRpc(path: string, methods: Methods): Promise<RpcServer> {
+export interface ServeOptions {
+  mode?: "600" | "660";
+}
+
+export async function serveRpc(
+  path: string,
+  methods: Methods,
+  opts: ServeOptions = {},
+): Promise<RpcServer> {
   await Bun.$`rm -f ${path}`.quiet();
   const framers = new Map<Socket<undefined>, Framer>();
   const respond = async (framer: Framer, frame: unknown) => {
@@ -161,7 +169,7 @@ export async function serveRpc(path: string, methods: Methods): Promise<RpcServe
       },
     },
   });
-  await Bun.$`chmod 660 ${path}`.quiet();
+  await Bun.$`chmod ${opts.mode ?? "660"} ${path}`.quiet();
   return { stop: () => listener.stop(true) };
 }
 

@@ -34,7 +34,7 @@ Then:
    sudo bunzzle doctor
    ```
 
-Admin commands talk to the running server through `/run/bunzzle/core.sock`, so run them as root.
+Admin commands talk to the running server through `/run/bunzzle/admin.sock`, which only root and the core role can open, so run them as root.
 
 Logs: `journalctl -u 'bunzzle-*' -f`. Status: `systemctl status 'bunzzle-*'`.
 
@@ -104,7 +104,7 @@ docker run --rm ghcr.io/bunzzle/bunzzle master-key > master.key
 : > cloudflare-token
 sudo chown 10011 master.key && sudo chmod 0400 master.key
 docker compose up -d --wait
-docker compose exec api bunzzle keys create --name my-app --scope full
+docker compose exec core bunzzle keys create --name my-app --scope full
 ```
 
 Settings go in `deploy/bunzzle.env`. `delivery` uses the host network, so mail leaves from your server's own IPs.

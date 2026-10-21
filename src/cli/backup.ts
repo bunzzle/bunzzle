@@ -2,8 +2,8 @@ import { Database } from "bun:sqlite";
 import type { Config } from "../config.ts";
 import { readMasterKeyText } from "../crypto/load.ts";
 import { masterKeyFrom } from "../crypto/master.ts";
+import { adminSocket } from "../roles/admin-socket.ts";
 import { privateDir } from "../roles/runtime.ts";
-import { sockets } from "../roles/wire.ts";
 import { runDirOf } from "./admin.ts";
 import { parseArgs, UsageError } from "./args.ts";
 
@@ -52,7 +52,7 @@ async function masterIdOf(dir: string, files: string[]): Promise<string | null> 
 }
 
 async function running(config: Config): Promise<boolean> {
-  const path = sockets(await runDirOf(config)).core;
+  const path = adminSocket(await runDirOf(config));
   try {
     const s = await Bun.connect({ unix: path, socket: { data() {} } });
     s.end();

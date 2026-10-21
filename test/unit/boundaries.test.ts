@@ -99,6 +99,13 @@ describe("role boundaries (what each process can even load)", () => {
     });
   }
 
+  test("only core and the CLI know the admin socket", async () => {
+    for (const role of ["signer", "dns", "delivery", "api", "inbound"]) {
+      const files = await reachable(`${SRC}/roles/${role}.ts`);
+      expect([...files].filter((f) => f === "roles/admin-socket.ts")).toEqual([]);
+    }
+  });
+
   test("only the signer and the CLI can load the master key", async () => {
     for (const role of ["delivery", "api", "core", "inbound"]) {
       const files = await reachable(`${SRC}/roles/${role}.ts`);

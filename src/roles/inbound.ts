@@ -47,7 +47,7 @@ const routesResult = b.object({
 });
 
 export async function runInbound(config: Config, log: Logger) {
-  const core = new RpcClient(sockets(config.runDir).core);
+  const core = new RpcClient(sockets(config.runDir).coreInbound);
   const port = config.inboundPort;
   const tls = port === null ? null : await loadTls(config);
   const servers = config.dnsServers.length

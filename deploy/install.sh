@@ -53,6 +53,7 @@ for unit in bunzzle.target bunzzle-signer.service bunzzle-dns.service bunzzle-co
   install -m 0644 "$SRC/systemd/$unit" "/etc/systemd/system/$unit"
 done
 systemd-sysusers bunzzle.conf
+if id -nG bunzzle-inbound | tr ' ' '\n' | grep -qx bunzzle-core; then gpasswd -d bunzzle-inbound bunzzle-core >/dev/null; fi
 systemd-tmpfiles --create bunzzle.conf
 
 if [ ! -f /etc/bunzzle/bunzzle.env ]; then
