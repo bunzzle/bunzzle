@@ -63,6 +63,9 @@ export function spfMechanism(sourceIps: string | string[] | null): string {
   return ips.map((ip) => (ip.includes(":") ? `ip6:${ip}` : `ip4:${ip}`)).join(" ");
 }
 
+export const dkimValue = (k: PublicDkimKey) =>
+  `v=DKIM1; k=${k.algorithm === "rsa-sha256" ? "rsa" : "ed25519"}; p=${k.publicKey}`;
+
 export function expectedRecords(
   domain: string,
   keys: PublicDkimKey[],
@@ -98,7 +101,7 @@ export function expectedRecords(
           ? "DKIM_RETIRING"
           : "DKIM") as RecordKind,
       name: `${k.selector}._domainkey.${domain}`,
-      value: `v=DKIM1; k=${k.algorithm === "rsa-sha256" ? "rsa" : "ed25519"}; p=${k.publicKey}`,
+      value: dkimValue(k),
       required: (k.state ?? "active") === "active",
     })),
     {
