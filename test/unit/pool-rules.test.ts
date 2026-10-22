@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
   choosePool,
   createPoolRule,
@@ -7,7 +7,14 @@ import {
 } from "../../src/accounts/pool-rules.ts";
 import { ownPool } from "../../src/accounts/pools.ts";
 import { DEFAULT_PROJECT, type ProjectId } from "../../src/accounts/projects.ts";
+import { manualClock } from "../../src/core/clock.ts";
+import { claim } from "../../src/core/jobs.ts";
+import { createLogger } from "../../src/core/log.ts";
 import { openDatabase } from "../../src/core/store/db.ts";
+import { deliveryHandler } from "../../src/delivery/handler.ts";
+import { enqueueEmail } from "../../src/delivery/queue.ts";
+import type { DeliveryTransport } from "../../src/delivery/transport.ts";
+import { Shaper } from "../../src/shaping/shaper.ts";
 
 const T0 = Date.UTC(2026, 9, 22);
 const SHOP = "shop" as ProjectId;
@@ -89,4 +96,79 @@ test("relay is a server target; project rules are kept apart", () => {
   expect(listPoolRules(db, null).map((r) => r.id)).toEqual([relay?.id as string]);
   expect(deletePoolRule(db, DEFAULT_PROJECT, own?.id ?? "")).toBe(false);
   expect(deletePoolRule(db, SHOP, own?.id ?? "")).toBe(true);
+});
+
+describe("the delivery handler sends where the rules say", () => {
+  async function attempt(
+    rules: [project: ProjectId | null, match: string, pool: string][],
+    relay: boolean,
+  ) {
+    const clock = manualClock();
+    const db = openDatabase({ path: ":memory:" });
+    const log = createLogger("error", {}, () => {});
+    for (const [project, match, pool] of rules) createPoolRule(db, project, match, pool, 0);
+    let sent = null as { source: string; via?: string } | null;
+    const transport: DeliveryTransport = {
+      lookup: async (domain) => ({
+        kind: "targets",
+        domain,
+        mxHosts: ["aspmx.l.google.com"],
+        implicit: false,
+        authenticated: false,
+        targets: [{ host: "aspmx.l.google.com", preference: 10, address: "192.0.2.1", family: 4 }],
+        skipped: [],
+      }),
+      deliver: async (req) => {
+        sent = { source: req.source ?? "", ...(req.via ? { via: req.via } : {}) };
+        throw new Error("sent");
+      },
+    };
+    const ips = [
+      { ip: "203.0.113.1", pool: "main", established: true },
+      { ip: "203.0.113.2", pool: "warm", established: true },
+    ];
+    const handle = deliveryHandler({
+      db,
+      log,
+      transport,
+      clock,
+      shaper: new Shaper({ log, clock }),
+      ips,
+      relayRoutes: () => (relay ? { targets: [], blocked: false } : null),
+      poolRules: (job) => choosePool(db, job, (p) => ips.some((x) => x.pool === p)),
+    });
+    enqueueEmail(
+      db,
+      DEFAULT_PROJECT,
+      {
+        id: "m",
+        body: { epoch: 1, wrapped: new Uint8Array(1), body: new Uint8Array(1) },
+        from: "a@bunzzle.test",
+        recipients: ["x@company.example"],
+        smtpUtf8: false,
+        requireTls: false,
+      },
+      clock.now(),
+    );
+    const [job] = claim(db, clock.now(), 1, 60_000);
+    await expect(handle(job as NonNullable<typeof job>)).rejects.toThrow("sent");
+    return sent;
+  }
+
+  test("no rule: the lane pool", async () => {
+    expect(await attempt([], true)).toEqual({ source: "203.0.113.1" });
+  });
+
+  test("a provider rule moves a company domain on that provider's MX to another pool", async () => {
+    expect(await attempt([[null, "google", "warm"]], true)).toEqual({ source: "203.0.113.2" });
+  });
+
+  test("a relay rule sends through the relay, and is ignored without one", async () => {
+    expect(await attempt([[null, "company.example", "relay"]], true)).toMatchObject({
+      via: "relay",
+    });
+    expect(await attempt([[null, "company.example", "relay"]], false)).toEqual({
+      source: "203.0.113.1",
+    });
+  });
 });

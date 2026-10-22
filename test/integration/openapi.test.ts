@@ -67,6 +67,7 @@ beforeAll(async () => {
   mx = startFakeMx();
   served = await startServe({
     BUNZZLE_MASTER_KEY: generateMasterKey(),
+    BUNZZLE_SOURCE_IPS: "127.0.0.1",
     BUNZZLE_DNS_SERVERS: `127.0.0.1:${dns.port}`,
     BUNZZLE_SMTP_PORT: String(mx.port),
     BUNZZLE_ALLOW_PRIVATE_DESTINATIONS: "true",
@@ -161,6 +162,9 @@ describe("API responses match openapi.json", () => {
     });
     await call("GET", `/webhooks/${w["id"]}/resends/${job["id"]}`);
     await call("DELETE", `/webhooks/${w["id"]}`);
+    const rule = await call("POST", "/pool-rules", { match: "google", pool: "main" });
+    await call("GET", "/pool-rules");
+    await call("DELETE", `/pool-rules/${rule["id"]}`);
     const route = await call("POST", "/routes", {
       address: "*@acme.test",
       endpoint: "https://app.example.com/in",
