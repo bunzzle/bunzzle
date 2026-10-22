@@ -48,6 +48,10 @@ function fromRpc(err: unknown): SmtpReply {
         return { code: 451, text: `4.7.1 ${err.message}` };
       case "project-suspended":
         return { code: 550, text: `5.7.1 ${err.message}` };
+      case "refused":
+        return { code: 550, text: `5.7.1 ${err.message}` };
+      case "hook-failed":
+        return { code: 451, text: `4.7.1 ${err.message}` };
       case "storage-low":
         return { code: 452, text: `4.3.1 ${err.message}` };
     }

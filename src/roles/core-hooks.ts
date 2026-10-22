@@ -4,6 +4,7 @@ import type { Writer } from "../core/store/writer.ts";
 import { parseCheckReply, parseScanReply } from "../hooks/reply.ts";
 import { addHook, type Hook, listHooks, removeHook } from "../hooks/store.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
+import { parseMilterAddress } from "../milter/client.ts";
 import { b } from "../validate/schema.ts";
 import { resolveActor } from "./actor.ts";
 import { project, tokenHash } from "./wire.ts";
@@ -84,8 +85,51 @@ export function hookMethods(deps: HookDeps) {
     return highest;
   };
 
-  const scan = async (data: string, from: string, recipients: string[]) => {
-    await score("scan", data, { From: from, ...(recipients[0] ? { Rcpt: recipients[0] } : {}) });
+  const milterResult = b.union([
+    b.object({ action: b.literal("accept"), data: b.string() }),
+    b.object({ action: b.enum(["reject", "tempfail"]), text: b.string().nullable() }),
+    b.object({ action: b.literal("failed"), error: b.string() }),
+  ]);
+
+  const filter = async (
+    data: string,
+    m: { id: string; from: string; recipients: string[]; user: string },
+  ): Promise<string> => {
+    await score("scan", data, {
+      From: m.from,
+      ...(m.recipients[0] ? { Rcpt: m.recipients[0] } : {}),
+    });
+    let out = data;
+    for (const h of listHooks(db, "milter")) {
+      let r: b.infer<typeof milterResult>;
+      try {
+        r = await delivery.call(
+          "milter",
+          { address: h.url, timeoutMs: h.timeoutMs, ...m, data: out },
+          { result: milterResult, timeoutMs: h.timeoutMs + 5_000 },
+        );
+      } catch (err) {
+        r = { action: "failed", error: (err as Error).message };
+      }
+      if (r.action === "accept") out = r.data;
+      else if (r.action === "failed") failed(h, r.error);
+      else if (r.action === "reject") {
+        throw new RpcError(
+          "refused",
+          r.text
+            ? `A content filter refused this email: ${r.text}`
+            : "A content filter refused this email.",
+        );
+      } else {
+        throw new RpcError(
+          "hook-failed",
+          r.text
+            ? `A content filter asks to try again later: ${r.text}`
+            : "A content filter asks to try again later.",
+        );
+      }
+    }
+    return out;
   };
 
   const printable = (v: string) => v.replace(/[^\x20-\x7e]/g, "").slice(0, 1000);
@@ -93,21 +137,32 @@ export function hookMethods(deps: HookDeps) {
   const methods: Methods = {
     addHook: method(
       b.object({
-        kind: b.enum(["check", "scan", "inbound"]),
+        kind: b.enum(["check", "scan", "inbound", "milter"]),
         url: b.string().max(2048),
         timeoutMs: b.number().int().min(100).max(60_000),
         onError: b.enum(["accept", "refuse"]),
         maxScore: b.number().nullable(),
       }),
       async (p) => {
-        let url: URL;
-        try {
-          url = new URL(p.url);
-        } catch {
-          throw new RpcError("invalid", "the hook URL is not valid");
-        }
-        if (url.protocol !== "https:" && url.protocol !== "http:") {
-          throw new RpcError("invalid", "the hook URL must be http or https");
+        if (p.kind === "milter") {
+          if (!parseMilterAddress(p.url)) {
+            throw new RpcError(
+              "invalid",
+              "a milter address looks like inet:127.0.0.1:11332 or unix:/run/milter.sock",
+            );
+          }
+          if (p.maxScore !== null)
+            throw new RpcError("invalid", "a milter hook has no score limit");
+        } else {
+          let url: URL;
+          try {
+            url = new URL(p.url);
+          } catch {
+            throw new RpcError("invalid", "the hook URL is not valid");
+          }
+          if (url.protocol !== "https:" && url.protocol !== "http:") {
+            throw new RpcError("invalid", "the hook URL must be http or https");
+          }
         }
         if (p.kind === "scan" && p.maxScore === null) {
           throw new RpcError("invalid", "a scan hook needs a score limit");
@@ -186,7 +241,7 @@ export function hookMethods(deps: HookDeps) {
 
   return {
     methods,
-    scan,
+    filter,
     hasCheckHooks: () => listHooks(db, "check").length > 0,
   };
 }

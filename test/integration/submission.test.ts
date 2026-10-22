@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { generateMasterKey } from "../../src/crypto/master.ts";
+import { frame } from "../../src/milter/protocol.ts";
 import { type Reply, SmtpConnection } from "../../src/smtp/connection.ts";
 import { type FakeDns, startFakeDns, type Zone } from "../support/fake-dns.ts";
+import { startFakeMilter } from "../support/fake-milter.ts";
 import { type FakeMx, startFakeMx } from "../support/fake-mx.ts";
 import { type Served, startServe } from "../support/serve.ts";
 
@@ -247,5 +249,33 @@ describe("SMTP submission", () => {
     socket.end();
     expect(text).toContain("AUTH PLAIN LOGIN");
     expect(text).not.toContain("STARTTLS");
+  });
+
+  test("a content filter refusal is a 550, a filter asking to wait is a 451", async () => {
+    const milter = startFakeMilter();
+    const add = await cli("hooks", "add", "milter", `inet:127.0.0.1:${milter.port}`);
+    try {
+      const [port] = served.submissionPorts;
+      const { c, say } = await session(port as number);
+      await say("EHLO app.test");
+      await say("STARTTLS");
+      await c.startTls("mx.example.test", 5_000, ca);
+      await say("EHLO app.test");
+      expect(await say(`AUTH PLAIN ${plain(key)}`)).toStartWith("235");
+      const attempt = async () => {
+        await say("MAIL FROM:<hello@acme.test>");
+        await say("RCPT TO:<user@example.test>");
+        await say("DATA");
+        return say(["From: hello@acme.test", "Subject: filtered", "", "x", "."].join("\r\n"));
+      };
+      milter.onEnd = () => [frame("y", "554 5.7.1 virus found\0")];
+      expect(await attempt()).toMatch(/^550 5\.7\.1 .*virus found/);
+      milter.onEnd = () => [frame("t")];
+      expect(await attempt()).toStartWith("451 4.7.1");
+      c.close();
+    } finally {
+      await cli("hooks", "remove", add.stdout.split(/\s+/)[1] as string);
+      milter.stop();
+    }
   });
 });

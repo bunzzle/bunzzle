@@ -9,6 +9,7 @@ import { checkReverse, type ReverseCheck } from "../dns/reverse.ts";
 import { ownValidation } from "../dnssec/resolver.ts";
 import { method, RpcClient, serveRpc } from "../ipc/rpc.ts";
 import { blocklists, checkBlocklists, type Listing } from "../ips/blocklists.ts";
+import { parseMilterAddress, runMilter } from "../milter/client.ts";
 import { guardedPost } from "../net/post.ts";
 import { guardedRequest } from "../net/request.ts";
 import { limitsFor } from "../shaping/limits.ts";
@@ -167,6 +168,33 @@ export async function runDelivery(config: Config, log: Logger) {
           ...(ips.length ? { ownAddresses: ips } : {}),
           families: config.ipv6 ? [4, 6] : [4],
         }),
+    ),
+    milter: method(
+      b.object({
+        address: b.string().max(2048),
+        timeoutMs: b.number().int().min(100).max(60_000),
+        id: b.string().max(64),
+        from: b.string().max(1000),
+        recipients: b.array(b.string().max(1000)).min(1).max(1000),
+        user: b.string().max(200),
+        data: b.string().max(60 * 1024 * 1024),
+      }),
+      async (p) => {
+        const address = parseMilterAddress(p.address);
+        if (!address) return { action: "failed" as const, error: "bad milter address" };
+        try {
+          return await runMilter(address, p.timeoutMs, {
+            id: p.id,
+            hostname: config.ehloName ?? "bunzzle",
+            user: p.user,
+            from: p.from,
+            recipients: p.recipients,
+            data: p.data,
+          });
+        } catch (err) {
+          return { action: "failed" as const, error: (err as Error).message };
+        }
+      },
     ),
     postHook: method(
       b.object({

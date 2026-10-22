@@ -1020,7 +1020,7 @@ export async function statsCommand(argv: string[], config: Config) {
 
 interface HookView {
   id: string;
-  kind: "check" | "scan" | "inbound";
+  kind: "check" | "scan" | "inbound" | "milter";
   url: string;
   timeout_ms: number;
   on_error: "accept" | "refuse";
@@ -1035,9 +1035,12 @@ export async function hooksCommand(argv: string[], config: Config) {
   switch (sub) {
     case "add": {
       const [kind, url, ...flags] = rest;
-      if ((kind !== "check" && kind !== "scan" && kind !== "inbound") || !url) {
+      if (
+        (kind !== "check" && kind !== "scan" && kind !== "inbound" && kind !== "milter") ||
+        !url
+      ) {
         throw new UsageError(
-          "usage: bunzzle hooks add check|scan|inbound URL [--max-score N] [--timeout-ms N] [--on-error accept|refuse]",
+          "usage: bunzzle hooks add check|scan|inbound|milter URL [--max-score N] [--timeout-ms N] [--on-error accept|refuse]",
         );
       }
       const args = parseArgs(flags, { strings: ["max-score", "timeout-ms", "on-error"] });
