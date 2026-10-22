@@ -214,6 +214,20 @@ export function collect(
         },
       ],
     },
+    {
+      name: "bunzzle_project_new_recipients",
+      type: "gauge",
+      help: "First-time recipients in the last 24 hours, for projects with new_recipients_per_day.",
+      samples: db
+        .query<{ name: string; n: number }, [number, string | null]>(
+          `SELECT p.name, sum(u.n) AS n FROM project_usage u JOIN projects p ON p.id = u.project_id
+           WHERE u.unit = 'new_hour' AND u.slot > ?1 AND p.new_recipients_per_day IS NOT NULL
+             AND (?2 IS NULL OR u.project_id = ?2)
+           GROUP BY p.name ORDER BY p.name`,
+        )
+        .all(Math.floor(now / 3_600_000) - 24, project)
+        .map((r) => ({ labels: { project: r.name }, value: r.n })),
+    },
     ...(ns
       ? [
           {

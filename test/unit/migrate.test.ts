@@ -65,7 +65,7 @@ describe("migrate", () => {
             VALUES ('m1', 'ready', 10, 2, 'busy', 7), ('m2', 'unknown', 11, 1, NULL, 8)`);
     expect(migrate(db, migrations)).toEqual([
       3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-      28, 29, 30, 31,
+      28, 29, 30, 31, 32,
     ]);
     const rows = db
       .query<Record<string, unknown>, []>(
@@ -128,7 +128,7 @@ describe("migrate", () => {
       "INSERT INTO suppressions (address, scope, reason, created_at) VALUES ('x@b.test', 'all', 'bounce', 1)",
     );
 
-    expect(migrate(db, migrations)).toEqual([21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]);
+    expect(migrate(db, migrations)).toEqual([21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]);
     expect(db.query("SELECT id, name, suspended_at, deleted_at FROM projects").all()).toEqual([
       { id: "default", name: "default", suspended_at: null, deleted_at: null },
     ]);
@@ -175,6 +175,34 @@ describe("migrate", () => {
     );
     expect(db.query<{ synchronous: number }, []>("PRAGMA synchronous").get()?.synchronous).toBe(2);
     expect(db.query<{ temp_store: number }, []>("PRAGMA temp_store").get()?.temp_store).toBe(2);
+    db.close();
+  });
+
+  test("upgrading to project recipients keeps usage counts and limit notices", () => {
+    const db = new Database(":memory:");
+    migrate(
+      db,
+      migrations.filter((m) => m.version <= 31),
+    );
+    db.run(
+      "INSERT INTO project_usage (project_id, unit, slot, n) VALUES ('default', 'hour', 7, 3)",
+    );
+    db.run(
+      "INSERT INTO project_limit_notices (project_id, span, notified_at) VALUES ('default', 'day', 5)",
+    );
+    expect(migrate(db, migrations)).toEqual([32]);
+    expect(db.query("SELECT project_id, unit, slot, n FROM project_usage").all()).toEqual([
+      { project_id: "default", unit: "hour", slot: 7, n: 3 },
+    ]);
+    expect(db.query("SELECT span, notified_at FROM project_limit_notices").all()).toEqual([
+      { span: "day", notified_at: 5 },
+    ]);
+    expect(db.query("SELECT new_recipients_per_day FROM projects").all()).toEqual([
+      { new_recipients_per_day: null },
+    ]);
+    db.run(
+      "INSERT INTO project_usage (project_id, unit, slot, n) VALUES ('default', 'new_hour', 7, 1)",
+    );
     db.close();
   });
 });

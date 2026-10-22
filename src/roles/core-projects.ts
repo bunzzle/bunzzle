@@ -52,6 +52,7 @@ export const projectView = (p: Project) => ({
   name: p.name,
   per_hour: p.perHour,
   per_day: p.perDay,
+  new_recipients_per_day: p.newRecipientsPerDay,
   ip_pool: p.pool,
   suspended: p.suspendedAt !== null,
   created_at: iso(p.createdAt),
@@ -219,6 +220,7 @@ export function projectMethods(deps: ProjectDeps): Methods {
         name: b.string().max(63).optional(),
         perHour: limit,
         perDay: limit,
+        newRecipientsPerDay: limit,
         pool: b.string().max(32).nullable().optional(),
         suspended: b.boolean().optional(),
       }),
@@ -243,6 +245,9 @@ export function projectMethods(deps: ProjectDeps): Methods {
               ...(p.name !== undefined ? { name: p.name } : {}),
               ...(p.perHour !== undefined ? { perHour: p.perHour } : {}),
               ...(p.perDay !== undefined ? { perDay: p.perDay } : {}),
+              ...(p.newRecipientsPerDay !== undefined
+                ? { newRecipientsPerDay: p.newRecipientsPerDay }
+                : {}),
               ...(p.pool !== undefined ? { pool: p.pool } : {}),
               ...(p.suspended !== undefined ? { suspended: p.suspended } : {}),
             },
@@ -259,6 +264,9 @@ export function projectMethods(deps: ProjectDeps): Methods {
             ...(next.name !== before.name ? { name: next.name } : {}),
             ...(next.perHour !== before.perHour ? { per_hour: next.perHour } : {}),
             ...(next.perDay !== before.perDay ? { per_day: next.perDay } : {}),
+            ...(next.newRecipientsPerDay !== before.newRecipientsPerDay
+              ? { new_recipients_per_day: next.newRecipientsPerDay }
+              : {}),
             ...(next.pool !== before.pool ? { ip_pool: next.pool } : {}),
           };
           if (Object.keys(changed).length > 0) record("project.updated", changed);

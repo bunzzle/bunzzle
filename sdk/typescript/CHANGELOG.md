@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Projects: `new_recipients_per_day` in `getProject`, `listProjects` and `updateProject`.
+
 ## 0.2.0
 
 First release on npm. Needs Bunzzle 0.2.0 or later.

@@ -375,6 +375,7 @@ export type ProjectList = {
     name: string;
     per_hour: number | null;
     per_day: number | null;
+    new_recipients_per_day: number | null;
     ip_pool: string | null;
     suspended: boolean;
     created_at: string;
@@ -392,6 +393,7 @@ export type Project = {
   name: string;
   per_hour: number | null;
   per_day: number | null;
+  new_recipients_per_day: number | null;
   ip_pool: string | null;
   suspended: boolean;
   created_at: string;
@@ -402,6 +404,7 @@ export type UpdateProject = {
   name?: string;
   per_hour?: number | null;
   per_day?: number | null;
+  new_recipients_per_day?: number | null;
   ip_pool?: string | null;
   suspended?: boolean;
 };

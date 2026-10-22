@@ -22,6 +22,7 @@ import {
   updateProject,
 } from "../../src/accounts/projects.ts";
 import { purgeDeletedProject } from "../../src/accounts/purge.ts";
+import { newRecipients, recipientHasher } from "../../src/accounts/recipients.ts";
 import { appendEvent } from "../../src/core/events.ts";
 import {
   claim,
@@ -87,6 +88,7 @@ import { createWebhook, deleteWebhook, listWebhooks } from "../../src/webhooks/s
 const T0 = Date.UTC(2026, 9, 21, 12);
 const A = DEFAULT_PROJECT;
 const B = "p-other" as ProjectId;
+const DAY = 86_400_000;
 const sealed = { epoch: 1, wrapped: new Uint8Array([1]), body: new Uint8Array([2]) };
 
 function setup() {
@@ -462,6 +464,7 @@ describe("projects", () => {
       signer: stub,
       delivery: stub,
       currentKey: async () => epoch,
+      recipientHash: await recipientHasher(new Uint8Array(32)),
       sourceIp: null,
     });
     const data = "From: tlsrpt@b.test\r\nTo: r@dest.test\r\nSubject: report\r\n\r\nhi\r\n";
@@ -507,6 +510,7 @@ describe("projects", () => {
       signer: stub,
       delivery: stub,
       currentKey: async () => epoch,
+      recipientHash: await recipientHasher(new Uint8Array(32)),
       sourceIp: null,
     });
     const email = (to: string[]) => ({
@@ -534,8 +538,87 @@ describe("projects", () => {
     await refused.catch((e: { retryAfter?: number }) => expect(e.retryAfter).toBeGreaterThan(0));
     expect(db.query("SELECT count(*) AS n FROM messages").get()).toEqual(before);
     await batch({ emails: [email(rcpts(1, "d")), email(rcpts(1, "e"))] });
-    expect(events()).toEqual([{ window: "hour", limit: 10, used: 9 }]);
+    expect(events()).toEqual([{ setting: "per_hour", window: "hour", limit: 10, used: 9 }]);
     await expect(enqueue(email(rcpts(11, "f")))).rejects.toMatchObject({ code: "invalid" });
+  });
+
+  test("new recipients per day: known addresses are free, per project, admin event once", async () => {
+    const db = openDatabase({ path: ":memory:" });
+    saveDomain(
+      db,
+      {
+        project: A,
+        name: "a.test",
+        status: "verified",
+        mode: "records",
+        records: [],
+        createdAt: T0,
+        checkedAt: null,
+      },
+      T0,
+    );
+    db.run("UPDATE projects SET new_recipients_per_day = 3 WHERE id = ?", [A]);
+    suppress(db, A, { address: "gone@dest.test", scope: "all", reason: "manual" }, T0);
+    const epoch = await epochKeyPair(1, newEpochSeed());
+    const stub = {
+      call: async (m: string) => (m === "domains" ? ["a.test"] : null),
+    } as unknown as RpcClient;
+    const hash = await recipientHasher(new Uint8Array(32));
+    const { methods } = coreMethods({
+      db,
+      writer: new Writer(db),
+      log: createLogger("error", {}, () => {}),
+      signer: stub,
+      delivery: stub,
+      currentKey: async () => epoch,
+      recipientHash: hash,
+      sourceIp: null,
+    });
+    const email = (to: string[]) => ({
+      from: "x@a.test",
+      recipients: to,
+      data: "From: x@a.test\r\nSubject: s\r\n\r\nhi\r\n",
+      smtpUtf8: false,
+      requireTls: false,
+    });
+    const enqueue = (p: unknown) => methods["enqueue"]?.handle(p) as Promise<unknown>;
+    const batch = (p: unknown) => methods["enqueueBatch"]?.handle(p) as Promise<unknown>;
+    const reached = () =>
+      db
+        .query<{ n: number }, []>(
+          "SELECT count(*) AS n FROM admin_events WHERE kind = 'project.limit_reached'",
+        )
+        .get()?.n;
+
+    await enqueue(email(["a@dest.test", "B@dest.test", "gone@dest.test"]));
+    await enqueue(email(["a@dest.test", "b@dest.test", "a@dest.test"]));
+    await batch({ emails: [email(["c@dest.test"]), email(["c@dest.test", "a@dest.test"])] });
+    const refused = enqueue(email(["a@dest.test", "d@dest.test"]));
+    await expect(refused).rejects.toMatchObject({
+      code: "project-limit",
+      message: expect.stringContaining("3 new recipients a day"),
+    });
+    await expect(enqueue(email(["e@dest.test"]))).rejects.toMatchObject({ code: "project-limit" });
+    expect(reached()).toBe(1);
+    expect(
+      db
+        .query<{ n: number }, [Uint8Array]>(
+          "SELECT count(*) AS n FROM project_recipients WHERE address_hash = ?",
+        )
+        .get(await hash("d@dest.test"))?.n,
+    ).toBe(0);
+    await enqueue(email(["b@dest.test", "c@dest.test"]));
+    await expect(
+      enqueue(email(["f@dest.test", "g@dest.test", "h@dest.test", "i@dest.test"])),
+    ).rejects.toMatchObject({ code: "invalid" });
+    expect(
+      db.query("SELECT data FROM admin_events WHERE kind = 'project.limit_reached'").get(),
+    ).toEqual({ data: JSON.stringify({ setting: "new_recipients_per_day" }) });
+
+    db.run("INSERT INTO projects (id, name, created_at) VALUES (?, 'other', ?)", [B, T0]);
+    expect(newRecipients(db, B, [await hash("a@dest.test")], Date.now())).toBe(1);
+    expect(newRecipients(db, A, [await hash("A@dest.test")], Date.now())).toBe(0);
+    expect(newRecipients(db, A, [await hash("a@dest.test")], Date.now() + 91 * DAY)).toBe(1);
   });
 
   test("moving a domain takes its inbound routes; queued email and stats stay", () => {
@@ -597,6 +680,7 @@ describe("projects", () => {
       signer: stub,
       delivery: stub,
       currentKey: async () => epoch,
+      recipientHash: await recipientHasher(new Uint8Array(32)),
       sourceIp: null,
       ips: [
         { ip: "192.0.2.1", pool: "main", established: true },

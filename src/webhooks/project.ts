@@ -95,6 +95,7 @@ export function projectEvents(db: Database, now: number, limit = 500): number {
       type === "project.limit_approaching"
         ? {
             project_id: m.project,
+            setting: data["setting"] ?? null,
             window: data["window"] ?? null,
             limit: data["limit"] ?? null,
             used: data["used"] ?? null,

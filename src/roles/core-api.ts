@@ -8,8 +8,15 @@ import {
   RELAY_TARGET,
 } from "../accounts/pool-rules.ts";
 import { poolOwner, poolUsableBy } from "../accounts/pools.ts";
-import { findProject, projectOfMessage, SYSTEM_PROJECT } from "../accounts/projects.ts";
-import { type Over, takeQuota } from "../accounts/usage.ts";
+import {
+  findProject,
+  type ProjectId,
+  projectOfMessage,
+  recordAdminEvent,
+  SYSTEM_PROJECT,
+} from "../accounts/projects.ts";
+import { newRecipients, type RecipientHash, rememberRecipients } from "../accounts/recipients.ts";
+import { type LimitSetting, noteLimitReached, type Over, takeQuota } from "../accounts/usage.ts";
 import type { SourceIp } from "../config.ts";
 import { appendEvent } from "../core/events.ts";
 import { countByState } from "../core/jobs.ts";
@@ -92,6 +99,17 @@ type EnqueueInput = Omit<b.output<typeof enqueueParams>, "tokenHash" | "project"
 
 const MAX_SCHEDULE_MS = 72 * 3_600_000;
 
+class LimitReached extends RpcError {
+  constructor(
+    readonly project: ProjectId,
+    readonly setting: LimitSetting,
+    message: string,
+    retryAfter: number,
+  ) {
+    super("project-limit", message, retryAfter);
+  }
+}
+
 export interface CoreDeps {
   db: Database;
   writer: Writer;
@@ -99,6 +117,7 @@ export interface CoreDeps {
   signer: RpcClient;
   delivery: RpcClient;
   currentKey: () => Promise<EpochPublicKey>;
+  recipientHash: RecipientHash;
   sourceIp: string | string[] | null;
   inboundHost?: string | null;
   nsZone?: string | null;
@@ -221,7 +240,11 @@ export function coreMethods(deps: CoreDeps): {
         "This project is suspended. Sending is paused until it is resumed.",
       );
     }
-    const limits = { perHour: settings?.perHour ?? null, perDay: settings?.perDay ?? null };
+    const limits = {
+      perHour: settings?.perHour ?? null,
+      perDay: settings?.perDay ?? null,
+      newPerDay: settings?.newRecipientsPerDay ?? null,
+    };
     const id = p.id ?? Bun.randomUUIDv7();
     if (p.id !== undefined) {
       const owner = projectOfMessage(db, id);
@@ -331,6 +354,7 @@ export function coreMethods(deps: CoreDeps): {
       else sending.add(address);
     }
     const counted = key?.test ? 0 : sending.size;
+    const hashes = key?.test ? [] : await Promise.all([...sending].map(deps.recipientHash));
     await deps.scan?.(p.data, envelopeFrom, p.recipients);
     const body = await sealer.seal(await deps.currentKey(), id, p.data);
     return {
@@ -354,8 +378,9 @@ export function coreMethods(deps: CoreDeps): {
           chosen !== null && (project === SYSTEM_PROJECT || poolUsableBy(d, chosen, project))
             ? chosen
             : null;
-        const quota = takeQuota(d, project, limits, counted, t);
-        if (!quota.ok) throw limitError(quota.over);
+        const fresh = newRecipients(d, project, hashes, t);
+        const quota = takeQuota(d, project, limits, counted, fresh, t);
+        if (!quota.ok) throw limitError(project, quota.over);
         enqueueEmail(
           d,
           project,
@@ -381,13 +406,19 @@ export function coreMethods(deps: CoreDeps): {
           t,
         );
         if (idem) rememberIdempotent(d, idemOwner, idem.key, idem.hash, id, t);
+        rememberRecipients(d, project, hashes, t);
         for (const near of quota.near) {
           appendEvent(d, {
             messageId: id,
             kind: "limit_approaching",
             source: "intake",
             at: t,
-            data: { window: near.window, limit: near.limit, used: near.used },
+            data: {
+              setting: near.setting,
+              window: near.window,
+              limit: near.limit,
+              used: near.used,
+            },
           });
         }
         return { id, existed: false };
@@ -395,20 +426,42 @@ export function coreMethods(deps: CoreDeps): {
     };
   };
 
-  const limitError = (o: Over): RpcError => {
-    const span = o.window === "hour" ? "hourly" : "daily";
+  const limitError = (project: ProjectId, o: Over): RpcError => {
+    const what = o.setting === "new_recipients_per_day" ? "new recipients" : "recipients";
+    const span =
+      o.setting === "new_recipients_per_day"
+        ? `limit of ${o.limit} new recipients a day`
+        : `${o.window === "hour" ? "hourly" : "daily"} limit of ${o.limit}`;
     if (o.retryAfterMs === null) {
-      return new RpcError(
-        "invalid",
-        `this email has more recipients than the project's ${span} limit of ${o.limit}`,
-      );
+      return new RpcError("invalid", `this email has more ${what} than the project's ${span}`);
     }
     const seconds = Math.ceil(o.retryAfterMs / 1000);
-    return new RpcError(
-      "project-limit",
-      `The project's ${span} limit of ${o.limit} recipients is reached. Try again in ${seconds} seconds.`,
+    return new LimitReached(
+      project,
+      o.setting,
+      o.setting === "new_recipients_per_day"
+        ? `The project's ${span} is reached. Try again in ${seconds} seconds.`
+        : `The project's ${span} recipients is reached. Try again in ${seconds} seconds.`,
       seconds,
     );
+  };
+
+  const noteRefusal = async (err: unknown) => {
+    if (!(err instanceof LimitReached)) return;
+    const t = now();
+    await writer.run((d) => {
+      if (!noteLimitReached(d, err.project, err.setting, t)) return;
+      recordAdminEvent(
+        d,
+        {
+          kind: "project.limit_reached",
+          project: err.project,
+          actor: "intake",
+          data: { setting: err.setting },
+        },
+        t,
+      );
+    });
   };
 
   const enqueueFailed = (err: unknown): never => {
@@ -485,6 +538,7 @@ export function coreMethods(deps: CoreDeps): {
         if (!(err instanceof RpcError) && projectOfMessage(db, r.id) === actor.project) {
           return { id: r.id, existed: true };
         }
+        await noteRefusal(err);
         return enqueueFailed(err);
       }
     }),
@@ -517,6 +571,7 @@ export function coreMethods(deps: CoreDeps): {
             ),
           };
         } catch (err) {
+          await noteRefusal(err);
           return enqueueFailed(err);
         }
       },

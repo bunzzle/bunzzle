@@ -1,6 +1,15 @@
 import { choosePool } from "../accounts/pool-rules.ts";
 import { recordAdminEvent, SYSTEM_PROJECT } from "../accounts/projects.ts";
 import { purgeDeletedProject } from "../accounts/purge.ts";
+import {
+  finishSeed,
+  pruneRecipients,
+  type RecipientHash,
+  recipientHasher,
+  recipientsSeeded,
+  rememberRecipients,
+  seedPage,
+} from "../accounts/recipients.ts";
 import { pruneUsage } from "../accounts/usage.ts";
 import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
@@ -223,6 +232,18 @@ export async function runCore(config: Config, log: Logger) {
     return fetching;
   };
 
+  let hashing: Promise<RecipientHash> | null = null;
+  const recipientHash: RecipientHash = async (address) => {
+    hashing ??= signer
+      .call("recipientKey", {}, { result: b.string() })
+      .then((k) => recipientHasher(Uint8Array.fromBase64(k)))
+      .catch((err: unknown) => {
+        hashing = null;
+        throw err;
+      });
+    return (await hashing)(address);
+  };
+
   const hooks = hookMethods({ db, writer, log, delivery });
   const zone =
     config.ns && ns
@@ -324,6 +345,7 @@ export async function runCore(config: Config, log: Logger) {
     signer,
     delivery,
     currentKey,
+    recipientHash,
     sourceIp: config.sourceIps.map((x) => x.ip),
     inboundHost: config.inboundHostname,
     nsZone: config.ns?.zone ?? null,
@@ -460,8 +482,32 @@ export async function runCore(config: Config, log: Logger) {
       pruneConversations(d, Date.now() - config.retentionDays * 24 * HOUR);
       pruneRouted(d, Date.now() - config.retentionDays * 24 * HOUR);
       pruneUsage(d, Date.now());
+      pruneRecipients(d, Date.now());
     }),
   );
+  const seedRecipients = async () => {
+    if (recipientsSeeded(db)) return;
+    let after = 0;
+    for (;;) {
+      const page = seedPage(db, after, Date.now());
+      const rows = await Promise.all(
+        page.rows.map(async (r) => ({ ...r, hash: await recipientHash(r.address) })),
+      );
+      await writer.run((d) => {
+        for (const r of rows) rememberRecipients(d, r.project, [r.hash], r.at);
+        if (page.next === null) finishSeed(d, Date.now());
+      });
+      if (page.next === null) return;
+      after = page.next;
+    }
+  };
+  const runSeed = () => {
+    seedRecipients().catch((err: Error) => {
+      log.warn("could not fill the known recipients yet", { error: err.message });
+      setTimeout(runSeed, scaled(60_000));
+    });
+  };
+  runSeed();
   const purge = async () => {
     for (let i = 0; i < 20; i++) {
       const r = await writer.run((d) => purgeDeletedProject(d));

@@ -16,6 +16,7 @@ export interface Project {
   name: string;
   perHour: number | null;
   perDay: number | null;
+  newRecipientsPerDay: number | null;
   pool: string | null;
   createdAt: number;
   suspendedAt: number | null;
@@ -27,6 +28,7 @@ interface Row {
   name: string;
   per_hour: number | null;
   per_day: number | null;
+  new_recipients_per_day: number | null;
   pool: string | null;
   created_at: number;
   suspended_at: number | null;
@@ -38,6 +40,7 @@ const fromRow = (r: Row): Project => ({
   name: r.name,
   perHour: r.per_hour,
   perDay: r.per_day,
+  newRecipientsPerDay: r.new_recipients_per_day,
   pool: r.pool,
   createdAt: r.created_at,
   suspendedAt: r.suspended_at,
@@ -109,6 +112,7 @@ export interface ProjectChange {
   name?: string;
   perHour?: number | null;
   perDay?: number | null;
+  newRecipientsPerDay?: number | null;
   pool?: string | null;
   suspended?: boolean;
 }
@@ -123,13 +127,17 @@ export function updateProject(
   if (!p) return null;
   const suspendedAt =
     c.suspended === undefined ? p.suspendedAt : c.suspended ? (p.suspendedAt ?? now) : null;
-  db.query<unknown, [string, number | null, number | null, string | null, number | null, string]>(
-    `UPDATE projects SET name = ?, per_hour = ?, per_day = ?, pool = ?, suspended_at = ?
-     WHERE id = ? AND deleted_at IS NULL`,
+  db.query<
+    unknown,
+    [string, number | null, number | null, number | null, string | null, number | null, string]
+  >(
+    `UPDATE projects SET name = ?, per_hour = ?, per_day = ?, new_recipients_per_day = ?, pool = ?,
+     suspended_at = ? WHERE id = ? AND deleted_at IS NULL`,
   ).run(
     c.name ?? p.name,
     c.perHour === undefined ? p.perHour : c.perHour,
     c.perDay === undefined ? p.perDay : c.perDay,
+    c.newRecipientsPerDay === undefined ? p.newRecipientsPerDay : c.newRecipientsPerDay,
     c.pool === undefined ? p.pool : c.pool,
     suspendedAt,
     id,
