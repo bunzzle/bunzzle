@@ -60,30 +60,40 @@ export function hookMethods(deps: HookDeps) {
     }
   };
 
-  const scan = async (data: string, from: string, recipients: string[]) => {
-    for (const h of listHooks(db, "scan")) {
-      const r = await post(h, "message/rfc822", data, {
-        From: from,
-        ...(recipients[0] ? { Rcpt: recipients[0] } : {}),
-      });
-      const score = r.ok ? parseScanReply(r.status, r.body) : r.error;
-      if (typeof score === "string") {
-        failed(h, score);
+  const score = async (
+    kind: "scan" | "inbound",
+    data: string,
+    headers: Record<string, string>,
+  ): Promise<number | null> => {
+    let highest: number | null = null;
+    for (const h of listHooks(db, kind)) {
+      const r = await post(h, "message/rfc822", data, headers);
+      const s = r.ok ? parseScanReply(r.status, r.body) : r.error;
+      if (typeof s === "string") {
+        failed(h, s);
         continue;
       }
-      if (h.maxScore !== null && score >= h.maxScore) {
+      if (h.maxScore !== null && s >= h.maxScore) {
         throw new RpcError(
           "refused",
-          `The content check refused this email (score ${score}, limit ${h.maxScore}).`,
+          `The content check refused this email (score ${s}, limit ${h.maxScore}).`,
         );
       }
+      highest = highest === null ? s : Math.max(highest, s);
     }
+    return highest;
   };
+
+  const scan = async (data: string, from: string, recipients: string[]) => {
+    await score("scan", data, { From: from, ...(recipients[0] ? { Rcpt: recipients[0] } : {}) });
+  };
+
+  const printable = (v: string) => v.replace(/[^\x20-\x7e]/g, "").slice(0, 1000);
 
   const methods: Methods = {
     addHook: method(
       b.object({
-        kind: b.enum(["check", "scan"]),
+        kind: b.enum(["check", "scan", "inbound"]),
         url: b.string().max(2048),
         timeoutMs: b.number().int().min(100).max(60_000),
         onError: b.enum(["accept", "refuse"]),
@@ -103,7 +113,7 @@ export function hookMethods(deps: HookDeps) {
           throw new RpcError("invalid", "a scan hook needs a score limit");
         }
         if (p.kind === "check" && p.maxScore !== null) {
-          throw new RpcError("invalid", "only a scan hook has a score limit");
+          throw new RpcError("invalid", "a check hook has no score limit");
         }
         const h = await writer.run((d) => addHook(d, p, now()));
         log.info("hook added", { hook: h.id, kind: h.kind, url: h.url });
@@ -112,6 +122,31 @@ export function hookMethods(deps: HookDeps) {
     ),
 
     listHooks: method(b.object({}), () => listHooks(db).map(view)),
+
+    inboundScan: method(
+      b.object({
+        raw: b.string().max(60 * 1024 * 1024),
+        from: b.string().max(1000),
+        recipients: b.array(b.string().max(320)).min(1).max(100),
+        ip: b.string().max(64),
+        helo: b.string().max(1000),
+      }),
+      async (p) => {
+        try {
+          const s = await score("inbound", p.raw, {
+            From: printable(p.from),
+            Rcpt: printable(p.recipients[0] ?? ""),
+            Ip: printable(p.ip),
+            Helo: printable(p.helo),
+          });
+          return { result: "ok" as const, score: s };
+        } catch (err) {
+          if (!(err instanceof RpcError)) throw err;
+          log.info("inbound scan refused a message", { ip: p.ip, reason: err.message });
+          return { result: err.code === "refused" ? ("refused" as const) : ("failed" as const) };
+        }
+      },
+    ),
 
     removeHook: method(b.object({ id: b.string().max(64) }), async ({ id }) => {
       if (!(await writer.run((d) => removeHook(d, id)))) {

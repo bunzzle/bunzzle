@@ -4,6 +4,7 @@ import type { StorageState } from "../core/storage.ts";
 import type { Writer } from "../core/store/writer.ts";
 import { BodySealer, type EpochPublicKey } from "../crypto/envelope.ts";
 import { getDomain } from "../domains/domains.ts";
+import { listHooks } from "../hooks/store.ts";
 import {
   claimRouted,
   createRoute,
@@ -69,7 +70,8 @@ export function routeMethods(deps: RouteDeps) {
           entry.recipients.push(address);
           routes.set(r.id, entry);
         }
-        return { routes: [...routes.values()], rest };
+        const scan = routes.size > 0 && listHooks(db, "inbound").length > 0;
+        return { routes: [...routes.values()], rest, scan };
       },
     ),
 
