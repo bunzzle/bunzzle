@@ -65,5 +65,5 @@ export const migrations: readonly Migration[] = [
   { version: 27, name: "suppressions by address", sql: suppressionsAddress },
   { version: 28, name: "domain mode", sql: domainMode },
   { version: 29, name: "domain slot keys", sql: domainSlotKeys },
-  { version: 30, name: "webhook attempts", sql: webhookAttempts },
+  { version: 30, name: "webhook attempts and resends", sql: webhookAttempts },
 ];

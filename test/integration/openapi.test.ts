@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { generateMasterKey } from "../../src/crypto/master.ts";
 import { OPERATIONS, openApi } from "../../src/http/openapi.ts";
@@ -140,6 +141,25 @@ describe("API responses match openapi.json", () => {
     await call("GET", "/stats");
     const w = await call("POST", "/webhooks", { endpoint: "https://hooks.example.com/x" });
     await call("GET", "/webhooks");
+    const store = new Database(`${served.dir}/data/bunzzle.db`);
+    store.run("PRAGMA busy_timeout = 5000");
+    store.run(
+      `INSERT INTO webhook_deliveries (id, webhook_id, type, payload, state, next_at, created_at, updated_at)
+       VALUES ('0190f000-0000-7000-8000-000000000001', ?, 'email.delivered', '{}', 'failed', 0, ?, 0)`,
+      [w["id"] as string, Date.now() - 60_000],
+    );
+    store.close();
+    await call("GET", `/webhooks/${w["id"]}/deliveries?failed=true&limit=10`);
+    await call(
+      "POST",
+      `/webhooks/${w["id"]}/deliveries/0190f000-0000-7000-8000-000000000001/resend`,
+    );
+    const job = await call("POST", `/webhooks/${w["id"]}/resend`, {
+      from: new Date(Date.now() - 3_600_000).toISOString(),
+      to: new Date().toISOString(),
+      failed: true,
+    });
+    await call("GET", `/webhooks/${w["id"]}/resends/${job["id"]}`);
     await call("DELETE", `/webhooks/${w["id"]}`);
     const route = await call("POST", "/routes", {
       address: "*@acme.test",

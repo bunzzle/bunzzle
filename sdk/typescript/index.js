@@ -182,6 +182,10 @@ export class Bunzzle {
     return this.#request("POST", `/webhooks/${segment(id)}/resend`, { body });
   }
 
+  getWebhookResend(id, resend) {
+    return this.#request("GET", `/webhooks/${segment(id)}/resends/${segment(resend)}`);
+  }
+
   deleteWebhook(id) {
     return this.#request("DELETE", `/webhooks/${segment(id)}`);
   }

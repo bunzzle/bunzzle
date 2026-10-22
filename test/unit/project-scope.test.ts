@@ -31,7 +31,10 @@ const REVIEWED: Record<string, { count: number; why: string }> = {
   },
   "src/guards/guards.ts jobs": { count: 1, why: "bulk volume of one API key" },
   "src/guards/guards.ts messages": { count: 1, why: "bulk volume of one API key" },
-  "src/webhooks/store.ts webhooks": { count: 1, why: "delivery of an already projected webhook" },
+  "src/webhooks/store.ts webhooks": {
+    count: 2,
+    why: "delivery of an already projected webhook; the resend worker runs queued jobs of every project",
+  },
   "src/tracking/store.ts domains": {
     count: 3,
     why: "tracking of a domain after a project check, and the host list",

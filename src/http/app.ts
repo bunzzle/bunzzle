@@ -733,6 +733,18 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           );
         }),
       },
+      "/webhooks/:id/resends/:resend": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(
+            await rpc("getWebhookResend", {
+              tokenHash: caller.hash,
+              id: req.params["id"],
+              resend: req.params["resend"],
+            }),
+          );
+        }),
+      },
       "/webhooks/:id": {
         DELETE: handle(async (req) => {
           const caller = await authenticate(req);

@@ -1244,7 +1244,7 @@
         "tags": [
           "Webhooks"
         ],
-        "summary": "Send the finished deliveries created in a time range again",
+        "summary": "Queue the finished deliveries created in a time range to be sent again",
         "description": "API key scope: full (full keys can do everything).",
         "parameters": [
           {
@@ -1272,7 +1272,57 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Resent"
+                  "$ref": "#/components/schemas/WebhookResend"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/webhooks/{id}/resends/{resend}": {
+      "get": {
+        "operationId": "getWebhookResend",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Progress of a queued resend",
+        "description": "API key scope: read (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resend",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookResend"
                 }
               }
             }
@@ -4800,6 +4850,62 @@
         "required": [
           "from",
           "to"
+        ]
+      },
+      "WebhookResend": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "webhook_resend"
+          },
+          "id": {
+            "type": "string"
+          },
+          "webhook_id": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "failed": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "done"
+            ]
+          },
+          "resent": {
+            "type": "integer",
+            "description": "Deliveries put back in the queue so far"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "object",
+          "id",
+          "webhook_id",
+          "from",
+          "to",
+          "failed",
+          "state",
+          "resent",
+          "created_at",
+          "updated_at"
         ]
       },
       "Deleted": {

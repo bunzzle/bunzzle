@@ -344,6 +344,19 @@ export const resendWebhookSchema = b.object({
 
 export const resent = b.object({ resent: b.number().int() });
 
+export const webhookResend = b.object({
+  object: b.literal("webhook_resend"),
+  id,
+  webhook_id: id,
+  from: time,
+  to: time,
+  failed: b.boolean(),
+  state: b.enum(["queued", "done"]),
+  resent: b.number().int().describe("Deliveries put back in the queue so far"),
+  created_at: time,
+  updated_at: time,
+});
+
 export const route = b.object({
   object: b.literal("route"),
   id,

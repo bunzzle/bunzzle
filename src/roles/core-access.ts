@@ -31,6 +31,7 @@ export const API_METHODS = [
   "listRoutes",
   "listSuppressions",
   "listTemplates",
+  "getWebhookResend",
   "listWebhookDeliveries",
   "listWebhooks",
   "metrics",

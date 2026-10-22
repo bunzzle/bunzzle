@@ -422,6 +422,11 @@ export async function runCore(config: Config, log: Logger) {
       .dispatch()
       .catch((err: Error) => log.error("webhook dispatch failed", { error: err.message })),
   );
+  const stopResend = every(1_000, () =>
+    feedback
+      .resend()
+      .catch((err: Error) => log.error("webhook resend failed", { error: err.message })),
+  );
   const stopRoutes = every(250, () =>
     routes
       .dispatch()
@@ -473,6 +478,7 @@ export async function runCore(config: Config, log: Logger) {
     stopPostmaster();
     stopListed();
     stopDispatch();
+    stopResend();
     stopRoutes();
     stopEventLog();
     await eventLog?.stop();

@@ -535,6 +535,19 @@ export type ResendWebhook = {
   failed?: boolean;
 };
 
+export type WebhookResend = {
+  object: "webhook_resend";
+  id: string;
+  webhook_id: string;
+  from: string;
+  to: string;
+  failed: boolean;
+  state: "queued" | "done";
+  resent: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Deleted = {
   id: string;
   deleted: boolean;
@@ -777,7 +790,8 @@ export declare class Bunzzle {
     },
   ): Promise<WebhookDeliveryList>;
   resendWebhookDelivery(id: string, delivery: string): Promise<Resent>;
-  resendWebhookRange(id: string, body: ResendWebhook): Promise<Resent>;
+  resendWebhookRange(id: string, body: ResendWebhook): Promise<WebhookResend>;
+  getWebhookResend(id: string, resend: string): Promise<WebhookResend>;
   deleteWebhook(id: string): Promise<Deleted>;
   listRoutes(): Promise<RouteList>;
   createRoute(body: CreateRoute): Promise<Route>;

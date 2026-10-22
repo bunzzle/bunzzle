@@ -21,12 +21,14 @@ import {
   type Delivery,
   deleteWebhook,
   EVENT_TYPES,
+  getResend,
   listDeliveries,
   listWebhooks,
-  MAX_RESEND,
+  queueResend,
+  type Resend,
   recordAttempt,
   resendDelivery,
-  resendRange,
+  resendStep,
   resetSending,
   settleDelivery,
 } from "../webhooks/store.ts";
@@ -50,6 +52,19 @@ const tokenResult = b
   .nullable();
 
 const iso = (t: number) => new Date(t).toISOString();
+
+const resendView = (r: Resend) => ({
+  object: "webhook_resend",
+  id: r.id,
+  webhook_id: r.webhookId,
+  from: iso(r.from),
+  to: iso(r.to),
+  failed: r.failed,
+  state: r.state,
+  resent: r.resent,
+  created_at: iso(r.createdAt),
+  updated_at: iso(r.updatedAt),
+});
 
 const deliveryView = (d: Delivery) => ({
   object: "webhook_delivery",
@@ -327,16 +342,23 @@ export function feedbackMethods(deps: FeedbackDeps) {
         const actor = resolveActor(db, p, "full");
         if (p.to <= p.from) throw new RpcError("invalid", "`to` must be after `from`");
         const r = await writer.run((d) =>
-          resendRange(d, actor.project, p.id, { from: p.from, to: p.to, failed: p.failed }, now()),
+          queueResend(d, actor.project, p.id, { from: p.from, to: p.to, failed: p.failed }, now()),
         );
         if (!r) throw new RpcError("not-found", "webhook not found");
-        if ("tooMany" in r) {
-          throw new RpcError(
-            "invalid",
-            `${r.tooMany} deliveries in that range; resend at most ${MAX_RESEND} at a time`,
-          );
+        if ("busy" in r) {
+          throw new RpcError("started", `resend ${r.busy} of this webhook is still running`);
         }
-        return { resent: r.resent };
+        return resendView(r);
+      },
+    ),
+
+    getWebhookResend: method(
+      b.object({ tokenHash, project, id: b.string().max(64), resend: b.string().max(64) }),
+      (p) => {
+        const actor = resolveActor(db, p, "read");
+        const r = getResend(db, actor.project, p.id, p.resend);
+        if (!r) throw new RpcError("not-found", "resend not found");
+        return resendView(r);
       },
     ),
 
@@ -421,5 +443,7 @@ export function feedbackMethods(deps: FeedbackDeps) {
 
   const recover = () => writer.run((d) => resetSending(d, now()));
 
-  return { methods, project: projectAll, dispatch, recover };
+  const resend = () => writer.run((d) => resendStep(d, now()));
+
+  return { methods, project: projectAll, dispatch, recover, resend };
 }

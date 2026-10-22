@@ -374,15 +374,36 @@ hi
       (n) => n === 2,
     );
 
+    const total = hooks.length;
     const range = await api(`/webhooks/${hookId}/resend`, {
       method: "POST",
       body: JSON.stringify({
         from: new Date(Date.now() - 3_600_000).toISOString(),
         to: new Date(Date.now() + 60_000).toISOString(),
-        failed: true,
       }),
     });
-    expect(await range.json()).toEqual({ resent: 0 });
+    const job = (await range.json()) as { id: string; state: string; resent: number };
+    expect(job).toMatchObject({ state: "queued", resent: 0 });
+    const busy = await api(`/webhooks/${hookId}/resend`, {
+      method: "POST",
+      body: JSON.stringify({ from: new Date(0).toISOString(), to: new Date().toISOString() }),
+    });
+    expect(busy.status).toBe(409);
+    const finished = await until(
+      async () =>
+        (await (await api(`/webhooks/${hookId}/resends/${job.id}`)).json()) as {
+          state: string;
+          resent: number;
+        },
+      (r) => r.state === "done",
+      20_000,
+    );
+    expect(finished.resent).toBe(all.length);
+    await until(
+      () => hooks.length,
+      (n) => n >= total + all.length,
+      20_000,
+    );
     expect((await api(`/webhooks/${hookId}/deliveries?from=yesterday`)).status).toBe(422);
     expect((await api("/webhooks/nope/deliveries")).status).toBe(404);
   });

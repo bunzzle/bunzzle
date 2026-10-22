@@ -400,17 +400,33 @@ export async function webhooksCommand(argv: string[], config: Config) {
       const from = Date.parse(args.strings.get("from") ?? "");
       const to = Date.parse(args.strings.get("to") ?? "");
       if (Number.isNaN(from) || Number.isNaN(to)) throw new UsageError(usage);
-      const r = await call<{ resent: number }>(config, "resendWebhookRange", {
+      const r = await call<{ id: string }>(config, "resendWebhookRange", {
         id,
         from,
         to,
         failed: args.flags.has("failed"),
       });
-      console.log(`${r.resent} deliveries will be sent again.`);
+      console.log(`Resend ${r.id} is queued. See its progress with:`);
+      console.log(`  bunzzle webhooks resend-status ${id} ${r.id}`);
+      return;
+    }
+    case "resend-status": {
+      const [id, job] = rest;
+      if (!id || !job || rest.length > 2) {
+        throw new UsageError("usage: bunzzle webhooks resend-status ID RESEND");
+      }
+      const r = await call<{ state: string; resent: number; from: string; to: string }>(
+        config,
+        "getWebhookResend",
+        { id, resend: job },
+      );
+      console.log(`${job}  ${r.state}, ${r.resent} sent again (${r.from} to ${r.to})`);
       return;
     }
     default:
-      throw new UsageError("usage: bunzzle webhooks add|list|remove|deliveries|resend");
+      throw new UsageError(
+        "usage: bunzzle webhooks add|list|remove|deliveries|resend|resend-status",
+      );
   }
 }
 
