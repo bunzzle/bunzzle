@@ -1,3 +1,4 @@
+import { choosePool } from "../accounts/pool-rules.ts";
 import { recordAdminEvent, SYSTEM_PROJECT } from "../accounts/projects.ts";
 import { purgeDeletedProject } from "../accounts/purge.ts";
 import { pruneUsage } from "../accounts/usage.ts";
@@ -188,6 +189,8 @@ export async function runCore(config: Config, log: Logger) {
         ? { targets: config.relay.for.targets, blocked: config.relay.for.blocked }
         : null,
     listed: (ip) => listed.has(ip),
+    poolRules: (job) =>
+      choosePool(db, job, (pool) => config.sourceIps.some((x) => x.pool === pool)),
   });
   const scheduler = new Scheduler({
     db,
@@ -327,6 +330,7 @@ export async function runCore(config: Config, log: Logger) {
     anomalyFloor: () => config.anomalyFloor,
     sharedBounces: () => config.sharedBounces,
     ips: config.sourceIps,
+    relay: config.relay !== null,
     paths: () => shaper.views(),
     storage: () => storage.state(),
     nsHealth: () => probe?.view() ?? null,

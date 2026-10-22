@@ -7,6 +7,7 @@ import { VERSION } from "../version.ts";
 import { ApiError, errorResponse, fromRpc } from "./errors.ts";
 import {
   createDomainSchema,
+  createPoolRuleSchema,
   createProjectKeySchema,
   createProjectSchema,
   createRouteSchema,
@@ -750,6 +751,29 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           const caller = await authenticate(req);
           return Response.json(
             await rpc("deleteWebhook", { tokenHash: caller.hash, id: req.params["id"] }),
+          );
+        }),
+      },
+      "/pool-rules": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const data = await rpc("listPoolRules", { tokenHash: caller.hash }, b.array(b.unknown()));
+          return Response.json({ object: "list", data });
+        }),
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          const parsed = createPoolRuleSchema.safeParse(await json(req));
+          if (!parsed.success) throw invalid(parsed.error);
+          return Response.json(
+            await rpc("createPoolRule", { tokenHash: caller.hash, ...parsed.data }),
+          );
+        }),
+      },
+      "/pool-rules/:id": {
+        DELETE: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(
+            await rpc("deletePoolRule", { tokenHash: caller.hash, id: req.params["id"] }),
           );
         }),
       },

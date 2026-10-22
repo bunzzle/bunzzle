@@ -1,4 +1,6 @@
 import type { Database } from "bun:sqlite";
+import type { PoolChoice } from "../accounts/pool-rules.ts";
+import type { ProjectId } from "../accounts/projects.ts";
 import { projectOfMessage } from "../accounts/projects.ts";
 import type { SourceIp } from "../config.ts";
 import { type Clock, systemClock } from "../core/clock.ts";
@@ -46,6 +48,12 @@ export interface DeliveryHandlerOptions {
   suspendRetryMs?: number;
   relayRoutes?: () => { targets: string[]; blocked: boolean } | null;
   listed?: (ip: string) => boolean;
+  poolRules?: (job: {
+    project: ProjectId;
+    domain: string;
+    provider: string | null;
+    senderPool: string | null;
+  }) => PoolChoice;
 }
 
 const RELAY = "relay";
@@ -293,10 +301,28 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
     const routes =
       destination.kind === "targets" && !simulated ? (o.relayRoutes?.() ?? null) : null;
     const canFallback = routes?.blocked === true && !email.requireTls;
+    const senderPool = (job.metadata["pool"] as string | null | undefined) ?? null;
+    const rules =
+      destination.kind === "targets" && !simulated && o.poolRules
+        ? o.poolRules({
+            project: job.project as ProjectId,
+            domain: job.target,
+            provider,
+            senderPool,
+          })
+        : null;
+    if (rules && rules.skipped.length > 0) {
+      o.log.warn("pool rule skipped: its pool has no source IPs or belongs to another project", {
+        rules: rules.skipped,
+        project: job.project,
+        domain: job.target,
+      });
+    }
     let via: typeof RELAY | null =
       routes &&
       (routes.targets.includes(job.target) ||
-        (provider !== null && routes.targets.includes(provider)))
+        (provider !== null && routes.targets.includes(provider)) ||
+        (rules !== null && "relay" in rules))
         ? RELAY
         : null;
     let source: string = simulated ? SIMULATOR_SOURCE : RELAY;
@@ -312,7 +338,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
             now,
             (ip) => o.shaper.pausedUntil(Shaper.key(ip, target)),
             o.listed,
-            (job.metadata["pool"] as string | null | undefined) ?? null,
+            rules && "pool" in rules ? rules.pool : senderPool,
           )
         : { source: fixedSource };
       if ("wait" in choice) {

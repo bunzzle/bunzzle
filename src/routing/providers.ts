@@ -21,6 +21,8 @@ const TABLE: [suffix: string, provider: Provider][] = [
   ["web.de", { id: "gmx", name: "GMX / WEB.DE", tlsRequired: true }],
 ];
 
+export const PROVIDER_IDS: readonly string[] = [...new Set(TABLE.map(([, p]) => p.id))];
+
 export function providerOf(mxHost: string): Provider | null {
   const host = mxHost.toLowerCase().replace(/\.$/, "");
   for (const [suffix, provider] of TABLE) {

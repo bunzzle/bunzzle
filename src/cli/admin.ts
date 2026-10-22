@@ -661,6 +661,38 @@ export async function poolsCommand(argv: string[], config: Config) {
       }
       return;
     }
+    case "rules": {
+      const [action, a, c, ...more] = argv.slice(1);
+      const usage = "usage: bunzzle pools rules [add DOMAIN|PROVIDER POOL|relay | remove ID]";
+      if (action === "add") {
+        if (!a || !c || more.length > 0) throw new UsageError(usage);
+        const r = await call<{ id: string; match: string; pool: string }>(
+          config,
+          "createPoolRule",
+          { match: a, pool: c },
+        );
+        console.log(
+          `${r.id}  mail for ${r.match} goes out ${r.pool === "relay" ? "through the relay" : `from ${r.pool}`}`,
+        );
+        return;
+      }
+      if (action === "remove") {
+        if (!a || c) throw new UsageError(usage);
+        await call(config, "deletePoolRule", { id: a });
+        console.log(`Removed ${a}.`);
+        return;
+      }
+      if (action !== undefined) throw new UsageError(usage);
+      const rules = await call<{ id: string; match: string; pool: string }[]>(
+        config,
+        "listPoolRules",
+        {},
+      );
+      if (rules.length === 0)
+        console.log("No pool rules. Add one with `bunzzle pools rules add DOMAIN POOL`.");
+      for (const r of rules) console.log(`${r.id}  ${r.match.padEnd(24)} ${r.pool}`);
+      return;
+    }
     case "own": {
       if (!pool || !to || extra.length > 0) {
         throw new UsageError("usage: bunzzle pools own POOL PROJECT");
@@ -681,7 +713,7 @@ export async function poolsCommand(argv: string[], config: Config) {
       return;
     }
     default:
-      throw new UsageError("usage: bunzzle pools list|own|share");
+      throw new UsageError("usage: bunzzle pools list|own|share|rules");
   }
 }
 
