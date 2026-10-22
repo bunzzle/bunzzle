@@ -69,7 +69,6 @@ const KEYS_MS = 300_000;
 export function delegatedDomains(deps: {
   names: () => string[];
   keys: (domain: string) => Promise<PublicDkimKey[]>;
-  log: Logger;
   now?: () => number;
 }): () => Promise<DelegatedDomain[]> {
   const now = deps.now ?? Date.now;
@@ -83,10 +82,7 @@ export function delegatedDomains(deps: {
       let hit = cache.get(name);
       if (!hit || now() - hit.at >= KEYS_MS) {
         try {
-          const keys = slotKeys(await deps.keys(name));
-          if (!keys)
-            deps.log.warn("DKIM keys of a delegated domain are not in slots", { domain: name });
-          hit = { at: now(), keys: keys ?? {} };
+          hit = { at: now(), keys: slotKeys(await deps.keys(name)) };
           cache.set(name, hit);
         } catch (err) {
           if (!hit) throw err;

@@ -2,18 +2,22 @@ import type { Database } from "bun:sqlite";
 import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
 import { keyFromTxt, selectorsOf, verifyDkim } from "../dkim/verify.ts";
-import { domainRecords, SLOT_BASES } from "../domains/delegated.ts";
+import { domainRecords, isSlot, labelClash, SLOT_BASES } from "../domains/delegated.ts";
 import {
   allDomains,
   type Domain,
+  type DomainMode,
   type DomainRecord,
   evaluate,
   expectedRecords,
   findDomain,
   lookupRecords,
   saveDomain,
+  setDomainMode,
+  setSlotKeys,
+  zoneDomainNames,
 } from "../domains/domains.ts";
-import type { RpcClient } from "../ipc/rpc.ts";
+import { type RpcClient, RpcError } from "../ipc/rpc.ts";
 import { b } from "../validate/schema.ts";
 
 const DAY = 86_400_000;
@@ -79,7 +83,14 @@ export function rotation(deps: RotationDeps) {
       status: checked.status,
       checkedAt: now(),
     };
-    await writer.run((w) => saveDomain(w, next, now()));
+    await writer.run((w) => {
+      saveDomain(w, next, now());
+      setSlotKeys(
+        w,
+        domain,
+        list.some((k) => isSlot(k.selector)),
+      );
+    });
     return next;
   };
 
@@ -175,32 +186,37 @@ export function rotation(deps: RotationDeps) {
     ) {
       const gone = await signer.call("dropRetiring", { domain }, { result: keyInfo });
       await rebuild(domain, await keys(domain));
-      if (delegated) {
+      const slots = gone.filter((k) => isSlot(k.selector));
+      const dated = gone.filter((k) => !isSlot(k.selector));
+      if (slots.length > 0) {
         log.info("old DKIM keys destroyed; their slots are free", {
           domain,
-          selectors: gone.map((k) => k.selector),
+          selectors: slots.map((k) => k.selector),
         });
-        return "old keys removed";
       }
-      await publish(
-        expectedRecords(
+      if (dated.length > 0) {
+        await publish(
+          expectedRecords(
+            domain,
+            dated.map((k) => ({ ...k, state: "retiring" as const })),
+            null,
+          ).filter((r) => r.record === "DKIM_RETIRING"),
+          true,
+        );
+        log.info("old DKIM keys destroyed; their DNS records can be deleted", {
           domain,
-          gone.map((k) => ({ ...k, state: "retiring" as const })),
-          null,
-        ).filter((r) => r.record === "DKIM_RETIRING"),
-        true,
-      );
-      log.info("old DKIM keys destroyed; their DNS records can be deleted", {
-        domain,
-        selectors: gone.map((k) => k.selector),
-      });
+          selectors: dated.map((k) => k.selector),
+        });
+      }
       return "old keys removed";
     }
 
     if (next.length > 0) {
       const rebuilt = await rebuild(domain, list);
-      const ready = delegated
-        ? await served(domain, next)
+      const ready = next.every((k) => isSlot(k.selector))
+        ? rebuilt?.records
+            .filter((r) => r.record === "DKIM" && r.type === "CNAME")
+            .every((r) => r.status === "verified") && (await served(domain, next))
         : rebuilt?.records
             .filter((r) => r.record === "DKIM_NEXT")
             .every((r) => r.status === "verified");
@@ -232,6 +248,7 @@ export function rotation(deps: RotationDeps) {
     if (!base) return "waiting for the old keys to leave their slot";
     list = await signer.call("rotateStart", { domain, selectorBase: base }, { result: keyInfo });
     if (delegated) {
+      await rebuild(domain, list);
       log.info("new DKIM keys created in the free slot", {
         domain,
         selectors: list.filter((k) => k.state === "next").map((k) => k.selector),
@@ -247,6 +264,43 @@ export function rotation(deps: RotationDeps) {
     return "new keys created";
   };
 
+  const switchMode = async (domain: string, mode: DomainMode): Promise<Domain> => {
+    const d = findDomain(db, domain);
+    if (!d) throw new RpcError("not-found", "domain not found");
+    if (d.mode === mode) return d;
+    if (d.status !== "verified") {
+      throw new RpcError(
+        "invalid",
+        `${domain} is not verified; delete it and add it again in ${mode} mode`,
+      );
+    }
+    if (mode === "delegated") {
+      const clash = labelClash(domain, zoneDomainNames(db));
+      if (clash) throw new RpcError("domain-taken", `${domain} shares its zone name with ${clash}`);
+    }
+    let list = await keys(domain);
+    if (list.some((k) => k.state === "next")) {
+      throw new RpcError("invalid", `a DKIM key rotation of ${domain} is still running`);
+    }
+    const base = mode === "delegated" ? freeSlot(list) : selectorBase(list);
+    if (!base) {
+      throw new RpcError("invalid", `the old DKIM keys of ${domain} still hold both slots`);
+    }
+    await writer.run((w) => setDomainMode(w, domain, mode, now()));
+    try {
+      list = await signer.call("rotateStart", { domain, selectorBase: base }, { result: keyInfo });
+    } catch (err) {
+      await writer.run((w) => setDomainMode(w, domain, d.mode, now()));
+      throw err;
+    }
+    const rebuilt = await rebuild(domain, list);
+    if (mode === "records") {
+      await publish(rebuilt?.records.filter((r) => r.record === "DKIM_NEXT") ?? []);
+    }
+    log.info("domain mode switch started", { domain, mode });
+    return rebuilt ?? d;
+  };
+
   const tick = async () => {
     for (const d of allDomains(db)) {
       try {
@@ -257,5 +311,5 @@ export function rotation(deps: RotationDeps) {
     }
   };
 
-  return { step, tick, publish, selfCheck, rebuild, keys };
+  return { step, tick, publish, selfCheck, rebuild, keys, switchMode };
 }

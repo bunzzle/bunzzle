@@ -589,7 +589,7 @@
         "tags": [
           "Domains"
         ],
-        "summary": "Set the IP pool or the tracking host",
+        "summary": "Set the IP pool, the tracking host or the mode",
         "description": "API key scope: full (full keys can do everything).",
         "parameters": [
           {
@@ -3817,6 +3817,13 @@
       "UpdateDomain": {
         "type": "object",
         "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "records",
+              "delegated"
+            ]
+          },
           "ip_pool": {
             "type": [
               "string",

@@ -15,6 +15,8 @@ const OWNER = `${zoneLabel("shop.example")}.${ZONE}`;
 const SCOPE = ["shop.example", ZONE];
 const RSA = { selector: "bza-r", algorithm: "rsa-sha256" as const, publicKey: "M".repeat(392) };
 const ED = { selector: "bza-e", algorithm: "ed25519-sha256" as const, publicKey: "E".repeat(44) };
+const OLD_RSA = { ...RSA, selector: "bz20261001r", publicKey: "O".repeat(392) };
+const OLD_ED = { ...ED, selector: "bz20261001e", publicKey: "D".repeat(44) };
 
 function quietLog() {
   const lines: { level: string; msg: string }[] = [];
@@ -84,10 +86,9 @@ describe("delegated records", () => {
   });
 
   test("the mode picks the records; records mode without a zone", () => {
-    const keys = [RSA, ED];
     const delegated = domainRecords(
       { name: "shop.example", mode: "delegated" },
-      keys,
+      [RSA, ED],
       "192.0.2.10",
       null,
       ZONE,
@@ -95,18 +96,99 @@ describe("delegated records", () => {
     expect(delegated.filter((r) => r.type === "CNAME").length).toBe(4);
     const records = domainRecords(
       { name: "shop.example", mode: "records" },
-      keys,
+      [OLD_RSA, OLD_ED],
       "192.0.2.10",
       null,
       ZONE,
     );
     expect(records.some((r) => r.type === "CNAME")).toBe(false);
-    expect(records.find((r) => r.record === "DKIM")?.name).toBe("bza-r._domainkey.shop.example");
+    expect(records.find((r) => r.record === "DKIM")?.name).toBe(
+      "bz20261001r._domainkey.shop.example",
+    );
+    const noZone = domainRecords(
+      { name: "shop.example", mode: "delegated" },
+      [RSA, ED],
+      "192.0.2.10",
+      null,
+      null,
+    );
+    expect(noZone.some((r) => r.type === "CNAME")).toBe(false);
   });
 
-  test("slot keys only when every selector is a slot", () => {
+  test.each([
+    [
+      "switching to delegated",
+      "delegated",
+      [OLD_RSA, OLD_ED, { ...RSA, state: "next" }, { ...ED, state: "next" }],
+      [
+        "DKIM TXT bz20261001r required",
+        "DKIM TXT bz20261001e required",
+        "DKIM CNAME bza-r",
+        "DKIM CNAME bzb-r",
+        "DKIM CNAME bza-e",
+        "DKIM CNAME bzb-e",
+      ],
+    ],
+    [
+      "switched to delegated, old keys retiring",
+      "delegated",
+      [{ ...OLD_RSA, state: "retiring" }, { ...OLD_ED, state: "retiring" }, RSA, ED],
+      [
+        "DKIM CNAME bza-r required",
+        "DKIM CNAME bzb-r required",
+        "DKIM CNAME bza-e required",
+        "DKIM CNAME bzb-e required",
+        "DKIM_RETIRING TXT bz20261001r",
+        "DKIM_RETIRING TXT bz20261001e",
+      ],
+    ],
+    [
+      "switching to records",
+      "records",
+      [RSA, ED, { ...OLD_RSA, state: "next" }, { ...OLD_ED, state: "next" }],
+      [
+        "DKIM CNAME bza-r required",
+        "DKIM CNAME bzb-r required",
+        "DKIM CNAME bza-e required",
+        "DKIM CNAME bzb-e required",
+        "DKIM_NEXT TXT bz20261001r",
+        "DKIM_NEXT TXT bz20261001e",
+      ],
+    ],
+    [
+      "switched to records, slot keys retiring",
+      "records",
+      [{ ...RSA, state: "retiring" }, { ...ED, state: "retiring" }, OLD_RSA, OLD_ED],
+      [
+        "DKIM_RETIRING TXT bza-r",
+        "DKIM_RETIRING TXT bza-e",
+        "DKIM TXT bz20261001r required",
+        "DKIM TXT bz20261001e required",
+      ],
+    ],
+  ] as const)("records while %s", (_, mode, keys, want) => {
+    const records = domainRecords(
+      { name: "shop.example", mode },
+      [...keys],
+      "192.0.2.10",
+      null,
+      ZONE,
+    );
+    expect(
+      records
+        .filter((r) => r.record.startsWith("DKIM"))
+        .map((r) =>
+          [r.record, r.type, r.name.split(".")[0], r.required ? "required" : ""]
+            .filter(Boolean)
+            .join(" "),
+        ),
+    ).toEqual([...want]);
+    expect(records.filter((r) => r.required && !r.record.startsWith("DKIM"))).toEqual([]);
+  });
+
+  test("slot keys leave out selectors outside the slots", () => {
     expect(slotKeys([RSA, ED])).toEqual({ "bza-r": RSA, "bza-e": ED });
-    expect(slotKeys([RSA, { ...ED, selector: "bz202610e" }])).toBeNull();
+    expect(slotKeys([RSA, { ...ED, selector: "bz202610e" }])).toEqual({ "bza-r": RSA });
   });
 });
 
@@ -228,14 +310,12 @@ describe("delegated domains for the zone", () => {
     let t = 0;
     let names = ["shop.example"];
     const fetched: string[] = [];
-    const quiet = quietLog();
     const list = delegatedDomains({
       names: () => names,
       keys: async (domain) => {
         fetched.push(domain);
         return [RSA, ED];
       },
-      log: quiet.log,
       now: () => t,
     });
     expect(await list()).toEqual([{ name: "shop.example", keys: { "bza-r": RSA, "bza-e": ED } }]);
@@ -257,7 +337,6 @@ describe("delegated domains for the zone", () => {
         if (down) throw new Error("signer is down");
         return [RSA];
       },
-      log: quietLog().log,
       now: () => t,
     });
     await expect(list()).rejects.toThrow("signer is down");
@@ -268,15 +347,12 @@ describe("delegated domains for the zone", () => {
     expect(await list()).toEqual([{ name: "shop.example", keys: { "bza-r": RSA } }]);
   });
 
-  test("keys outside the slots are left out with a warning", async () => {
-    const quiet = quietLog();
+  test("keys outside the slots are left out, slot keys next to them stay", async () => {
     const list = delegatedDomains({
       names: () => ["shop.example"],
-      keys: async () => [{ ...RSA, selector: "bz202610r" }],
-      log: quiet.log,
+      keys: async () => [{ ...RSA, selector: "bz202610r" }, ED],
     });
-    expect(await list()).toEqual([{ name: "shop.example", keys: {} }]);
-    expect(quiet.lines.filter((l) => l.level === "warn").length).toBe(1);
+    expect(await list()).toEqual([{ name: "shop.example", keys: { "bza-e": ED } }]);
   });
 
   test("the publisher pushes nothing when the domain list fails", async () => {

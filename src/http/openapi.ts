@@ -145,7 +145,7 @@ export const OPERATIONS: Operation[] = [
     path: "/domains/:name",
     id: "updateDomain",
     tag: "Domains",
-    summary: "Set the IP pool or the tracking host",
+    summary: "Set the IP pool, the tracking host or the mode",
     scope: ["full"],
     body: ["UpdateDomain", s.updateDomainSchema],
     response: ["DomainUpdate", s.domainUpdate],

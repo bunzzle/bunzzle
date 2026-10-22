@@ -52,8 +52,8 @@ const REVIEWED: Record<string, { count: number; why: string }> = {
   "src/emails/search.ts email_index": { count: 2, why: "search and stats of one message" },
   "src/emails/search.ts messages": { count: 2, why: "search builds its project filter separately" },
   "src/domains/domains.ts domains": {
-    count: 2,
-    why: "lookup by name for signing and inbound; delegated names for the server-wide zone",
+    count: 4,
+    why: "lookup by name for signing and inbound; the server-wide zone and its mode and slot flags by name",
   },
 };
 

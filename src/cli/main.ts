@@ -97,6 +97,7 @@ bunzzle domains:
   verify DOMAIN     check the DNS records now
   show DOMAIN | list
   rotate DOMAIN     start or continue DKIM key rotation (automatic every BUNZZLE_DKIM_ROTATE_DAYS)
+  mode DOMAIN records|delegated   switch the mode; the old keys sign until the new ones resolve
   pool DOMAIN POOL  send only from the IPs in POOL (from BUNZZLE_SOURCE_IPS); none for the shared IPs
   tracking DOMAIN HOST [--opens] [--clicks]   track through HOST (a CNAME to BUNZZLE_PUBLIC_URL); none to stop
 

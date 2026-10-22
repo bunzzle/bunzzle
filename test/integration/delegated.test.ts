@@ -154,3 +154,30 @@ test("the CLI adds a delegated domain; a record domain stays in records mode", a
   expect(plain.mode).toBe("records");
   expect(plain.records.some((r) => r.type === "CNAME")).toBe(false);
 });
+
+test("a verified delegated domain switches to records through PATCH; the CLI waits for the rotation", async () => {
+  const bad = await api("/domains/shop.test", {
+    method: "PATCH",
+    body: JSON.stringify({ mode: "zone" }),
+  });
+  expect(bad.status).toBe(422);
+
+  const res = await api("/domains/shop.test", {
+    method: "PATCH",
+    body: JSON.stringify({ mode: "records" }),
+  });
+  expect(res.status).toBe(200);
+  const d = (await res.json()) as DomainView;
+  expect(d.mode).toBe("records");
+  expect(d.status).toBe("verified");
+  expect(d.records.filter((r) => r.record === "DKIM_NEXT").map((r) => r.type)).toEqual([
+    "TXT",
+    "TXT",
+  ]);
+  expect(d.records.filter((r) => r.record === "DKIM" && r.type === "CNAME").length).toBe(4);
+
+  const again = await cli("domains", "mode", "shop.test", "delegated");
+  expect(again.code).not.toBe(0);
+  expect(again.stderr).toContain("still running");
+  expect((await cli("domains", "mode", "shop.test")).code).not.toBe(0);
+});

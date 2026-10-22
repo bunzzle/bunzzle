@@ -532,12 +532,15 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           const caller = await authenticate(req);
           const parsed = updateDomainSchema.safeParse(await json(req));
           if (!parsed.success) throw invalid(parsed.error);
-          const { ip_pool, tracking } = parsed.data;
-          if (ip_pool === undefined && tracking === undefined) {
-            throw new ApiError(422, "validation_error", "Send `ip_pool` or `tracking`.");
+          const { ip_pool, tracking, mode } = parsed.data;
+          if (ip_pool === undefined && tracking === undefined && mode === undefined) {
+            throw new ApiError(422, "validation_error", "Send `ip_pool`, `tracking` or `mode`.");
           }
           const name = req.params["name"];
           const out: Record<string, unknown> = { name };
+          if (mode !== undefined) {
+            Object.assign(out, await rpc("setDomainMode", { tokenHash: caller.hash, name, mode }));
+          }
           if (ip_pool !== undefined) {
             Object.assign(
               out,
