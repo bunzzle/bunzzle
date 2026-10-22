@@ -21,10 +21,10 @@ gh attestation verify bunzzle-linux-x64 --repo bunzzle/bunzzle
 ## Container image
 
 ```sh
-cosign verify ghcr.io/bunzzle/bunzzle:v0.1.0 \
+cosign verify ghcr.io/bunzzle/bunzzle:v0.2.0 \
   --certificate-identity-regexp '^https://github.com/bunzzle/bunzzle/.github/workflows/release.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
-gh attestation verify oci://ghcr.io/bunzzle/bunzzle:v0.1.0 --repo bunzzle/bunzzle
+gh attestation verify oci://ghcr.io/bunzzle/bunzzle:v0.2.0 --repo bunzzle/bunzzle
 ```
 
 ## What's inside

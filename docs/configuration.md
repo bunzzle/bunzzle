@@ -178,7 +178,7 @@ Allow the key to update only the names Bunzzle publishes: `*._domainkey`, `bounc
 
 Bunzzle finds the public hosted zone of each record by name (private zones are skipped) and changes only the values it owns, keeping the rest of the record set. Each change deletes the set as it was read and creates the new one in one batch, so if someone else edits the same set at that moment, the batch fails and Bunzzle reads it again instead of overwriting their edit. It then waits up to 40 seconds for Route 53 to report the change in sync.
 
-Give the IAM user only `route53:ListHostedZonesByName`, `route53:ListResourceRecordSets`, `route53:ChangeResourceRecordSets` and `route53:GetChange`. Limit `ChangeResourceRecordSets` to your hosted zones, and with the `route53:ChangeResourceRecordSetsNormalizedRecordNames` condition key to the names Bunzzle publishes.
+Give the IAM user only `route53:ListHostedZonesByName`, `route53:ListResourceRecordSets`, `route53:ChangeResourceRecordSets` and `route53:GetChange`. Limit `ChangeResourceRecordSets` to your hosted zones, and with the `route53:ChangeResourceRecordSetsNormalizedRecordNames` condition key to the names Bunzzle publishes for each sending domain: `*._domainkey.DOMAIN`, `bounce.DOMAIN`, `_bunzzle-test.DOMAIN` for `bunzzle dns-test`, and `_acme-challenge` names when automatic certificates are on.
 
 ## DNS on deSEC
 
@@ -188,7 +188,7 @@ Give the IAM user only `route53:ListHostedZonesByName`, `route53:ListResourceRec
 
 Bunzzle finds the domain that owns each record name and changes only the values it owns, keeping the rest of the RRset. New RRsets get a TTL of 3600 seconds, the lowest deSEC accepts by default; existing ones keep their TTL. When the API asks Bunzzle to slow down, it waits as long as the answer says, up to a minute, and tries again.
 
-Give the token no permission to manage tokens, and restrict it with token policies: a default policy without write permission, then one policy with write permission for each name Bunzzle publishes (`*._domainkey`, `bounce`, `_dmarc` and, with automatic certificates, `_acme-challenge` names under each sending domain). Set its allowed subnets to your server's addresses.
+Give the token no permission to manage tokens, and restrict it with token policies: a default policy without write permission, then, for each sending domain, one policy with write permission for type TXT and no subname, and one for type MX on the subname `bounce`. deSEC policies match exact names and do not expand `*`, and the DKIM names change with every key rotation, so the TXT policy has to cover the whole domain. Keep sending domains on deSEC apart from records that this token must not touch, for example by giving Bunzzle a subdomain that is its own deSEC domain. Set its allowed subnets to your server's addresses.
 
 ## Gmail Postmaster Tools
 
