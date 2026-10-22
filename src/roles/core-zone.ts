@@ -2,10 +2,11 @@ import type { Logger } from "../core/log.ts";
 import {
   type DelegatedDomain,
   slotKeys,
+  zoneLabel,
   zoneRecords,
   zoneWithSerial,
 } from "../domains/delegated.ts";
-import type { PublicDkimKey } from "../domains/domains.ts";
+import { dkimValue, type PublicDkimKey } from "../domains/domains.ts";
 import type { RpcClient } from "../ipc/rpc.ts";
 import { b } from "../validate/schema.ts";
 
@@ -24,7 +25,12 @@ const stats = b.object({ serial: b.number().int().nullable() });
 
 export function zonePublisher(deps: ZonePublisherDeps) {
   const now = deps.now ?? Date.now;
-  let pushed: { serial: number; content: string } | null = null;
+  let pushed: {
+    serial: number;
+    at: number;
+    content: string;
+    records: ReturnType<typeof zoneRecords>;
+  } | null = null;
   let failing = false;
 
   const tick = async (): Promise<number | null> => {
@@ -49,7 +55,7 @@ export function zonePublisher(deps: ZonePublisherDeps) {
       await deps.ns.call("zone", zoneWithSerial(deps.zone, deps.ttl, records, serial), {
         timeoutMs: 10_000,
       });
-      pushed = { serial, content };
+      pushed = { serial, at: now(), content, records };
       if (failing) deps.log.info("zone pushed to ns again", { serial });
       failing = false;
       return serial;
@@ -61,7 +67,18 @@ export function zonePublisher(deps: ZonePublisherDeps) {
     }
   };
 
-  return { tick };
+  const holds = (domain: string, keys: PublicDkimKey[]): boolean => {
+    const owner = `${zoneLabel(domain)}.${deps.zone}`;
+    return keys.every((k) =>
+      pushed?.records.some((r) => r.name === `${k.selector}.${owner}` && r.value === dkimValue(k)),
+    );
+  };
+
+  return {
+    tick,
+    holds,
+    pushed: () => (pushed ? { serial: pushed.serial, at: pushed.at } : null),
+  };
 }
 
 const KEYS_MS = 300_000;

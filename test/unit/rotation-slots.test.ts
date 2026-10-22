@@ -13,7 +13,7 @@ import {
   zoneDomainNames,
 } from "../../src/domains/domains.ts";
 import type { RpcClient } from "../../src/ipc/rpc.ts";
-import { rotation } from "../../src/roles/core-rotation.ts";
+import { type RotationDeps, rotation } from "../../src/roles/core-rotation.ts";
 import { Signer } from "../../src/signer/signer.ts";
 
 const DAY = 86_400_000;
@@ -31,7 +31,7 @@ const fake = (methods: Record<string, (p: never) => unknown>) =>
     call: async (name: string, params: never) => methods[name]?.(params),
   }) as unknown as RpcClient;
 
-async function setup(mode: DomainMode, firstBase: string) {
+async function setup(mode: DomainMode, firstBase: string, extra: Partial<RotationDeps> = {}) {
   const world = {
     t: Date.UTC(2026, 9, 22),
     lag: false,
@@ -115,6 +115,7 @@ async function setup(mode: DomainMode, firstBase: string) {
     nsZone: ZONE,
     rotateDays: () => 90,
     now: () => world.t,
+    ...extra,
   });
   const states = () =>
     (signer.publicKeys(DOMAIN) ?? []).map((k) => `${k.selector}:${k.state}`).sort();
@@ -218,4 +219,21 @@ test("only a verified domain without a running rotation can switch", async () =>
   await r.step(DOMAIN, true);
   await expect(r.switchMode(DOMAIN, "delegated")).rejects.toThrow("still running");
   expect(domain()?.mode).toBe("records");
+});
+
+test("slot keys switch only once every NS serves them", async () => {
+  let serving = false;
+  const asked: string[] = [];
+  const { r, states } = await setup("delegated", "bza-", {
+    zoneServes: (domain, keys) => {
+      asked.push(`${domain} ${keys.map((k) => k.selector).join(",")}`);
+      return serving;
+    },
+  });
+  await r.step(DOMAIN, true);
+  expect(await r.step(DOMAIN, false)).toBe("waiting for every NS to serve the new keys");
+  expect(asked).toEqual([`${DOMAIN} bzb-r,bzb-e`]);
+  serving = true;
+  expect(await r.step(DOMAIN, false)).toBe("switched to new keys");
+  expect(states()).toContain("bzb-r:active");
 });

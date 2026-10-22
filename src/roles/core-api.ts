@@ -67,6 +67,7 @@ import {
   scopeOf,
 } from "./actor.ts";
 import { domainName, usablePool } from "./checks.ts";
+import type { NsTargetView } from "./core-ns.ts";
 import { DOMAIN, enqueueParams, MESSAGE_ID, project, tokenHash } from "./wire.ts";
 
 const SUSPEND_TARGET =
@@ -101,6 +102,7 @@ export interface CoreDeps {
   hasCheckHooks?: () => boolean;
   publish?: (records: DomainRecord[]) => Promise<boolean>;
   switchMode?: (name: string, mode: DomainMode) => Promise<Domain>;
+  nsHealth?: () => NsTargetView[] | null;
   paths?: () => PathView[];
   storage?: () => StorageState;
   now?: () => number;
@@ -916,7 +918,17 @@ export function coreMethods(deps: CoreDeps): {
     metrics: method(b.object({ tokenHash, project }), (p) => {
       const scope = scopeOf(server(p, "read"));
       return {
-        text: render(collect(db, scope, deps.paths?.() ?? [], now(), startedAt, deps.storage?.())),
+        text: render(
+          collect(
+            db,
+            scope,
+            deps.paths?.() ?? [],
+            now(),
+            startedAt,
+            deps.storage?.(),
+            deps.nsHealth?.() ?? null,
+          ),
+        ),
       };
     }),
 

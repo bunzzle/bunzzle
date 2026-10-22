@@ -169,7 +169,7 @@ const resolver: Resolver = {
               rrtype: 6,
               rdata: new Uint8Array(),
               type: "SOA",
-              soa: { mname: "ns.acme.test", minimum: 60 },
+              soa: { mname: "ns.acme.test", serial: 1, minimum: 60 },
             },
           ]
         : [],

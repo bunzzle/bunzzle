@@ -44,10 +44,16 @@ export async function runNs(config: Config, log: Logger) {
       return { serial: wire.serial };
     }),
     stats: method(b.object({}), () => server.snapshot()),
+    listeners: method(b.object({}), () => listeners),
   });
 
   const ports: number[] = [];
-  for (const ip of ns.listen) ports.push(await server.listen(ip, ns.port));
+  const listeners: { host: string; port: number }[] = [];
+  for (const ip of ns.listen) {
+    const port = await server.listen(ip, ns.port);
+    ports.push(port);
+    listeners.push({ host: ip, port });
+  }
 
   let last = server.snapshot();
   const stopSummary = every(60_000, () => {
