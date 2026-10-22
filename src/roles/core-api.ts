@@ -67,7 +67,7 @@ import {
   scopeOf,
 } from "./actor.ts";
 import { domainName, usablePool } from "./checks.ts";
-import type { NsTargetView } from "./core-ns.ts";
+import type { DelegationView, NsCheckView, NsTargetView } from "./core-ns.ts";
 import { DOMAIN, enqueueParams, MESSAGE_ID, project, tokenHash } from "./wire.ts";
 
 const SUSPEND_TARGET =
@@ -103,6 +103,8 @@ export interface CoreDeps {
   publish?: (records: DomainRecord[]) => Promise<boolean>;
   switchMode?: (name: string, mode: DomainMode) => Promise<Domain>;
   nsHealth?: () => NsTargetView[] | null;
+  nsDelegation?: () => DelegationView | null;
+  nsCheck?: () => Promise<NsCheckView>;
   paths?: () => PathView[];
   storage?: () => StorageState;
   now?: () => number;
@@ -721,6 +723,12 @@ export function coreMethods(deps: CoreDeps): {
       },
     ),
 
+    nsCheck: method(b.object({ tokenHash, project }), (p) => {
+      requireServerWide(db, server(p, "full"));
+      if (!deps.nsCheck) throw new RpcError("invalid", "this server has no BUNZZLE_NS_ZONE");
+      return deps.nsCheck();
+    }),
+
     getDomain: method(b.object({ tokenHash, project, name: b.string().max(253) }), (p) => {
       const { project } = caller(p, "read");
       const d = getDomain(db, project, domainName(p.name));
@@ -927,6 +935,7 @@ export function coreMethods(deps: CoreDeps): {
             startedAt,
             deps.storage?.(),
             deps.nsHealth?.() ?? null,
+            deps.nsDelegation?.() ?? null,
           ),
         ),
       };

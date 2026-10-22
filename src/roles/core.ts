@@ -14,6 +14,7 @@ import { cachingLookups } from "../delivery/lookups.ts";
 import { shredBodies } from "../delivery/queue.ts";
 import type { DeliveryTransport } from "../delivery/transport.ts";
 import { pruneDmarc } from "../dmarc/store.ts";
+import { isSlot } from "../domains/delegated.ts";
 import {
   allDomains,
   bounceDomain,
@@ -43,9 +44,9 @@ import { coreMethods } from "./core-api.ts";
 import { doctorMethods, ipInfo } from "./core-doctor.ts";
 import { feedbackMethods } from "./core-feedback.ts";
 import { hookMethods } from "./core-hooks.ts";
-import { nsProbe } from "./core-ns.ts";
+import { delegationCheck, nsProbe } from "./core-ns.ts";
 import { projectMethods } from "./core-projects.ts";
-import { rotation } from "./core-rotation.ts";
+import { OVERLAP_DAYS, rotation } from "./core-rotation.ts";
 import { routeMethods } from "./core-routes.ts";
 import { templateMethods } from "./core-templates.ts";
 import { trackingMethods } from "./core-tracking.ts";
@@ -62,6 +63,7 @@ import {
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
+const DAY = 24 * HOUR;
 const MAX_SETTLED = 50_000;
 
 export function leaseTimes(scale: number): { leaseMs: number; maxWaitMs: number } {
@@ -271,6 +273,39 @@ export async function runCore(config: Config, log: Logger) {
           log,
         })
       : null;
+  const delegation =
+    config.ns && zone
+      ? delegationCheck({
+          zone: config.ns.zone,
+          names: config.ns.names,
+          listen: config.ns.listen,
+          lookup: (z) =>
+            delivery.call(
+              "nsDelegation",
+              { zone: z },
+              {
+                timeoutMs: 60_000,
+                result: b.object({
+                  parent: b.string().nullable(),
+                  asked: b.string().nullable(),
+                  ns: b.array(b.string()),
+                  glue: b.record(b.string(), b.array(b.string())),
+                  addresses: b.record(b.string(), b.array(b.string())),
+                  error: b.string().nullable(),
+                }),
+              },
+            ),
+          raise: (kind, data) =>
+            writer.run((w) =>
+              recordAdminEvent(
+                w,
+                { kind, project: SYSTEM_PROJECT, actor: "core", data },
+                Date.now(),
+              ),
+            ),
+          log,
+        })
+      : null;
   const zoneServes = (domain: string, keys: PublicDkimKey[]) => {
     const pushed = zone?.pushed();
     return (
@@ -295,6 +330,39 @@ export async function runCore(config: Config, log: Logger) {
     paths: () => shaper.views(),
     storage: () => storage.state(),
     nsHealth: () => probe?.view() ?? null,
+    nsDelegation: () => delegation?.view() ?? null,
+    ...(config.ns && zone
+      ? {
+          nsCheck: async () => {
+            const [listeners, view] = await Promise.all([
+              probe ? probe.tick().then(() => probe.view()) : [],
+              delegation ? delegation.check() : null,
+            ]);
+            const domains = await Promise.all(
+              zoneDomainNames(db).map(async (name) => ({
+                name,
+                slots: (await rotate.keys(name).catch(() => []))
+                  .filter((k) => isSlot(k.selector))
+                  .map((k) => ({
+                    selector: k.selector,
+                    state: k.state,
+                    emptiedFrom:
+                      k.state === "retiring" && k.retiringSince !== null
+                        ? k.retiringSince + OVERLAP_DAYS * DAY
+                        : null,
+                  })),
+              })),
+            );
+            return {
+              zone: config.ns?.zone ?? "",
+              serial: zone.pushed()?.serial ?? null,
+              listeners,
+              delegation: view,
+              domains,
+            };
+          },
+        }
+      : {}),
     publish: (records) => rotate.publish(records),
     switchMode: (name, mode) => rotate.switchMode(name, mode),
     tracking: (domain) => tracking.view(domain),
@@ -507,12 +575,17 @@ export async function runCore(config: Config, log: Logger) {
   if (zone) setTimeout(() => void zone.tick(), 1_000);
   const stopProbe = probe ? every(10_000, () => probe.poll()) : () => {};
   if (probe) setTimeout(() => void probe.poll(), 3_000);
+  const stopDelegation = delegation
+    ? every(Math.max(1_000, scaled(HOUR)), () => delegation.poll())
+    : () => {};
+  if (delegation) setTimeout(() => void delegation.poll(), 30_000);
 
   await scheduler.start();
   onStop(log, async () => {
     stopSettled();
     stopZone();
     stopProbe();
+    stopDelegation();
     stopShred();
     stopPrune();
     stopPurge();

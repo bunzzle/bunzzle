@@ -194,3 +194,12 @@ test("core probes the ns listener over UDP and TCP and reports it in /metrics", 
   expect(text).toContain('bunzzle_ns_up{ns="127.0.0.1",proto="tcp"} 1');
   expect(text).toContain('bunzzle_ns_serial_lag_seconds{ns="127.0.0.1"} 0');
 }, 30_000);
+
+test("ns-check shows each listener, the delegation and the DKIM slots", async () => {
+  const r = await cli("ns-check");
+  expect(r.stdout).toContain(`Zone ${NS_ZONE}, serial `);
+  expect(r.stdout).toMatch(/\[ok\] 127\.0\.0\.1 {2}UDP and TCP up, serial \d+/);
+  expect(r.stdout).toContain("[fail] no parent zone with NS records found");
+  expect(r.stdout).toContain("shop.test  bza-r active, bza-e active");
+  expect(r.code).toBe(1);
+}, 30_000);

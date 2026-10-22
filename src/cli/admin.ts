@@ -1,6 +1,7 @@
 import type { Config } from "../config.ts";
 import { RpcClient, RpcError } from "../ipc/rpc.ts";
 import { adminSocket } from "../roles/admin-socket.ts";
+import type { NsCheckView } from "../roles/core-ns.ts";
 import { parseArgs, UsageError } from "./args.ts";
 
 interface DomainRecordView {
@@ -969,4 +970,40 @@ export async function hooksCommand(argv: string[], config: Config) {
     default:
       throw new UsageError("usage: bunzzle hooks add|list|remove");
   }
+}
+
+export async function nsCheckCommand(argv: string[], config: Config): Promise<number> {
+  if (argv.length > 0) throw new UsageError("usage: bunzzle ns-check");
+  const v = await call<NsCheckView>(config, "nsCheck", {});
+  let bad = 0;
+  const line = (ok: boolean, text: string) => {
+    if (!ok) bad++;
+    console.log(`[${ok ? "ok" : "fail"}] ${text}`);
+  };
+  console.log(`Zone ${v.zone}, serial ${v.serial ?? "not pushed yet"}`);
+  if (v.listeners.length === 0) line(false, "no ns listener answered");
+  for (const l of v.listeners) {
+    const down = [l.udp ? "" : "UDP", l.tcp ? "" : "TCP"].filter(Boolean);
+    const lag = l.lagSeconds > 0 ? ` (${l.lagSeconds} s behind)` : "";
+    line(
+      down.length === 0 && l.lagSeconds === 0,
+      `${l.ns}  ${down.length ? `${down.join(" and ")} down` : "UDP and TCP up"}, serial ${l.serial ?? "none"}${lag}`,
+    );
+  }
+  const d = v.delegation;
+  if (d) {
+    const servers = d.ns.map((n) => `${n} (${(d.addresses[n] ?? []).join(", ") || "no address"})`);
+    console.log(`Delegation at ${d.parent ?? "unknown parent"}: ${servers.join(", ") || "none"}`);
+    if (d.problems.length === 0)
+      line(true, "the delegation matches BUNZZLE_NS_NAMES and BUNZZLE_NS_LISTEN");
+    for (const p of d.problems) line(false, p);
+  }
+  for (const dom of v.domains) {
+    const slots = dom.slots.map(
+      (s) =>
+        `${s.selector} ${s.state}${s.emptiedFrom ? ` (emptied from ${new Date(s.emptiedFrom).toISOString()})` : ""}`,
+    );
+    console.log(`${dom.name}  ${slots.join(", ") || "no keys in slots"}`);
+  }
+  return bad > 0 ? 1 : 0;
 }

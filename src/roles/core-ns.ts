@@ -1,4 +1,5 @@
 import type { Logger } from "../core/log.ts";
+import { type Delegation, delegationProblems } from "../dns/delegation.ts";
 import type { NsMeasure } from "../dns/probe.ts";
 import type { Server } from "../dns/resolver.ts";
 
@@ -124,4 +125,84 @@ export function nsProbe(deps: NsProbeDeps) {
     state.size > 0 && view().every((v) => v.udp && v.tcp && (v.serial ?? 0) >= serial);
 
   return { tick, poll, view, servesAtLeast };
+}
+
+const DAY_MS = 86_400_000;
+const DELEGATION_RETRY_MS = 3_600_000;
+
+export interface DelegationView {
+  checkedAt: number;
+  parent: string | null;
+  ns: string[];
+  addresses: Record<string, string[]>;
+  problems: string[];
+}
+
+export interface DelegationCheckDeps {
+  zone: string;
+  names: string[];
+  listen: string[];
+  lookup: (zone: string) => Promise<Delegation>;
+  raise: (
+    kind: "ns.delegation_mismatch" | "ns.delegation_ok",
+    data: Record<string, unknown>,
+  ) => Promise<void>;
+  log: Logger;
+  now?: () => number;
+}
+
+export function delegationCheck(deps: DelegationCheckDeps) {
+  const now = deps.now ?? Date.now;
+  let last: DelegationView | null = null;
+
+  const check = async (): Promise<DelegationView> => {
+    const at = now();
+    const d = await deps.lookup(deps.zone).catch(
+      (err: Error): Delegation => ({
+        parent: null,
+        asked: null,
+        ns: [],
+        glue: {},
+        addresses: {},
+        error: err.message,
+      }),
+    );
+    const view: DelegationView = {
+      checkedAt: at,
+      parent: d.parent,
+      ns: d.ns,
+      addresses: d.addresses,
+      problems: delegationProblems(d, deps.zone, deps.names, deps.listen),
+    };
+    const before = last;
+    last = view;
+    const data = { zone: deps.zone, parent: view.parent, problems: view.problems };
+    if (view.problems.length > 0 && (before === null || before.problems.length === 0)) {
+      deps.log.error("the NS delegation does not match the settings", data);
+      await deps.raise("ns.delegation_mismatch", data);
+    } else if (view.problems.length === 0 && before && before.problems.length > 0) {
+      deps.log.info("the NS delegation matches the settings again", data);
+      await deps.raise("ns.delegation_ok", data);
+    }
+    return view;
+  };
+
+  const poll = async () => {
+    if (!last) return void (await check());
+    const wait = last.problems.length > 0 ? DELEGATION_RETRY_MS : DAY_MS;
+    if (now() - last.checkedAt >= wait) await check();
+  };
+
+  return { check, poll, view: () => last };
+}
+
+export interface NsCheckView {
+  zone: string;
+  serial: number | null;
+  listeners: NsTargetView[];
+  delegation: DelegationView | null;
+  domains: {
+    name: string;
+    slots: { selector: string; state: string; emptiedFrom: number | null }[];
+  }[];
 }

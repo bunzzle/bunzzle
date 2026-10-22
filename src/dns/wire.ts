@@ -122,6 +122,7 @@ export interface DnsMessage {
   question: { name: string; type: number } | null;
   answers: ResourceRecord[];
   authority: ResourceRecord[];
+  additional?: ResourceRecord[];
 }
 
 export class DnsWireError extends Error {}
@@ -484,7 +485,7 @@ export function decodeMessage(buf: Uint8Array): DnsMessage {
   const qd = r.u16();
   const an = r.u16();
   const ns = r.u16();
-  r.u16();
+  const ar = r.u16();
   let question: DnsMessage["question"] = null;
   for (let i = 0; i < qd; i++) {
     const name = r.name();
@@ -501,6 +502,10 @@ export function decodeMessage(buf: Uint8Array): DnsMessage {
   } catch (err) {
     if (!truncated) throw err;
   }
+  const additional: ResourceRecord[] = [];
+  try {
+    for (let i = 0; i < ar; i++) additional.push(readRecord(r));
+  } catch {}
   return {
     id,
     rcode: flags & 0x000f,
@@ -510,5 +515,6 @@ export function decodeMessage(buf: Uint8Array): DnsMessage {
     question,
     answers,
     authority,
+    additional,
   };
 }
