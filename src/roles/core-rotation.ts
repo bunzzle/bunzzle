@@ -68,7 +68,11 @@ export function rotation(deps: RotationDeps) {
     const d = findDomain(db, domain);
     if (!d) return null;
     const records = domainRecords(d, list, deps.sourceIp, deps.inboundHost, deps.nsZone ?? null);
-    const checked = evaluate(records, await lookupRecords(records, lookup), deps.sourceIp);
+    const checked = evaluate(
+      records,
+      await lookupRecords(records, lookup, [d.name, deps.nsZone ?? d.name]),
+      deps.sourceIp,
+    );
     const next: Domain = {
       ...d,
       records: checked.records,

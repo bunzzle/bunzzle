@@ -18,12 +18,13 @@ import {
   scheduledEmail,
 } from "../delivery/queue.ts";
 import { suppressedAtIntake } from "../delivery/simulator.ts";
-import { domainRecords, FIRST_SLOTS, slotKeys } from "../domains/delegated.ts";
+import { domainRecords, FIRST_SLOTS, labelClash, slotKeys } from "../domains/delegated.ts";
 import {
   allDomains,
   DOMAIN_MODES,
   type Domain,
   type DomainRecord,
+  delegatedDomainNames,
   domainPool,
   evaluate,
   findDomain,
@@ -406,15 +407,18 @@ export function coreMethods(deps: CoreDeps): {
   const verify = async (project: Actor["project"], name: string): Promise<Domain> => {
     const d = getDomain(db, project, name);
     if (!d) throw new RpcError("not-found", `domain ${name} is not registered`);
-    const found = await lookupRecords(d.records, (queries) =>
-      delivery.call(
-        "dns",
-        { queries },
-        {
-          result: b.record(b.string(), b.array(b.string())),
-          timeoutMs: 30_000,
-        },
-      ),
+    const found = await lookupRecords(
+      d.records,
+      (queries) =>
+        delivery.call(
+          "dns",
+          { queries },
+          {
+            result: b.record(b.string(), b.array(b.string())),
+            timeoutMs: 30_000,
+          },
+        ),
+      [d.name, deps.nsZone ?? d.name],
     );
     const checked = evaluate(d.records, found, deps.sourceIp);
     const next: Domain = { ...d, ...checked, checkedAt: now() };
@@ -635,6 +639,10 @@ export function coreMethods(deps: CoreDeps): {
         const zone = deps.nsZone ?? null;
         if (mode === "delegated" && (!zone || [deps.sourceIp ?? []].flat().length === 0)) {
           throw new RpcError("invalid", "this server does not serve delegated domains");
+        }
+        const clash = mode === "delegated" ? labelClash(name, delegatedDomainNames(db)) : null;
+        if (clash) {
+          throw new RpcError("domain-taken", `${name} shares its zone name with ${clash}`);
         }
         const keys = await signer.call(
           "ensureKeys",

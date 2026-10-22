@@ -3,6 +3,7 @@ import type { Logger } from "../../src/core/log.ts";
 import {
   delegatedRecords,
   domainRecords,
+  labelClash,
   slotKeys,
   zoneLabel,
 } from "../../src/domains/delegated.ts";
@@ -11,6 +12,7 @@ import { delegatedDomains, zonePublisher } from "../../src/roles/core-zone.ts";
 
 const ZONE = "dz.mail.example.net";
 const OWNER = `${zoneLabel("shop.example")}.${ZONE}`;
+const SCOPE = ["shop.example", ZONE];
 const RSA = { selector: "bza-r", algorithm: "rsa-sha256" as const, publicKey: "M".repeat(392) };
 const ED = { selector: "bza-e", algorithm: "ed25519-sha256" as const, publicKey: "E".repeat(44) };
 
@@ -34,6 +36,27 @@ function dns(answers: Record<string, string[]>) {
   };
   return { lookup, asked };
 }
+
+describe("zone names", () => {
+  test("every domain gets its own 80-bit label; slot names hang under it", () => {
+    const labels = new Set<string>();
+    for (let i = 0; i < 200_000; i++) labels.add(zoneLabel(`d${i}.example`));
+    expect(labels.size).toBe(200_000);
+    expect(zoneLabel("shop.example")).toMatch(/^[a-z2-7]{16}$/);
+    const a = delegatedRecords("a.example", ZONE, null)
+      .filter((r) => r.type === "CNAME")
+      .map((r) => r.value);
+    const b = delegatedRecords("b.example", ZONE, null)
+      .filter((r) => r.type === "CNAME")
+      .map((r) => r.value);
+    expect(a.filter((v) => b.includes(v))).toEqual([]);
+  });
+
+  test("a domain whose label is taken is found", () => {
+    expect(labelClash("shop.example", ["a.example", "shop.example"])).toBeNull();
+    expect(labelClash("shop.example", ["a.example", "SHOP.example"])).toBe("SHOP.example");
+  });
+});
 
 describe("delegated records", () => {
   test("four DKIM CNAMEs, SPF include, DMARC and the return path CNAME", () => {
@@ -99,7 +122,7 @@ describe("verification through the CNAME chain", () => {
 
   test("direct CNAMEs verify, case and trailing dot ignored", async () => {
     const d = dns(all());
-    const checked = evaluate(records, await lookupRecords(records, d.lookup), null);
+    const checked = evaluate(records, await lookupRecords(records, d.lookup, SCOPE), null);
     expect(checked.status).toBe("verified");
     expect(checked.records.find((r) => r.name === "bounce.shop.example")?.status).toBe("missing");
   });
@@ -108,20 +131,56 @@ describe("verification through the CNAME chain", () => {
     const d = dns(
       all({
         "CNAME:bza-r._domainkey.shop.example": ["dkim1.shop.example"],
-        "CNAME:dkim1.shop.example": ["dkim2.cdn.example"],
-        "CNAME:dkim2.cdn.example": [`bza-r.${OWNER}`],
+        "CNAME:dkim1.shop.example": ["Dkim2.Mail.Shop.Example."],
+        "CNAME:dkim2.mail.shop.example": [`bza-r.${OWNER}`],
       }),
     );
-    const checked = evaluate(records, await lookupRecords(records, d.lookup), null);
+    const checked = evaluate(records, await lookupRecords(records, d.lookup, SCOPE), null);
     const r = checked.records.find((x) => x.name === "bza-r._domainkey.shop.example");
     expect(r?.status).toBe("verified");
-    expect(r?.found).toBe(`dkim1.shop.example -> dkim2.cdn.example -> bza-r.${OWNER}`);
+    expect(r?.found).toBe(`dkim1.shop.example -> dkim2.mail.shop.example -> bza-r.${OWNER}`);
     expect(checked.status).toBe("verified");
+  });
+
+  test.each([
+    ["first", { "CNAME:bza-r._domainkey.shop.example": [`dkim.cdn.example`] }, "dkim.cdn.example"],
+    [
+      "middle",
+      {
+        "CNAME:bza-r._domainkey.shop.example": ["dkim1.shop.example"],
+        "CNAME:dkim1.shop.example": ["dkim2.cdn.example"],
+        "CNAME:dkim2.cdn.example": [`bza-r.${OWNER}`],
+      },
+      "dkim1.shop.example -> dkim2.cdn.example",
+    ],
+    [
+      "last before the target",
+      {
+        "CNAME:bza-r._domainkey.shop.example": ["dkim1.shop.example"],
+        "CNAME:dkim1.shop.example": ["dkim2.shop.example"],
+        "CNAME:dkim2.shop.example": ["evilshop.example"],
+        "CNAME:evilshop.example": [`bza-r.${OWNER}`],
+      },
+      "dkim1.shop.example -> dkim2.shop.example -> evilshop.example",
+    ],
+    [
+      "in one answer",
+      { "CNAME:bza-r._domainkey.shop.example": ["dkim.cdn.example", `bza-r.${OWNER}`] },
+      "dkim.cdn.example",
+    ],
+  ])("a hop outside the domain and the zone fails the chain (%s)", async (_, hops, chain) => {
+    const d = dns(all(hops));
+    const checked = evaluate(records, await lookupRecords(records, d.lookup, SCOPE), null);
+    const r = checked.records.find((x) => x.name === "bza-r._domainkey.shop.example");
+    expect(r?.status).toBe("mismatch");
+    expect(r?.found).toBe(chain);
+    expect(checked.status).toBe("pending");
+    expect(d.asked.filter((k) => k.includes("cdn") || k.includes("evil"))).toEqual([]);
   });
 
   test("a wrong target is a mismatch and keeps the domain pending", async () => {
     const d = dns(all({ "CNAME:bzb-e._domainkey.shop.example": [`bza-e.${OWNER}`] }));
-    const checked = evaluate(records, await lookupRecords(records, d.lookup), null);
+    const checked = evaluate(records, await lookupRecords(records, d.lookup, SCOPE), null);
     const r = checked.records.find((x) => x.name === "bzb-e._domainkey.shop.example");
     expect(r?.status).toBe("mismatch");
     expect(r?.found).toBe(`bza-e.${OWNER}`);
@@ -131,24 +190,28 @@ describe("verification through the CNAME chain", () => {
   test("a CNAME loop stops after a few hops", async () => {
     const d = dns(
       all({
-        "CNAME:bza-r._domainkey.shop.example": ["a.loop.example"],
-        "CNAME:a.loop.example": ["b.loop.example"],
-        "CNAME:b.loop.example": ["a.loop.example"],
+        "CNAME:bza-r._domainkey.shop.example": ["a.loop.shop.example"],
+        "CNAME:a.loop.shop.example": ["b.loop.shop.example"],
+        "CNAME:b.loop.shop.example": ["a.loop.shop.example"],
       }),
     );
-    const checked = evaluate(records, await lookupRecords(records, d.lookup), null);
+    const checked = evaluate(records, await lookupRecords(records, d.lookup, SCOPE), null);
     expect(checked.records[0]?.status).toBe("mismatch");
     expect(d.asked.filter((k) => k.includes("loop")).length).toBe(2);
   });
 
   test("a long chain is cut at eight names", async () => {
     const hops: Record<string, string[]> = {
-      "CNAME:bza-r._domainkey.shop.example": ["h0.example"],
+      "CNAME:bza-r._domainkey.shop.example": ["h0.shop.example"],
     };
-    for (let i = 0; i < 20; i++) hops[`CNAME:h${i}.example`] = [`h${i + 1}.example`];
+    for (let i = 0; i < 20; i++) hops[`CNAME:h${i}.shop.example`] = [`h${i + 1}.shop.example`];
+    hops["CNAME:h8.shop.example"] = [`bza-r.${OWNER}`];
     const d = dns(all(hops));
-    const found = await lookupRecords(records, d.lookup);
+    const found = await lookupRecords(records, d.lookup, SCOPE);
     expect(found["CNAME:bza-r._domainkey.shop.example"]?.length).toBe(8);
+    expect(d.asked.filter((k) => /CNAME:h\d/.test(k)).length).toBe(7);
+    const checked = evaluate(records, found, null);
+    expect(checked.records[0]?.status).toBe("mismatch");
   });
 
   test("the SPF suggestion checks for the include", () => {

@@ -213,7 +213,7 @@ With these settings the `ns` role answers DNS for one zone over UDP and TCP. Set
 | `BUNZZLE_NS_RRL_V6_PREFIX` | `56` | IPv6 prefix length that counts as one client network for the rate limit. |
 | `BUNZZLE_NS_RRL_SLIP` | `0` | Send every Nth answer over the limit as an empty truncated reply, so real resolvers in a limited network can retry over TCP. `0` drops them all. |
 
-To add a domain in delegated mode, run `bunzzle domains add DOMAIN --delegated` or send `"mode": "delegated"` to `POST /domains`; this needs `BUNZZLE_NS_ZONE` and `BUNZZLE_SOURCE_IPS`. The domain then lists CNAME records instead of TXT records: four for DKIM (`bza-r`, `bzb-r`, `bza-e` and `bzb-e` under `_domainkey`), one for `bounce.DOMAIN`, and an SPF record with `include:_spf.<zone>`. The domain verifies once each DKIM name leads to its target in the zone, directly or through more CNAMEs (up to eight names). Without a mode, a domain uses `records`: the DKIM, SPF and return-path records go straight into its own zone.
+To add a domain in delegated mode, run `bunzzle domains add DOMAIN --delegated` or send `"mode": "delegated"` to `POST /domains`; this needs `BUNZZLE_NS_ZONE` and `BUNZZLE_SOURCE_IPS`. The domain then lists CNAME records instead of TXT records: four for DKIM (`bza-r`, `bzb-r`, `bza-e` and `bzb-e` under `_domainkey`), one for `bounce.DOMAIN`, and an SPF record with `include:_spf.<zone>`. The domain verifies once each DKIM name leads to its target in the zone, directly or through more CNAMEs under the domain itself (up to eight names). A chain with a name outside the domain and the zone does not verify. Without a mode, a domain uses `records`: the DKIM, SPF and return-path records go straight into its own zone.
 
 ## Testing the DNS provider
 
