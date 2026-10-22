@@ -46,6 +46,11 @@ export function zoneLabel(domain: string): string {
   return out;
 }
 
+export function labelClash(name: string, names: string[]): string | null {
+  const label = zoneLabel(name);
+  return names.find((n) => n !== name && zoneLabel(n) === label) ?? null;
+}
+
 export interface DelegatedDomain {
   name: string;
   keys: Partial<Record<DkimSlot, PublicDkimKey>>;

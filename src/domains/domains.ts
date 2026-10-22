@@ -198,12 +198,17 @@ const hostName = (name: string) => name.toLowerCase().replace(/\.$/, "");
 
 const MAX_CNAME_HOPS = 8;
 
+const inside = (name: string, within: string[]) =>
+  within.some((w) => name === w || name.endsWith(`.${w}`));
+
 export async function lookupRecords(
   records: DomainRecord[],
   lookup: (
     queries: { name: string; type: DomainRecord["type"] }[],
   ) => Promise<Record<string, string[]>>,
+  within: string[],
 ): Promise<Record<string, string[]>> {
+  const scope = within.map(hostName);
   const queries = [
     ...new Map(
       records.map((r) => [`${r.type}:${r.name}`, { name: r.name, type: r.type }]),
@@ -212,7 +217,10 @@ export async function lookupRecords(
   const found = await lookup(queries);
   for (const r of records.filter((x) => x.type === "CNAME")) {
     const chain = (found[`CNAME:${r.name}`] ?? []).map(hostName);
+    const out = chain.findIndex((n) => !inside(n, scope));
+    if (out >= 0) chain.splice(out + 1);
     while (
+      out < 0 &&
       chain.length > 0 &&
       chain.length < MAX_CNAME_HOPS &&
       !chain.includes(hostName(r.value))
@@ -222,6 +230,7 @@ export async function lookupRecords(
       const hop = next.map(hostName).find((n) => !chain.includes(n));
       if (!hop) break;
       chain.push(hop);
+      if (!inside(hop, scope)) break;
     }
     found[`CNAME:${r.name}`] = chain;
   }
