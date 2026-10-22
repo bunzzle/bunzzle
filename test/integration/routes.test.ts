@@ -311,4 +311,67 @@ describe("inbound routes", () => {
     ]);
     expect(t.replies[3]).toStartWith("550");
   });
+
+  test("an inbound hook scores routed mail and refuses it at the limit", async () => {
+    let reply = () => Response.json({ score: 3 });
+    const scanned: { body: string; headers: Headers }[] = [];
+    const scanner = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(req) {
+        scanned.push({ body: await req.text(), headers: req.headers });
+        return reply();
+      },
+    });
+    try {
+      await addRoute("news@acme.test", "/news");
+      const added = await cli(
+        "hooks",
+        "add",
+        "inbound",
+        `http://127.0.0.1:${scanner.port}/`,
+        "--max-score",
+        "10",
+        "--on-error",
+        "refuse",
+      );
+      expect(added.code).toBe(0);
+      const hook = added.stdout.split(/\s+/)[1] ?? "";
+
+      const ok = await mail("news@acme.test", ["Subject: scored", "", "hello"]);
+      expect(ok.replies[5]).toStartWith("250");
+      const [p] = await until(
+        () => postsTo("/news"),
+        (l) => l.length > 0,
+      );
+      expect(p?.body["spam_score"]).toBe(3);
+      expect(scanned[0]?.body).toContain("Subject: scored");
+      expect(scanned[0]?.headers.get("content-type")).toBe("message/rfc822");
+      expect(scanned[0]?.headers.get("from")).toBe("ayse@example.org");
+      expect(scanned[0]?.headers.get("rcpt")).toBe("news@acme.test");
+      expect(scanned[0]?.headers.get("ip")).toBe("127.0.0.1");
+      expect(scanned[0]?.headers.get("helo")).toBe("sender.example.org");
+
+      reply = () => Response.json({ score: 12 });
+      const spam = await mail("news@acme.test", ["Subject: spam", "", "buy"]);
+      expect(spam.replies[5]).toStartWith("550 5.7.1");
+
+      reply = () => new Response("down", { status: 500 });
+      const down = await mail("news@acme.test", ["Subject: later", "", "hi"]);
+      expect(down.replies[5]).toStartWith("451");
+
+      await cli("hooks", "remove", hook);
+      const plain = await mail("news@acme.test", ["Subject: plain", "", "hi"]);
+      expect(plain.replies[5]).toStartWith("250");
+      const posted = await until(
+        () => postsTo("/news"),
+        (l) => l.length > 1,
+      );
+      expect(posted.map((x) => x.body["subject"])).toEqual(["scored", "plain"]);
+      expect(posted[1]?.body["spam_score"]).toBeNull();
+      expect(scanned).toHaveLength(3);
+    } finally {
+      scanner.stop(true);
+    }
+  });
 });

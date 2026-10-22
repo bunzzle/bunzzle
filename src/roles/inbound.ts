@@ -44,7 +44,14 @@ const routesResult = b.object({
     }),
   ),
   rest: b.array(b.string()),
+  scan: b.boolean(),
 });
+
+const scanResult = b.union([
+  b.object({ result: b.literal("ok"), score: b.number().nullable() }),
+  b.object({ result: b.literal("refused") }),
+  b.object({ result: b.literal("failed") }),
+]);
 
 export async function runInbound(config: Config, log: Logger) {
   const core = new RpcClient(sockets(config.runDir).coreInbound);
@@ -95,6 +102,30 @@ export async function runInbound(config: Config, log: Logger) {
                     return refused;
                   }
                 }
+                let spamScore: number | null = null;
+                if (split.scan) {
+                  const scanned = await core.call(
+                    "inboundScan",
+                    {
+                      raw,
+                      from: meta.from,
+                      recipients: split.routes.flatMap((r) => r.recipients),
+                      ip: meta.remote,
+                      helo: meta.helo,
+                    },
+                    { result: scanResult, timeoutMs: 120_000 },
+                  );
+                  if (scanned.result === "refused") {
+                    return { code: 550, text: "5.7.1 Message refused by the content check" };
+                  }
+                  if (scanned.result === "failed") {
+                    return {
+                      code: 451,
+                      text: "4.7.1 Content check not available, try again later",
+                    };
+                  }
+                  spamScore = scanned.score;
+                }
                 for (const r of split.routes) {
                   const id = Bun.randomUUIDv7();
                   const payload = buildPayload(
@@ -107,6 +138,7 @@ export async function runInbound(config: Config, log: Logger) {
                       remoteIp: meta.remote,
                       tls: meta.tls,
                       auth,
+                      spamScore,
                     },
                     r.format,
                   );

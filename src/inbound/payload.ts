@@ -12,6 +12,7 @@ export interface Envelope {
   remoteIp: string;
   tls: boolean;
   auth: AuthResults | null;
+  spamScore: number | null;
 }
 
 interface Attachment {
@@ -51,6 +52,7 @@ function envelopeFields(e: Envelope) {
     remote_ip: e.remoteIp,
     tls: e.tls,
     auth: e.auth ? authPayload(e.auth) : null,
+    spam_score: e.spamScore,
   };
 }
 

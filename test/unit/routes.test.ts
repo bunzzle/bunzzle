@@ -143,6 +143,7 @@ const envelope = {
   mailFrom: "ayse@example.org",
   rcptTo: ["support@acme.test"],
   remoteIp: "192.0.2.7",
+  spamScore: null,
   tls: true,
   auth: null,
 };

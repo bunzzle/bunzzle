@@ -66,6 +66,7 @@ export const INBOUND_METHODS = [
   "inboundRecipient",
   "inboundRoutes",
   "inboundRouted",
+  "inboundScan",
   "inboundDmarc",
   "inboundReport",
 ];

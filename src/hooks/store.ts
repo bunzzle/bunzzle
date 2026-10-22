@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-export type HookKind = "check" | "scan";
+export type HookKind = "check" | "scan" | "inbound";
 export type OnError = "accept" | "refuse";
 
 export interface Hook {
