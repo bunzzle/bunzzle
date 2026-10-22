@@ -71,6 +71,17 @@ export function findProject(db: Database, idOrName: string): Project | null {
   return r ? fromRow(r) : null;
 }
 
+export function purgedProjectId(db: Database, idOrName: string): string | null {
+  return (
+    db
+      .query<{ project_id: string }, [string]>(
+        `SELECT project_id FROM admin_events WHERE kind = 'project.deleted'
+         AND (project_id = ?1 OR json_extract(data, '$.name') = ?1) ORDER BY id DESC LIMIT 1`,
+      )
+      .get(idOrName)?.project_id ?? null
+  );
+}
+
 export function findRemovedProject(db: Database, idOrName: string): Project | null {
   const r = db
     .query<Row, [string]>(
