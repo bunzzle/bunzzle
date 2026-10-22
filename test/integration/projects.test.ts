@@ -101,6 +101,7 @@ const BODIES: Record<string, unknown> = {
   "POST /templates/:id/preview": {},
   "POST /projects/:id/keys": { name: "x" },
   "POST /projects": { name: "y" },
+  "POST /webhooks/:id/resend": { from: new Date(0).toISOString(), to: new Date().toISOString() },
   "PATCH /projects/:id": { suspended: true },
   "POST /queue/suspensions": { target: "domain:dest.test", reason: "r" },
   "POST /queue/cancel": { reason: "r", domain: "dest.test", dry_run: true },

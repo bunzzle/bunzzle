@@ -15,6 +15,7 @@ import {
   createWebhookSchema,
   previewSchema,
   removeSchema,
+  resendWebhookSchema,
   suspendSchema,
   updateDomainSchema,
   updateProjectSchema,
@@ -654,6 +655,92 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
               tokenHash: caller.hash,
               url: parsed.data.endpoint,
               ...(parsed.data.events ? { events: parsed.data.events } : {}),
+            }),
+          );
+        }),
+      },
+      "/webhooks/:id/deliveries": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const q = new URL(req.url).searchParams;
+          const time = (name: string) => {
+            const v = q.get(name);
+            if (v === null) return undefined;
+            const t = Date.parse(v);
+            if (Number.isNaN(t)) {
+              throw new ApiError(
+                422,
+                "validation_error",
+                `${name} must be a time like 2026-10-20T08:00:00Z`,
+              );
+            }
+            return t;
+          };
+          const limit = q.get("limit");
+          if (limit !== null && !/^\d{1,3}$/.test(limit)) {
+            throw new ApiError(422, "validation_error", "limit must be a number from 1 to 100");
+          }
+          const data = await rpc(
+            "listWebhookDeliveries",
+            {
+              tokenHash: caller.hash,
+              id: req.params["id"],
+              from: time("from"),
+              to: time("to"),
+              failed: q.get("failed") === "true",
+              ...(q.get("before") ? { before: q.get("before") } : {}),
+              ...(limit !== null ? { limit: Number(limit) } : {}),
+            },
+            b.array(b.unknown()),
+          );
+          return Response.json({ object: "list", data });
+        }),
+      },
+      "/webhooks/:id/deliveries/:delivery/resend": {
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(
+            await rpc("resendWebhookDelivery", {
+              tokenHash: caller.hash,
+              id: req.params["id"],
+              delivery: req.params["delivery"],
+            }),
+          );
+        }),
+      },
+      "/webhooks/:id/resend": {
+        POST: handle(async (req) => {
+          const caller = await authenticate(req);
+          const parsed = resendWebhookSchema.safeParse(await json(req));
+          if (!parsed.success) throw invalid(parsed.error);
+          const from = Date.parse(parsed.data.from);
+          const to = Date.parse(parsed.data.to);
+          if (Number.isNaN(from) || Number.isNaN(to)) {
+            throw new ApiError(
+              422,
+              "validation_error",
+              "from and to must be times like 2026-10-20T08:00:00Z",
+            );
+          }
+          return Response.json(
+            await rpc("resendWebhookRange", {
+              tokenHash: caller.hash,
+              id: req.params["id"],
+              from,
+              to,
+              failed: parsed.data.failed ?? false,
+            }),
+          );
+        }),
+      },
+      "/webhooks/:id/resends/:resend": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          return Response.json(
+            await rpc("getWebhookResend", {
+              tokenHash: caller.hash,
+              id: req.params["id"],
+              resend: req.params["resend"],
             }),
           );
         }),

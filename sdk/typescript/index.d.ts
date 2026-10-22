@@ -496,6 +496,58 @@ export type Webhook = {
   signing_secret?: string;
 };
 
+export type WebhookDeliveryList = {
+  object: "list";
+  data: {
+    object: "webhook_delivery";
+    id: string;
+    type:
+      | "email.delivered"
+      | "email.delivery_delayed"
+      | "email.bounced"
+      | "email.complained"
+      | "email.unsubscribed"
+      | "email.suppressed"
+      | "email.failed"
+      | "email.canceled"
+      | "email.opened"
+      | "email.clicked"
+      | "project.limit_approaching";
+    state: "pending" | "sending" | "done" | "failed";
+    created_at: string;
+    next_attempt_at: string | null;
+    attempts: {
+      at: string;
+      status: number | null;
+      error: string | null;
+      duration_ms: number;
+    }[];
+  }[];
+};
+
+export type Resent = {
+  resent: number;
+};
+
+export type ResendWebhook = {
+  from: string;
+  to: string;
+  failed?: boolean;
+};
+
+export type WebhookResend = {
+  object: "webhook_resend";
+  id: string;
+  webhook_id: string;
+  from: string;
+  to: string;
+  failed: boolean;
+  state: "queued" | "done";
+  resent: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Deleted = {
   id: string;
   deleted: boolean;
@@ -727,6 +779,19 @@ export declare class Bunzzle {
   createProjectKey(id: string, body: CreateProjectKey): Promise<ProjectKey>;
   listWebhooks(): Promise<WebhookList>;
   createWebhook(body: CreateWebhook): Promise<Webhook>;
+  listWebhookDeliveries(
+    id: string,
+    options?: {
+      from?: string;
+      to?: string;
+      failed?: boolean;
+      before?: string;
+      limit?: number;
+    },
+  ): Promise<WebhookDeliveryList>;
+  resendWebhookDelivery(id: string, delivery: string): Promise<Resent>;
+  resendWebhookRange(id: string, body: ResendWebhook): Promise<WebhookResend>;
+  getWebhookResend(id: string, resend: string): Promise<WebhookResend>;
   deleteWebhook(id: string): Promise<Deleted>;
   listRoutes(): Promise<RouteList>;
   createRoute(body: CreateRoute): Promise<Route>;

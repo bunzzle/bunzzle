@@ -317,6 +317,46 @@ export const webhook = b.object({
 
 export const webhookList = list(webhook);
 
+export const webhookDelivery = b.object({
+  object: b.literal("webhook_delivery"),
+  id,
+  type: b.enum(EVENT_TYPES),
+  state: b.enum(["pending", "sending", "done", "failed"]),
+  created_at: time,
+  next_attempt_at: time.nullable(),
+  attempts: b.array(
+    b.object({
+      at: time,
+      status: b.number().int().nullable().describe("HTTP status, null when no answer came"),
+      error: b.string().nullable(),
+      duration_ms: b.number().int(),
+    }),
+  ),
+});
+
+export const webhookDeliveryList = list(webhookDelivery);
+
+export const resendWebhookSchema = b.object({
+  from: b.string().format("date-time"),
+  to: b.string().format("date-time"),
+  failed: b.boolean().optional().describe("Resend only deliveries that gave up"),
+});
+
+export const resent = b.object({ resent: b.number().int() });
+
+export const webhookResend = b.object({
+  object: b.literal("webhook_resend"),
+  id,
+  webhook_id: id,
+  from: time,
+  to: time,
+  failed: b.boolean(),
+  state: b.enum(["queued", "done"]),
+  resent: b.number().int().describe("Deliveries put back in the queue so far"),
+  created_at: time,
+  updated_at: time,
+});
+
 export const route = b.object({
   object: b.literal("route"),
   id,

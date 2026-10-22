@@ -16,8 +16,15 @@ let mx: FakeMx;
 let served: Served;
 let token: string;
 let secret: string;
+let hookId: string;
 let apiPort: number;
-const hooks: { type: string; data: Record<string, unknown>; valid: boolean; at: number }[] = [];
+const hooks: {
+  type: string;
+  data: Record<string, unknown>;
+  valid: boolean;
+  at: number;
+  msgId: string;
+}[] = [];
 let receiver: ReturnType<typeof Bun.serve>;
 
 async function verify(id: string, ts: string, body: string, sig: string): Promise<boolean> {
@@ -97,7 +104,7 @@ beforeAll(async () => {
         req.headers.get("webhook-signature") ?? "",
       );
       const parsed = JSON.parse(body) as { type: string; data: Record<string, unknown> };
-      hooks.push({ ...parsed, valid, at: Date.now() });
+      hooks.push({ ...parsed, valid, at: Date.now(), msgId: req.headers.get("webhook-id") ?? "" });
       return new Response("ok");
     },
   });
@@ -134,8 +141,9 @@ beforeAll(async () => {
       method: "POST",
       body: JSON.stringify({ endpoint: `http://127.0.0.1:${receiver.port}/hooks` }),
     })
-  ).json()) as { signing_secret: string };
+  ).json()) as { id: string; signing_secret: string };
   secret = w.signing_secret;
+  hookId = w.id;
   expect(secret).toMatch(/^whsec_/);
 }, 30_000);
 
@@ -331,6 +339,73 @@ hi
   test("every webhook was correctly signed", () => {
     expect(hooks.length).toBeGreaterThan(5);
     expect(hooks.every((h) => h.valid)).toBe(true);
+  });
+
+  test("each delivery lists its attempts; a resend arrives again with the same webhook-id", async () => {
+    type Delivery = {
+      id: string;
+      state: string;
+      attempts: { status: number | null; duration_ms: number }[];
+    };
+    const list = async (query = "") =>
+      (
+        (await (await api(`/webhooks/${hookId}/deliveries?limit=100${query}`)).json()) as {
+          data: Delivery[];
+        }
+      ).data;
+    const all = await list();
+    expect(all.length).toBe(hooks.length);
+    const done = all.find((d) => d.state === "done") as Delivery;
+    expect(done.attempts).toEqual([expect.objectContaining({ status: 200 })]);
+    expect(done.attempts[0]?.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(await list("&failed=true")).toEqual([]);
+    expect((await list(`&limit=1&before=${all[0]?.id}`))[0]?.id).toBe(all[1]?.id);
+
+    const msgId = `msg_${done.id}`;
+    const before = hooks.filter((h) => h.msgId === msgId).length;
+    const r = await api(`/webhooks/${hookId}/deliveries/${done.id}/resend`, { method: "POST" });
+    expect(await r.json()).toEqual({ resent: 1 });
+    await until(
+      () => hooks.filter((h) => h.msgId === msgId).length,
+      (n) => n === before + 1,
+    );
+    await until(
+      async () => (await list()).find((d) => d.id === done.id)?.attempts.length,
+      (n) => n === 2,
+    );
+
+    const total = hooks.length;
+    const range = await api(`/webhooks/${hookId}/resend`, {
+      method: "POST",
+      body: JSON.stringify({
+        from: new Date(Date.now() - 3_600_000).toISOString(),
+        to: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    });
+    const job = (await range.json()) as { id: string; state: string; resent: number };
+    expect(job).toMatchObject({ state: "queued", resent: 0 });
+    const busy = await api(`/webhooks/${hookId}/resend`, {
+      method: "POST",
+      body: JSON.stringify({ from: new Date(0).toISOString(), to: new Date().toISOString() }),
+    });
+    expect(busy.status).toBe(409);
+    const finished = await until(
+      async () =>
+        (await (await api(`/webhooks/${hookId}/resends/${job.id}`)).json()) as {
+          state: string;
+          resent: number;
+        },
+      (r) => r.state === "done",
+      20_000,
+    );
+    expect(finished.resent).toBe(all.length);
+    await until(
+      () => hooks.length,
+      (n) => n >= total + all.length,
+      20_000,
+    );
+    expect((await api(`/webhooks/${hookId}/deliveries?from=yesterday`)).status).toBe(422);
+    expect((await api("/webhooks/nope/deliveries")).status).toBe(404);
   });
 });
 
