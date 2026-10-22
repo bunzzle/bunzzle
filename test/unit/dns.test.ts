@@ -3,7 +3,13 @@ import { manualClock } from "../../src/core/clock.ts";
 import { cachingResolver } from "../../src/dns/cache.ts";
 import { forbiddenReason, parseIPv6 } from "../../src/dns/ip.ts";
 import { lookupDestination } from "../../src/dns/mx.ts";
-import { createResolver, DnsError, parseServer, type Resolver } from "../../src/dns/resolver.ts";
+import {
+  createResolver,
+  DnsError,
+  dnsServers,
+  parseServer,
+  type Resolver,
+} from "../../src/dns/resolver.ts";
 import { decodeMessage, nameToWire, normalizeName } from "../../src/dns/wire.ts";
 import { providerOf, siteOf } from "../../src/routing/providers.ts";
 import { type FakeDns, startFakeDns } from "../support/fake-dns.ts";
@@ -373,4 +379,24 @@ test("the additional section is read; a broken one is left out", () => {
     ["ns1.mail.example.net", "192.0.2.1"],
   ]);
   expect(decodeMessage(packet.subarray(0, packet.length - 3)).additional).toEqual([]);
+});
+
+test("one server list for every role: BUNZZLE_DNS_SERVERS, else /etc/resolv.conf", async () => {
+  const conf = `${Bun.env["TMPDIR"] ?? "/tmp"}/bunzzle-resolv-${crypto.randomUUID()}`;
+  await Bun.write(conf, "# comment\nnameserver 192.0.2.53\nnameserver fe80::1%en0\n");
+  try {
+    expect(await dnsServers([], conf)).toEqual([
+      { host: "192.0.2.53", port: 53 },
+      { host: "fe80::1", port: 53 },
+    ]);
+    expect(await dnsServers(["1.1.1.1", "[2606:4700::1111]:5353", "127.0.0.1:5300"], conf)).toEqual(
+      [
+        { host: "1.1.1.1", port: 53 },
+        { host: "2606:4700::1111", port: 5353 },
+        { host: "127.0.0.1", port: 5300 },
+      ],
+    );
+  } finally {
+    await Bun.$`rm -f ${conf}`.quiet();
+  }
 });

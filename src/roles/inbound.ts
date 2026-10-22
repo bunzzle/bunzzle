@@ -2,7 +2,7 @@ import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { DmarcError, readDmarcReport } from "../dmarc/report.ts";
 import { cachingResolver } from "../dns/cache.ts";
-import { createResolver, parseServer, systemServers } from "../dns/resolver.ts";
+import { createResolver, dnsServers } from "../dns/resolver.ts";
 import { type AuthResults, checkAuth, refusal } from "../inbound/auth.ts";
 import { classifyReport, type Report } from "../inbound/parse.ts";
 import { buildPayload } from "../inbound/payload.ts";
@@ -50,9 +50,7 @@ export async function runInbound(config: Config, log: Logger) {
   const core = new RpcClient(sockets(config.runDir).coreInbound);
   const port = config.inboundPort;
   const tls = port === null ? null : await loadTls(config);
-  const servers = config.dnsServers.length
-    ? config.dnsServers.map(parseServer)
-    : await systemServers();
+  const servers = await dnsServers(config.dnsServers);
   const resolver = cachingResolver(createResolver({ servers }));
   const lists = blocklists(null).filter((l) => config.inboundBlocklists.includes(l.id));
   const server =

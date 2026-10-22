@@ -2,7 +2,7 @@ import { ensureCertificate } from "../acme/manager.ts";
 import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { cachingResolver } from "../dns/cache.ts";
-import { createResolver, parseServer, systemServers } from "../dns/resolver.ts";
+import { createResolver, dnsServers } from "../dns/resolver.ts";
 import { method, serveRpc } from "../ipc/rpc.ts";
 import { Postmaster } from "../net/postmaster.ts";
 import { openDnsProvider } from "../net/providers.ts";
@@ -14,9 +14,7 @@ import { sockets } from "./wire.ts";
 const HOUR = 3_600_000;
 
 export async function runDns(config: Config, log: Logger) {
-  const servers = config.dnsServers.length
-    ? config.dnsServers.map(parseServer)
-    : await systemServers();
+  const servers = await dnsServers(config.dnsServers);
   const resolver = cachingResolver(createResolver({ servers }));
   const api = (r: Parameters<typeof guardedRequest>[0]) =>
     guardedRequest(r, {
