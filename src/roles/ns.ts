@@ -50,7 +50,28 @@ export async function runNs(config: Config, log: Logger) {
   const ports: number[] = [];
   const listeners: { host: string; port: number }[] = [];
   for (const ip of ns.listen) {
-    const port = await server.listen(ip, ns.port);
+    let port: number;
+    try {
+      port = await server.listen(ip, ns.port);
+    } catch (err) {
+      const code = (err as { code?: string }).code ?? null;
+      log.error("ns cannot listen", {
+        address: ip,
+        port: ns.port,
+        code,
+        error: (err as Error).message,
+        hint:
+          code === "EADDRINUSE"
+            ? "another program already uses this port for UDP or TCP"
+            : code === "EACCES"
+              ? "ports below 1024 need the CAP_NET_BIND_SERVICE capability"
+              : code === "EADDRNOTAVAIL"
+                ? "this address is not on any interface of this host"
+                : null,
+      });
+      server.stop();
+      throw err;
+    }
     ports.push(port);
     listeners.push({ host: ip, port });
   }

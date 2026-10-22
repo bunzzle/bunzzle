@@ -75,7 +75,14 @@ export async function startServe(env: Record<string, string>): Promise<Served> {
   };
   void read(proc.stderr, true);
   void read(proc.stdout, false).then(() =>
-    listening.reject(new Error(`serve exited: ${stderrText}`)),
+    listening.reject(
+      new Error(
+        `serve exited: ${stderrText}${logs
+          .filter((l) => l["level"] === "error")
+          .map((l) => `\n${JSON.stringify(l)}`)
+          .join("")}`,
+      ),
+    ),
   );
   const url = (await listening.promise).replace(/\/$/, "");
   return {

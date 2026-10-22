@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import type { Logger } from "../../src/core/log.ts";
+import { openDatabase } from "../../src/core/store/db.ts";
 import { measureNs } from "../../src/dns/probe.ts";
 import type { QueryType, Server } from "../../src/dns/resolver.ts";
 import type { DnsMessage, ResourceRecord } from "../../src/dns/wire.ts";
+import { collect, render } from "../../src/metrics/metrics.ts";
 import { nsProbe } from "../../src/roles/core-ns.ts";
 
 const ZONE = "dz.mail.example.net";
@@ -189,4 +191,22 @@ test("a dead ns role counts as a failure on every known listener", async () => {
   w.t += 60 * 60_000;
   await probe.tick();
   expect(w.events.map((e) => e.kind).slice(2)).toEqual(["ns.healthy", "ns.healthy"]);
+});
+
+test("while a listener stays bad the metrics keep showing it; the event is not repeated", async () => {
+  const { w, probe } = world();
+  const db = openDatabase({ path: ":memory:" });
+  const text = () => render(collect(db, null, [], w.t, w.t, undefined, probe.view()));
+  await probe.tick();
+  expect(text()).toContain('bunzzle_ns_healthy{ns="192.0.2.2"} 1');
+  w.down.add("192.0.2.2/tcp");
+  for (let i = 0; i < 50; i++) {
+    await probe.tick();
+    w.t += 10_000;
+  }
+  expect(w.events).toEqual([{ kind: "ns.unhealthy", ns: "192.0.2.2" }]);
+  expect(text()).toContain('bunzzle_ns_healthy{ns="192.0.2.2"} 0');
+  expect(text()).toContain('bunzzle_ns_failures{ns="192.0.2.2"} 50');
+  expect(text()).toContain('bunzzle_ns_up{ns="192.0.2.2",proto="tcp"} 0');
+  expect(text()).toContain('bunzzle_ns_healthy{ns="192.0.2.1"} 1');
 });

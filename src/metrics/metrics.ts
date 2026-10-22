@@ -225,6 +225,18 @@ export function collect(
             ]),
           },
           {
+            name: "bunzzle_ns_healthy",
+            type: "gauge" as const,
+            help: "0 from the ns.unhealthy event until the ns.healthy event for this listener.",
+            samples: ns.map((v) => ({ labels: { ns: v.ns }, value: v.healthy ? 1 : 0 })),
+          },
+          {
+            name: "bunzzle_ns_failures",
+            type: "gauge" as const,
+            help: "Failed probes of this listener in a row.",
+            samples: ns.map((v) => ({ labels: { ns: v.ns }, value: v.failures })),
+          },
+          {
             name: "bunzzle_ns_serial_lag_seconds",
             type: "gauge" as const,
             help: "Seconds the ns listener has been behind the zone serial core pushed.",
