@@ -85,7 +85,7 @@ test("every listener is asked over UDP and TCP; healthy listeners raise nothing"
   expect(w.events).toEqual([]);
 });
 
-test("three failed probes in a row raise one ns.unhealthy, recovery raises ns.healthy", async () => {
+test("three failed probes in a row raise one ns.unhealthy; ns.healthy after 10 min good and 1 h", async () => {
   const { w, probe } = world();
   w.down.add("192.0.2.2/tcp");
   await probe.tick();
@@ -98,7 +98,31 @@ test("three failed probes in a row raise one ns.unhealthy, recovery raises ns.he
   expect(probe.view().find((v) => v.ns === "192.0.2.2")?.udp).toBe(true);
   w.down.clear();
   await probe.tick();
+  w.t += 10 * 60_000;
+  await probe.tick();
+  expect(w.events.length).toBe(1);
+  w.t += 50 * 60_000;
+  await probe.tick();
   expect(w.events.at(-1)).toEqual({ kind: "ns.healthy", ns: "192.0.2.2" });
+});
+
+test("a flapping listener raises at most one pair of events an hour", async () => {
+  const { w, probe } = world();
+  for (let i = 0; i < 6 * 60 * 4; i++) {
+    if (i % 4 === 3) w.down.delete("192.0.2.1/udp");
+    else w.down.add("192.0.2.1/udp");
+    await probe.tick();
+    w.t += 15_000;
+  }
+  const kinds = w.events.map((e) => e.kind);
+  expect(kinds.filter((k) => k === "ns.unhealthy").length).toBe(1);
+  expect(kinds.filter((k) => k === "ns.healthy").length).toBe(0);
+  w.down.clear();
+  for (let i = 0; i < 70; i++) {
+    await probe.tick();
+    w.t += 15_000;
+  }
+  expect(w.events.map((e) => e.kind)).toEqual(["ns.unhealthy", "ns.healthy"]);
 });
 
 test("a serial more than 120 s behind the pushed one is unhealthy at once", async () => {
@@ -161,6 +185,8 @@ test("a dead ns role counts as a failure on every known listener", async () => {
   ]);
   expect(w.events.map((e) => e.kind)).toEqual(["ns.unhealthy", "ns.unhealthy"]);
   w.dead = false;
+  await probe.tick();
+  w.t += 60 * 60_000;
   await probe.tick();
   expect(w.events.map((e) => e.kind).slice(2)).toEqual(["ns.healthy", "ns.healthy"]);
 });

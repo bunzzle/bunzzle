@@ -6,6 +6,8 @@ const FAILURES = 3;
 const MAX_LAG_SECONDS = 120;
 const INTERVAL_MS = 60_000;
 const RETRY_MS = 10_000;
+const RECOVER_MS = 10 * 60_000;
+const MIN_UNHEALTHY_MS = 60 * 60_000;
 
 export interface NsTargetView {
   ns: string;
@@ -16,7 +18,13 @@ export interface NsTargetView {
   failures: number;
   healthy: boolean;
   checkedAt: number | null;
+  goodSince: number | null;
+  unhealthySince: number | null;
 }
+
+type Reading = Pick<NsTargetView, "ns" | "udp" | "tcp" | "serial" | "lagSeconds" | "failures"> & {
+  checkedAt: number;
+};
 
 export interface NsProbeDeps {
   targets: () => Promise<Server[]>;
@@ -32,34 +40,40 @@ export function nsProbe(deps: NsProbeDeps) {
   const state = new Map<string, NsTargetView>();
   let checkedAt: number | null = null;
 
-  const probe = async (server: Server, at: number): Promise<NsTargetView> => {
+  const probe = async (server: Server, at: number): Promise<Reading> => {
     const ns = server.host;
     const m = await deps.measure(server).catch(() => ({ udp: null, tcp: null, served: null }));
     const served = m.served;
-    const before = state.get(ns);
     const udp = m.udp !== null && served !== null;
     const tcp = m.tcp !== null;
-    const failures = udp && tcp ? 0 : (before?.failures ?? 0) + 1;
     const pushed = deps.pushed();
     const lagSeconds =
       pushed && (served === null || served < pushed.serial)
         ? Math.max(0, Math.round((at - pushed.at) / 1000))
         : 0;
-    return {
-      ns,
-      udp,
-      tcp,
-      serial: served,
-      lagSeconds,
-      failures,
-      healthy: failures < FAILURES && lagSeconds <= MAX_LAG_SECONDS,
-      checkedAt: at,
-    };
+    const failures = udp && tcp ? 0 : (state.get(ns)?.failures ?? 0) + 1;
+    return { ns, udp, tcp, serial: served, lagSeconds, failures, checkedAt: at };
   };
 
-  const record = async (view: NsTargetView) => {
-    const before = state.get(view.ns);
-    state.set(view.ns, view);
+  const record = async (r: Reading) => {
+    const before = state.get(r.ns);
+    const at = r.checkedAt;
+    const good = r.udp && r.tcp && r.lagSeconds <= MAX_LAG_SECONDS;
+    const goodSince = good ? (before?.goodSince ?? at) : null;
+    const bad = r.failures >= FAILURES || r.lagSeconds > MAX_LAG_SECONDS;
+    const healthy =
+      before && !before.healthy
+        ? goodSince !== null &&
+          at - goodSince >= RECOVER_MS &&
+          at - (before.unhealthySince ?? at) >= MIN_UNHEALTHY_MS
+        : !bad;
+    const view: NsTargetView = {
+      ...r,
+      healthy,
+      goodSince,
+      unhealthySince: healthy ? null : (before?.unhealthySince ?? at),
+    };
+    state.set(r.ns, view);
     const data = {
       ns: view.ns,
       udp: view.udp,
@@ -86,22 +100,14 @@ export function nsProbe(deps: NsProbeDeps) {
     } catch (err) {
       deps.log.warn("could not list the ns listeners", { error: (err as Error).message });
       for (const v of [...state.values()]) {
-        const failures = v.failures + 1;
-        await record({
-          ...v,
-          udp: false,
-          tcp: false,
-          failures,
-          healthy: failures < FAILURES && v.lagSeconds <= MAX_LAG_SECONDS,
-          checkedAt: at,
-        });
+        await record({ ...v, udp: false, tcp: false, failures: v.failures + 1, checkedAt: at });
       }
       return;
     }
     const seen = new Set<string>();
-    for (const view of await Promise.all(targets.map((t) => probe(t, at)))) {
-      seen.add(view.ns);
-      await record(view);
+    for (const reading of await Promise.all(targets.map((t) => probe(t, at)))) {
+      seen.add(reading.ns);
+      await record(reading);
     }
     for (const ns of state.keys()) if (!seen.has(ns)) state.delete(ns);
   };
