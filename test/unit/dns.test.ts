@@ -147,6 +147,51 @@ describe("cache", () => {
   });
 });
 
+test("cached answers live for the record TTL, at least 30 s and at most one hour", async () => {
+  const clock = manualClock();
+  let calls = 0;
+  const fixed: Resolver = {
+    async query(name, type) {
+      calls++;
+      const ttl = name === "long.test" ? 86_400 : 1;
+      return {
+        name,
+        type,
+        rcode: 0,
+        authenticated: false,
+        ttl,
+        records: [
+          {
+            name,
+            type: "MX",
+            ttl,
+            rdata: new Uint8Array(),
+            mx: { preference: 10, exchange: `mx.${name}` },
+          },
+        ],
+      } as Awaited<ReturnType<Resolver["query"]>>;
+    },
+    message: async () => {
+      throw new Error("not used");
+    },
+  };
+  const cached = cachingResolver(fixed, { clock });
+  await cached.query("long.test", "MX");
+  await cached.query("short.test", "MX");
+  clock.advance(29_000);
+  await cached.query("short.test", "MX");
+  expect(calls).toBe(2);
+  clock.advance(2_000);
+  await cached.query("short.test", "MX");
+  expect(calls).toBe(3);
+  clock.advance(3_600_000 - 32_000);
+  await cached.query("long.test", "MX");
+  expect(calls).toBe(3);
+  clock.advance(2_000);
+  await cached.query("long.test", "MX");
+  expect(calls).toBe(4);
+});
+
 describe("lookupDestination", () => {
   const lookup = (domain: string, extra: Partial<Parameters<typeof lookupDestination>[1]> = {}) =>
     lookupDestination(domain, { resolver, random: () => 0.5, ...extra });

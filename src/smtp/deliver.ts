@@ -2,7 +2,7 @@ import { type Family, familyOf } from "../dns/ip.ts";
 import { type Destination, lookupDestination } from "../dns/mx.ts";
 import type { Resolver } from "../dns/resolver.ts";
 import type { TlsaData } from "../dns/wire.ts";
-import { type Provider, providerOf } from "../routing/providers.ts";
+import { type Provider, providerOfTargets } from "../routing/providers.ts";
 import { mxAllowed, type StsPolicy } from "./mta-sts.ts";
 import type { SessionPool } from "./pool.ts";
 import {
@@ -177,7 +177,7 @@ export async function deliverTo(
     return report;
   }
 
-  report.provider = providerOf(destination.mxHosts[0] ?? "");
+  report.provider = providerOfTargets(destination.targets);
   const relay = opts.relay ?? null;
   const requireTls = input.requireTls ?? false;
   const optional = !requireTls && tlsOptional(input.data);

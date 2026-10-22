@@ -17,7 +17,7 @@ import { bucketOf, choose, countWarmup } from "../ips/warmup.ts";
 import { domainOf } from "../mime/address.ts";
 import { SUSPENDED_PREFIX, suspensionFor } from "../queue/control.ts";
 import { type Classification, classify } from "../replies/classify.ts";
-import { providerOf, siteOf } from "../routing/providers.ts";
+import { providerOfTargets, siteOf } from "../routing/providers.ts";
 import type { JobContext } from "../scheduler/scheduler.ts";
 import { type Admission, Shaper } from "../shaping/shaper.ts";
 import type { DeliveryReport } from "../smtp/deliver.ts";
@@ -72,7 +72,7 @@ const SOURCE = "delivery";
 
 function targetFor(destination: Destination, domain: string): string {
   if (destination.kind !== "targets") return domain;
-  return providerOf(destination.mxHosts[0] ?? "")?.id ?? siteOf(destination.mxHosts);
+  return providerOfTargets(destination.targets)?.id ?? siteOf(destination.mxHosts);
 }
 
 function stateOf(r: RecipientResult, v: Classification): RecipientState {
@@ -265,9 +265,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
     }
     const target = targetFor(destination, job.target);
     const provider =
-      destination.kind === "targets"
-        ? (providerOf(destination.mxHosts[0] ?? "")?.id ?? null)
-        : null;
+      destination.kind === "targets" ? (providerOfTargets(destination.targets)?.id ?? null) : null;
     const byProvider = provider ? suspended(provider) : null;
     if (byProvider) return byProvider;
     const lane = job.priority > 0 ? "bulk" : "transactional";
