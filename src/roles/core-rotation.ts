@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
 import { keyFromTxt, selectorsOf, verifyDkim } from "../dkim/verify.ts";
+import { domainRecords } from "../domains/delegated.ts";
 import {
   allDomains,
   type Domain,
@@ -9,6 +10,7 @@ import {
   evaluate,
   expectedRecords,
   findDomain,
+  lookupRecords,
   saveDomain,
 } from "../domains/domains.ts";
 import type { RpcClient } from "../ipc/rpc.ts";
@@ -38,6 +40,7 @@ export interface RotationDeps {
   dns: RpcClient;
   sourceIp: string | string[] | null;
   inboundHost: string | null;
+  nsZone?: string | null;
   rotateDays: () => number;
   now?: () => number;
 }
@@ -52,7 +55,7 @@ export function rotation(deps: RotationDeps) {
   const { db, writer, log, signer, delivery, dns } = deps;
   const now = deps.now ?? Date.now;
 
-  const lookup = (queries: { name: string; type: "TXT" | "MX" }[]) =>
+  const lookup = (queries: { name: string; type: DomainRecord["type"] }[]) =>
     delivery.call(
       "dns",
       { queries },
@@ -64,13 +67,8 @@ export function rotation(deps: RotationDeps) {
   const rebuild = async (domain: string, list: KeyInfo[]): Promise<Domain | null> => {
     const d = findDomain(db, domain);
     if (!d) return null;
-    const records = expectedRecords(domain, list, deps.sourceIp, deps.inboundHost);
-    const queries = [
-      ...new Map(
-        records.map((r) => [`${r.type}:${r.name}`, { name: r.name, type: r.type }]),
-      ).values(),
-    ];
-    const checked = evaluate(records, await lookup(queries), deps.sourceIp);
+    const records = domainRecords(d, list, deps.sourceIp, deps.inboundHost, deps.nsZone ?? null);
+    const checked = evaluate(records, await lookupRecords(records, lookup), deps.sourceIp);
     const next: Domain = {
       ...d,
       records: checked.records,
@@ -87,7 +85,7 @@ export function rotation(deps: RotationDeps) {
       .catch(() => ({ enabled: false }));
     if (!status.enabled) return false;
     for (const r of records) {
-      if (r.record === "SPF" || r.record === "DMARC") continue;
+      if (r.record === "SPF" || r.record === "DMARC" || r.type === "CNAME") continue;
       const record =
         r.type === "MX"
           ? {
@@ -147,6 +145,7 @@ export function rotation(deps: RotationDeps) {
   const step = async (domain: string, force: boolean): Promise<string> => {
     const d = findDomain(db, domain);
     if (d?.status !== "verified") return "domain not verified";
+    if (d.mode === "delegated") return "rotation is not available for delegated domains";
     let list = await keys(domain);
     const t = now();
     const next = list.filter((k) => k.state === "next");

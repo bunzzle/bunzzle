@@ -1,3 +1,4 @@
+import { DOMAIN_MODES } from "../domains/domains.ts";
 import { ROUTE_FORMATS } from "../inbound/routes.ts";
 import { b } from "../validate/schema.ts";
 import { EVENT_TYPES } from "../webhooks/store.ts";
@@ -6,7 +7,10 @@ const time = b.string().format("date-time");
 const day = b.string().format("date");
 const id = b.string();
 
-export const createDomainSchema = b.object({ name: b.string().min(1).max(253) });
+export const createDomainSchema = b.object({
+  name: b.string().min(1).max(253),
+  mode: b.enum(DOMAIN_MODES).optional(),
+});
 
 export const updateDomainSchema = b.object({
   ip_pool: b
@@ -215,7 +219,7 @@ export const stats = b.object({
 const record = b.object({
   record: b.string(),
   name: b.string(),
-  type: b.enum(["TXT", "MX"]),
+  type: b.enum(["TXT", "MX", "CNAME"]),
   value: b.string(),
   required: b.boolean(),
   status: b.enum(["not_started", "verified", "missing", "mismatch"]),
@@ -241,6 +245,7 @@ const trackingView = b
 export const domain = b.object({
   object: b.literal("domain"),
   name: b.string(),
+  mode: b.enum(DOMAIN_MODES),
   status: b.enum(["pending", "verified"]),
   created_at: time,
   checked_at: time.nullable(),
@@ -250,6 +255,7 @@ export const domain = b.object({
 export const domainDetail = b.object({
   object: b.literal("domain"),
   name: b.string(),
+  mode: b.enum(DOMAIN_MODES),
   status: b.enum(["pending", "verified"]),
   created_at: time,
   checked_at: time.nullable(),

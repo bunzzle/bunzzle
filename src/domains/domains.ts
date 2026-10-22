@@ -9,14 +9,17 @@ export type RecordKind =
   | "SPF"
   | "DMARC"
   | "RETURN_PATH_MX"
-  | "RETURN_PATH_SPF";
+  | "RETURN_PATH_SPF"
+  | "RETURN_PATH";
 export type CheckStatus = "not_started" | "verified" | "missing" | "mismatch";
 export type DomainStatus = "pending" | "verified";
+export const DOMAIN_MODES = ["records", "delegated"] as const;
+export type DomainMode = (typeof DOMAIN_MODES)[number];
 
 export interface DomainRecord {
   record: RecordKind;
   name: string;
-  type: "TXT" | "MX";
+  type: "TXT" | "MX" | "CNAME";
   value: string;
   required: boolean;
   status: CheckStatus;
@@ -26,6 +29,7 @@ export interface DomainRecord {
 export interface Domain {
   project: ProjectId;
   name: string;
+  mode: DomainMode;
   status: DomainStatus;
   records: DomainRecord[];
   createdAt: number;
@@ -48,9 +52,10 @@ const recordSchema = b.object({
     "DMARC",
     "RETURN_PATH_MX",
     "RETURN_PATH_SPF",
+    "RETURN_PATH",
   ]),
   name: b.string(),
-  type: b.enum(["TXT", "MX"]),
+  type: b.enum(["TXT", "MX", "CNAME"]),
   value: b.string(),
   required: b.boolean(),
   status: b.enum(["not_started", "verified", "missing", "mismatch"]),
@@ -111,18 +116,22 @@ export function expectedRecords(
       value: `v=spf1 ${spfMechanism(sourceIp)} ~all`,
       required: false,
     },
-    {
-      ...base,
-      record: "DMARC",
-      name: `_dmarc.${domain}`,
-      value: inboundHost
-        ? `v=DMARC1; p=none; rua=mailto:${dmarcAddress(domain)};`
-        : "v=DMARC1; p=none;",
-      required: false,
-    },
+    dmarcRecord(domain, inboundHost),
     ...returnPath,
   ];
 }
+
+export const dmarcRecord = (domain: string, inboundHost: string | null): DomainRecord => ({
+  record: "DMARC",
+  name: `_dmarc.${domain}`,
+  type: "TXT",
+  value: inboundHost
+    ? `v=DMARC1; p=none; rua=mailto:${dmarcAddress(domain)};`
+    : "v=DMARC1; p=none;",
+  required: false,
+  status: "not_started",
+  found: null,
+});
 
 export const bounceDomain = (domain: string) => `bounce.${domain}`;
 export const dmarcAddress = (domain: string) => `dmarc@${bounceDomain(domain)}`;
@@ -143,6 +152,13 @@ function check(r: DomainRecord, found: string[], sourceIp: string | string[] | n
     status,
     found: value,
   });
+  if (r.type === "CNAME") {
+    if (found.length === 0) return result("missing", null);
+    const chain = found.join(" -> ");
+    return found.some((t) => hostName(t) === hostName(r.value))
+      ? result("verified", chain)
+      : result("mismatch", chain);
+  }
   if (r.record === "DKIM" || r.record === "DKIM_NEXT" || r.record === "DKIM_RETIRING") {
     const want = tags(r.value).get("p");
     const dkim = found.filter((t) => /^v=DKIM1\b/i.test(t.trim()) || tags(t).has("p"));
@@ -161,7 +177,9 @@ function check(r: DomainRecord, found: string[], sourceIp: string | string[] | n
     if (spf.length === 0) return result("missing", null);
     const record = spf[0] as string;
     if (spf.length > 1) return result("mismatch", spf.join(" | "));
-    const want = spfMechanism(sourceIp);
+    const want = r.value.includes(" include:")
+      ? r.value.split(/\s+/).slice(1, -1).join(" ")
+      : spfMechanism(sourceIp);
     if (want === "a mx") return result("verified", record);
     const have = record.toLowerCase().split(/\s+/);
     return want.split(" ").every((m) => have.includes(m.toLowerCase()))
@@ -174,6 +192,40 @@ function check(r: DomainRecord, found: string[], sourceIp: string | string[] | n
   if (!want) return result("verified", dmarc);
   const have = (tags(dmarc).get("rua") ?? "").toLowerCase().split(",");
   return have.includes(want.toLowerCase()) ? result("verified", dmarc) : result("mismatch", dmarc);
+}
+
+const hostName = (name: string) => name.toLowerCase().replace(/\.$/, "");
+
+const MAX_CNAME_HOPS = 8;
+
+export async function lookupRecords(
+  records: DomainRecord[],
+  lookup: (
+    queries: { name: string; type: DomainRecord["type"] }[],
+  ) => Promise<Record<string, string[]>>,
+): Promise<Record<string, string[]>> {
+  const queries = [
+    ...new Map(
+      records.map((r) => [`${r.type}:${r.name}`, { name: r.name, type: r.type }]),
+    ).values(),
+  ];
+  const found = await lookup(queries);
+  for (const r of records.filter((x) => x.type === "CNAME")) {
+    const chain = (found[`CNAME:${r.name}`] ?? []).map(hostName);
+    while (
+      chain.length > 0 &&
+      chain.length < MAX_CNAME_HOPS &&
+      !chain.includes(hostName(r.value))
+    ) {
+      const last = chain.at(-1) as string;
+      const next = (await lookup([{ name: last, type: "CNAME" }]))[`CNAME:${last}`] ?? [];
+      const hop = next.map(hostName).find((n) => !chain.includes(n));
+      if (!hop) break;
+      chain.push(hop);
+    }
+    found[`CNAME:${r.name}`] = chain;
+  }
+  return found;
 }
 
 export function evaluate(
@@ -199,6 +251,7 @@ export function returnPathReady(
 interface Row {
   project_id: string;
   name: string;
+  mode: DomainMode;
   status: DomainStatus;
   records: string;
   created_at: number;
@@ -208,6 +261,7 @@ interface Row {
 const fromRow = (r: Row): Domain => ({
   project: r.project_id as ProjectId,
   name: r.name,
+  mode: r.mode,
   status: r.status,
   records: b.array(recordSchema).parse(JSON.parse(r.records)),
   createdAt: r.created_at,
@@ -227,13 +281,25 @@ function domainCache(db: Database): Map<string, Domain> {
 
 export function saveDomain(db: Database, d: Domain, now: number): void {
   domainCache(db).delete(d.name);
-  db.query<unknown, [string, string, DomainStatus, string, number, number | null, number]>(
-    `INSERT INTO domains (project_id, name, status, records, created_at, checked_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+  db.query<
+    unknown,
+    [string, string, DomainMode, DomainStatus, string, number, number | null, number]
+  >(
+    `INSERT INTO domains (project_id, name, mode, status, records, created_at, checked_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (name) DO UPDATE SET status = excluded.status, records = excluded.records,
        checked_at = excluded.checked_at, updated_at = excluded.updated_at
      WHERE domains.project_id = excluded.project_id`,
-  ).run(d.project, d.name, d.status, JSON.stringify(d.records), d.createdAt, d.checkedAt, now);
+  ).run(
+    d.project,
+    d.name,
+    d.mode,
+    d.status,
+    JSON.stringify(d.records),
+    d.createdAt,
+    d.checkedAt,
+    now,
+  );
 }
 
 export function findDomain(db: Database, name: string): Domain | null {
@@ -242,7 +308,7 @@ export function findDomain(db: Database, name: string): Domain | null {
   if (hit) return hit;
   const r = db
     .query<Row, [string]>(
-      "SELECT project_id, name, status, records, created_at, checked_at FROM domains WHERE name = ?",
+      "SELECT project_id, name, mode, status, records, created_at, checked_at FROM domains WHERE name = ?",
     )
     .get(name);
   if (!r) return null;
@@ -262,7 +328,7 @@ export function getDomain(db: Database, project: ProjectId, name: string): Domai
 export function allDomains(db: Database): Domain[] {
   return db
     .query<Row, []>(
-      "SELECT project_id, name, status, records, created_at, checked_at FROM domains ORDER BY name",
+      "SELECT project_id, name, mode, status, records, created_at, checked_at FROM domains ORDER BY name",
     )
     .all()
     .map(fromRow);
@@ -271,11 +337,18 @@ export function allDomains(db: Database): Domain[] {
 export function listDomains(db: Database, project: ProjectId): Domain[] {
   return db
     .query<Row, [string]>(
-      `SELECT project_id, name, status, records, created_at, checked_at FROM domains
+      `SELECT project_id, name, mode, status, records, created_at, checked_at FROM domains
        WHERE project_id = ? ORDER BY name`,
     )
     .all(project)
     .map(fromRow);
+}
+
+export function delegatedDomainNames(db: Database): string[] {
+  return db
+    .query<{ name: string }, []>("SELECT name FROM domains WHERE mode = 'delegated' ORDER BY name")
+    .all()
+    .map((r) => r.name);
 }
 
 export function isVerified(db: Database, name: string): boolean {

@@ -25,6 +25,7 @@ import jobsProject from "./0024_jobs_project.sql" with { type: "text" };
 import projectUsage from "./0025_project_usage.sql" with { type: "text" };
 import poolOwners from "./0026_pool_owners.sql" with { type: "text" };
 import suppressionsAddress from "./0027_suppressions_address.sql" with { type: "text" };
+import domainMode from "./0028_domain_mode.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -60,4 +61,5 @@ export const migrations: readonly Migration[] = [
   { version: 25, name: "project usage", sql: projectUsage },
   { version: 26, name: "pool owners", sql: poolOwners },
   { version: 27, name: "suppressions by address", sql: suppressionsAddress },
+  { version: 28, name: "domain mode", sql: domainMode },
 ];

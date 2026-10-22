@@ -51,7 +51,10 @@ const REVIEWED: Record<string, { count: number; why: string }> = {
   "src/emails/search.ts jobs": { count: 4, why: "search builds its project filter separately" },
   "src/emails/search.ts email_index": { count: 2, why: "search and stats of one message" },
   "src/emails/search.ts messages": { count: 2, why: "search builds its project filter separately" },
-  "src/domains/domains.ts domains": { count: 1, why: "lookup by name for signing and inbound" },
+  "src/domains/domains.ts domains": {
+    count: 2,
+    why: "lookup by name for signing and inbound; delegated names for the server-wide zone",
+  },
 };
 
 async function unscoped(): Promise<Record<string, number>> {

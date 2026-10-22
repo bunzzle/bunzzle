@@ -93,7 +93,15 @@ function setup() {
   db.run("INSERT INTO projects (id, name, created_at) VALUES (?, 'other', ?)", [B, T0]);
   saveDomain(
     db,
-    { project: A, name: "a.test", status: "verified", records: [], createdAt: T0, checkedAt: null },
+    {
+      project: A,
+      name: "a.test",
+      mode: "records",
+      status: "verified",
+      records: [],
+      createdAt: T0,
+      checkedAt: null,
+    },
     T0,
   );
   const id = Bun.randomUUIDv7();
@@ -142,6 +150,7 @@ describe("projects", () => {
         project: B,
         name: "a.test",
         status: "pending",
+        mode: "records",
         records: [],
         createdAt: T0,
         checkedAt: null,
@@ -345,6 +354,7 @@ describe("projects", () => {
         project: B,
         name: "b.test",
         status: "verified",
+        mode: "records",
         records: [],
         createdAt: T0,
         checkedAt: null,
@@ -424,6 +434,7 @@ describe("projects", () => {
         project: B,
         name: "b.test",
         status: "verified",
+        mode: "records",
         records: [],
         createdAt: T0,
         checkedAt: null,
@@ -466,6 +477,7 @@ describe("projects", () => {
         project: A,
         name: "a.test",
         status: "verified",
+        mode: "records",
         records: [],
         createdAt: T0,
         checkedAt: null,
@@ -543,7 +555,15 @@ describe("projects", () => {
     ] as const) {
       saveDomain(
         db,
-        { project, name, status: "verified", records: [], createdAt: T0, checkedAt: null },
+        {
+          project,
+          name,
+          mode: "records",
+          status: "verified",
+          records: [],
+          createdAt: T0,
+          checkedAt: null,
+        },
         T0,
       );
     }
@@ -651,7 +671,15 @@ describe("projects", () => {
     const add = (project: ProjectId, name: string) =>
       saveDomain(
         db,
-        { project, name, status: "verified", records: [], createdAt: T0, checkedAt: null },
+        {
+          project,
+          name,
+          mode: "records",
+          status: "verified",
+          records: [],
+          createdAt: T0,
+          checkedAt: null,
+        },
         T0,
       );
     add(A, "a1.test");
@@ -681,6 +709,7 @@ describe("projects", () => {
         project: A,
         name: "a1.test",
         status: "verified",
+        mode: "records",
         records: [],
         createdAt: T0,
         checkedAt: null,
@@ -696,6 +725,7 @@ describe("projects", () => {
         project: A,
         name: "a2.test",
         status: "verified",
+        mode: "records",
         records: [],
         createdAt: T0,
         checkedAt: null,

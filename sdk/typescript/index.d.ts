@@ -237,13 +237,14 @@ export type DomainList = {
   data: {
     object: "domain";
     name: string;
+    mode: "records" | "delegated";
     status: "pending" | "verified";
     created_at: string;
     checked_at: string | null;
     records: {
       record: string;
       name: string;
-      type: "TXT" | "MX";
+      type: "TXT" | "MX" | "CNAME";
       value: string;
       required: boolean;
       status: "not_started" | "verified" | "missing" | "mismatch";
@@ -254,18 +255,20 @@ export type DomainList = {
 
 export type CreateDomain = {
   name: string;
+  mode?: "records" | "delegated";
 };
 
 export type Domain = {
   object: "domain";
   name: string;
+  mode: "records" | "delegated";
   status: "pending" | "verified";
   created_at: string;
   checked_at: string | null;
   records: {
     record: string;
     name: string;
-    type: "TXT" | "MX";
+    type: "TXT" | "MX" | "CNAME";
     value: string;
     required: boolean;
     status: "not_started" | "verified" | "missing" | "mismatch";
@@ -276,13 +279,14 @@ export type Domain = {
 export type DomainDetail = {
   object: "domain";
   name: string;
+  mode: "records" | "delegated";
   status: "pending" | "verified";
   created_at: string;
   checked_at: string | null;
   records: {
     record: string;
     name: string;
-    type: "TXT" | "MX";
+    type: "TXT" | "MX" | "CNAME";
     value: string;
     required: boolean;
     status: "not_started" | "verified" | "missing" | "mismatch";

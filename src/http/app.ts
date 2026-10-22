@@ -513,7 +513,11 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           const parsed = createDomainSchema.safeParse(await json(req));
           if (!parsed.success) throw invalid(parsed.error);
           return Response.json(
-            await rpc("addDomain", { tokenHash: caller.hash, name: parsed.data.name }),
+            await rpc("addDomain", {
+              tokenHash: caller.hash,
+              name: parsed.data.name,
+              mode: parsed.data.mode,
+            }),
           );
         }),
       },
