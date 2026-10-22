@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
 import type { Logger } from "../../src/core/log.ts";
+import { openDatabase } from "../../src/core/store/db.ts";
 import { type Delegation, delegationProblems } from "../../src/dns/delegation.ts";
 import { delegationAt } from "../../src/dns/probe.ts";
 import type { DnsAnswer, QueryType, Resolver, Server } from "../../src/dns/resolver.ts";
 import type { DnsMessage, ResourceRecord } from "../../src/dns/wire.ts";
+import { collect, render } from "../../src/metrics/metrics.ts";
 import { delegationCheck } from "../../src/roles/core-ns.ts";
 
 const ZONE = "dz.mail.example.net";
@@ -141,12 +143,17 @@ test("a mismatch raises one event, is checked hourly, and is ok after two good c
   await check.poll();
   await check.poll();
   expect(events).toEqual(["ns.delegation_mismatch"]);
+  const db = openDatabase({ path: ":memory:" });
+  const text = render(collect(db, null, [], t, t, undefined, null, check.view()));
+  expect(text).toContain("bunzzle_ns_delegation_ok 0");
+  expect(text).toContain("bunzzle_ns_delegation_problems 1");
   for (const good of [true, false, true, false, true, true]) {
     t += hour;
     ns = good ? NAMES : ["ns1.mail.example.net"];
     await check.poll();
   }
   expect(events).toEqual(["ns.delegation_mismatch", "ns.delegation_ok"]);
+  expect(check.view()?.mismatched).toBe(false);
   t += hour;
   await check.poll();
   t += 86_400_000 - hour;

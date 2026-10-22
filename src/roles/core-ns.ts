@@ -136,6 +136,7 @@ export interface DelegationView {
   ns: string[];
   addresses: Record<string, string[]>;
   problems: string[];
+  mismatched: boolean;
 }
 
 export interface DelegationCheckDeps {
@@ -169,17 +170,10 @@ export function delegationCheck(deps: DelegationCheckDeps) {
         error: err.message,
       }),
     );
-    const view: DelegationView = {
-      checkedAt: at,
-      parent: d.parent,
-      ns: d.ns,
-      addresses: d.addresses,
-      problems: delegationProblems(d, deps.zone, deps.names, deps.listen),
-    };
-    last = view;
-    goodRuns = view.problems.length === 0 ? goodRuns + 1 : 0;
-    const data = { zone: deps.zone, parent: view.parent, problems: view.problems };
-    if (view.problems.length > 0 && !mismatched) {
+    const problems = delegationProblems(d, deps.zone, deps.names, deps.listen);
+    goodRuns = problems.length === 0 ? goodRuns + 1 : 0;
+    const data = { zone: deps.zone, parent: d.parent, problems };
+    if (problems.length > 0 && !mismatched) {
       mismatched = true;
       deps.log.error("the NS delegation does not match the settings", data);
       await deps.raise("ns.delegation_mismatch", data);
@@ -188,6 +182,15 @@ export function delegationCheck(deps: DelegationCheckDeps) {
       deps.log.info("the NS delegation matches the settings again", data);
       await deps.raise("ns.delegation_ok", data);
     }
+    const view: DelegationView = {
+      checkedAt: at,
+      parent: d.parent,
+      ns: d.ns,
+      addresses: d.addresses,
+      problems,
+      mismatched,
+    };
+    last = view;
     return view;
   };
 

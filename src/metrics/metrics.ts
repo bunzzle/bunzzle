@@ -250,8 +250,14 @@ export function collect(
           {
             name: "bunzzle_ns_delegation_ok",
             type: "gauge" as const,
-            help: "1 when the NS delegation at the parent matched the settings at the last check.",
-            samples: [{ labels: {}, value: delegation.problems.length === 0 ? 1 : 0 }],
+            help: "0 from the ns.delegation_mismatch event until the ns.delegation_ok event.",
+            samples: [{ labels: {}, value: delegation.mismatched ? 0 : 1 }],
+          },
+          {
+            name: "bunzzle_ns_delegation_problems",
+            type: "gauge" as const,
+            help: "Differences between the delegation at the parent and the settings at the last check.",
+            samples: [{ labels: {}, value: delegation.problems.length }],
           },
         ]
       : []),
