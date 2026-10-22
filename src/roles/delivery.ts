@@ -12,6 +12,9 @@ import { blocklists, checkBlocklists, type Listing } from "../ips/blocklists.ts"
 import { parseMilterAddress, runMilter } from "../milter/client.ts";
 import { guardedPost } from "../net/post.ts";
 import { guardedRequest } from "../net/request.ts";
+import { deliverySpans } from "../otel/delivery-spans.ts";
+import { MAX_QUEUE, type Post, SpanExporter } from "../otel/exporter.ts";
+import { parseHeaders, spanWire } from "../otel/otlp.ts";
 import { limitsFor } from "../shaping/limits.ts";
 import { allRecipients } from "../smtp/deliver.ts";
 import { StsCache } from "../smtp/mta-sts.ts";
@@ -65,6 +68,30 @@ export async function runDelivery(config: Config, log: Logger) {
   if (config.dane !== "off" && !dane) log.warn("DANE is off", { reason: dnssec.detail });
   const ehloName = config.ehloName;
   const ips = config.sourceIps.map((s) => s.ip);
+  const otlp = config.otlp;
+  const otlpHeaders = otlp?.headersFile
+    ? parseHeaders(await Bun.file(otlp.headersFile).text())
+    : {};
+  const postOtlp: Post = async (path, body) => {
+    const r = await guardedRequest(
+      {
+        method: "POST",
+        url: `${otlp?.endpoint}${path}`,
+        headers: { ...otlpHeaders, "Content-Type": "application/json" },
+        body,
+        maxBody: 64 * 1024,
+      },
+      {
+        resolver,
+        allowPrivate: true,
+        ...(ips.length ? { ownAddresses: ips } : {}),
+        families: config.ipv6 ? [4, 6] : [4],
+        timeoutMs: 10_000,
+      },
+    );
+    return r.ok ? { ok: true, status: r.status } : { ok: false, error: r.error };
+  };
+  const spans = otlp ? new SpanExporter(ehloName ?? "bunzzle", postOtlp, log) : null;
   const reverse = new Map<string, ReverseCheck>();
   const checkIps = async () => {
     for (const ip of ips) {
@@ -328,7 +355,21 @@ export async function runDelivery(config: Config, log: Logger) {
           ),
         };
       }
-      return transport.deliver(req);
+      const start = Date.now();
+      const report = await transport.deliver(req);
+      spans?.add(deliverySpans(req, report, start, Date.now()));
+      return report;
+    }),
+    exportSpans: method(b.object({ spans: b.array(spanWire).max(MAX_QUEUE) }), (p) => {
+      spans?.add(p.spans);
+      return { queued: spans?.queued ?? 0 };
+    }),
+    exportMetrics: method(b.object({ body: b.string().max(32 * 1024 * 1024) }), async (p) => {
+      if (!spans) return { ok: false };
+      const r = await postOtlp("/v1/metrics", p.body);
+      const problem = !r.ok ? r.error : r.status >= 300 ? `answered ${r.status}` : null;
+      if (problem) spans.warn("could not export metrics", problem);
+      return { ok: problem === null };
     }),
     forget: method(
       b.object({ keys: b.array(b.string().min(1).max(200)).max(5000) }),
@@ -343,10 +384,13 @@ export async function runDelivery(config: Config, log: Logger) {
   void checkLists();
   const stopLists = every(6 * 3_600_000, checkLists);
   const stopExpire = every(60_000, () => transport.forget([]));
+  const stopSpans = spans ? every(5_000, () => spans.flush()) : () => {};
   onStop(log, async () => {
     stopChecks();
     stopLists();
     stopExpire();
+    stopSpans();
+    await spans?.flush();
     server.stop();
     await pool.closeAll();
   });

@@ -21,6 +21,8 @@ const BY_ROLE: Record<Role, string[]> = {
     "BUNZZLE_PUBLIC_URL",
   ],
   core: [
+    "BUNZZLE_OTLP_ENDPOINT",
+    "BUNZZLE_OTLP_METRICS_INTERVAL",
     "BUNZZLE_DATA_DIR",
     "BUNZZLE_ALLOW_PRIVATE_DESTINATIONS",
     "BUNZZLE_RETENTION_DAYS",
@@ -51,6 +53,8 @@ const BY_ROLE: Record<Role, string[]> = {
     "BUNZZLE_NS_PORT",
   ],
   delivery: [
+    "BUNZZLE_OTLP_ENDPOINT",
+    "BUNZZLE_OTLP_HEADERS_FILE",
     "BUNZZLE_EHLO_NAME",
     "BUNZZLE_SOURCE_IP",
     "BUNZZLE_DNS_SERVERS",

@@ -76,6 +76,9 @@ const schema = b.object({
   BUNZZLE_RELAY_HOST: optional,
   BUNZZLE_RELAY_USERNAME: optional,
   BUNZZLE_RELAY_PASSWORD_FILE: optional,
+  BUNZZLE_OTLP_ENDPOINT: optional,
+  BUNZZLE_OTLP_HEADERS_FILE: optional,
+  BUNZZLE_OTLP_METRICS_INTERVAL: b.coerce.number().int().min(10).max(3600).default(60),
   BUNZZLE_RELAY_FOR: b.string().default("all"),
   BUNZZLE_SPAMHAUS_KEY_FILE: optional,
   BUNZZLE_ACME_EMAIL: optional,
@@ -229,6 +232,7 @@ export interface Config {
   cloudflareUrl: string;
   route53: { accessKeyId: string; secretKeyFile: string; url: string } | null;
   desec: { tokenFile: string; url: string } | null;
+  otlp: { endpoint: string; headersFile: string | null; metricsIntervalMs: number } | null;
   ns: {
     zone: string;
     names: string[];
@@ -366,6 +370,12 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
   if (postmaster.some(Boolean) && !postmaster.every(Boolean)) {
     throw new ConfigError(
       "invalid configuration:\n  Postmaster Tools needs BUNZZLE_POSTMASTER_CLIENT_ID, BUNZZLE_POSTMASTER_CLIENT_SECRET_FILE and BUNZZLE_POSTMASTER_REFRESH_TOKEN_FILE together",
+    );
+  }
+  const otlp = c.BUNZZLE_OTLP_ENDPOINT;
+  if (otlp && (!URL.canParse(otlp) || !/^https?:\/\//.test(otlp))) {
+    throw new ConfigError(
+      "invalid configuration:\n  BUNZZLE_OTLP_ENDPOINT must be an http or https URL like http://127.0.0.1:4318",
     );
   }
   if ((c.BUNZZLE_RELAY_USERNAME || c.BUNZZLE_RELAY_PASSWORD_FILE) && !c.BUNZZLE_RELAY_HOST) {
@@ -510,6 +520,13 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
             algorithm: c.BUNZZLE_DNS_UPDATE_ALGORITHM,
           }
         : null,
+    otlp: c.BUNZZLE_OTLP_ENDPOINT
+      ? {
+          endpoint: c.BUNZZLE_OTLP_ENDPOINT.replace(/\/+$/, ""),
+          headersFile: c.BUNZZLE_OTLP_HEADERS_FILE,
+          metricsIntervalMs: c.BUNZZLE_OTLP_METRICS_INTERVAL * 1_000,
+        }
+      : null,
     relay: relayMatch
       ? {
           host: (relayMatch[1] as string).replace(/^\[|\]$/g, ""),

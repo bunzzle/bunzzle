@@ -8,7 +8,7 @@ How Bunzzle limits what an attacker gets. To report a vulnerability, see [SECURI
 |---|---|---|---|
 | api | nothing secret | core | HTTP requests |
 | core | the database (bodies encrypted) | signer, delivery, dns | none |
-| delivery | one email at a time while sending | signer | DNS answers, SMTP replies, HTTPS (webhooks, MTA-STS) |
+| delivery | one email at a time while sending | signer | DNS answers, SMTP replies, HTTPS (webhooks, MTA-STS, an OpenTelemetry collector) |
 | dns | the DNS provider token, if one is set | the DNS provider's API | its API replies |
 | signer | DKIM keys, master key | nobody, or a key store agent on a Unix socket | none |
 | inbound | its TLS key, if STARTTLS is on | core | SMTP from the internet |

@@ -42,6 +42,7 @@ import { reputationGuard } from "../guards/guards.ts";
 import { pruneRouted } from "../inbound/routes.ts";
 import { RpcClient, serveRpc } from "../ipc/rpc.ts";
 import { rollover } from "../ips/warmup.ts";
+import type { Span } from "../otel/otlp.ts";
 import { expireSuspensions } from "../queue/control.ts";
 import { Scheduler } from "../scheduler/scheduler.ts";
 import { type ControlState, DEFAULT_TUNING } from "../shaping/control.ts";
@@ -58,6 +59,7 @@ import { delegationCheck, nsProbe } from "./core-ns.ts";
 import { projectMethods } from "./core-projects.ts";
 import { OVERLAP_DAYS, rotation } from "./core-rotation.ts";
 import { routeMethods } from "./core-routes.ts";
+import { telemetry } from "./core-telemetry.ts";
 import { templateMethods } from "./core-templates.ts";
 import { trackingMethods } from "./core-tracking.ts";
 import { delegatedDomains, zonePublisher } from "./core-zone.ts";
@@ -338,7 +340,9 @@ export async function runCore(config: Config, log: Logger) {
       (!!pushed && zone.holds(domain, keys) && probe.servesAtLeast(pushed.serial))
     );
   };
+  let spanSink: ((s: Span) => void) | null = null;
   const api = coreMethods({
+    ...(config.otlp ? { span: (s: Span) => spanSink?.(s) } : {}),
     db,
     writer,
     log,
@@ -635,8 +639,21 @@ export async function runCore(config: Config, log: Logger) {
     : () => {};
   if (delegation) setTimeout(() => void delegation.poll(), 30_000);
 
+  const tel = config.otlp
+    ? telemetry({
+        delivery,
+        log,
+        instance: config.ehloName ?? "bunzzle",
+        metricsIntervalMs: config.otlp.metricsIntervalMs,
+        families: api.families,
+        startedAt: Date.now(),
+      })
+    : null;
+  if (tel) spanSink = (s) => tel.record(s);
+
   await scheduler.start();
   onStop(log, async () => {
+    await tel?.stop();
     stopSettled();
     stopZone();
     stopProbe();
