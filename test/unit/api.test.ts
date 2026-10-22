@@ -265,6 +265,7 @@ describe("cached lookups", () => {
       project: DEFAULT_PROJECT,
       name: "acme.test",
       status: "pending" as const,
+      mode: "records" as const,
       records: [],
       createdAt: T0,
       checkedAt: null,

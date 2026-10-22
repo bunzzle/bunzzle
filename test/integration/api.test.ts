@@ -104,6 +104,18 @@ describe("API keys", () => {
 });
 
 describe("sending domains (only verified domains can send)", () => {
+  test("delegated mode is refused on a server without a delegated zone", async () => {
+    const r = await api("/domains", {
+      method: "POST",
+      body: JSON.stringify({ name: "deleg.test", mode: "delegated" }),
+    });
+    expect(r.status).toBe(422);
+    expect(((await r.json()) as { message: string }).message).toContain(
+      "does not serve delegated domains",
+    );
+    expect((await api("/domains/deleg.test")).status).toBe(404);
+  });
+
   test("an unregistered domain is refused", async () => {
     const r = await send(email());
     expect(r.status).toBe(403);

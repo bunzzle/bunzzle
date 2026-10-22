@@ -1,8 +1,30 @@
 import type { ZoneWire } from "../ns/zone.ts";
-import { dkimValue, type PublicDkimKey, spfMechanism } from "./domains.ts";
+import {
+  bounceDomain,
+  type DomainMode,
+  type DomainRecord,
+  dkimValue,
+  dmarcRecord,
+  expectedRecords,
+  type PublicDkimKey,
+  spfMechanism,
+} from "./domains.ts";
 
 export const DKIM_SLOTS = ["bza-r", "bzb-r", "bza-e", "bzb-e"] as const;
 export type DkimSlot = (typeof DKIM_SLOTS)[number];
+export const FIRST_SLOTS = "bza-";
+
+const isSlot = (selector: string): selector is DkimSlot =>
+  (DKIM_SLOTS as readonly string[]).includes(selector);
+
+export function slotKeys(keys: PublicDkimKey[]): DelegatedDomain["keys"] | null {
+  const out: DelegatedDomain["keys"] = {};
+  for (const k of keys) {
+    if (!isSlot(k.selector)) return null;
+    out[k.selector] = k;
+  }
+  return out;
+}
 
 const BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
 
@@ -66,4 +88,54 @@ export function zoneWithSerial(
     serial,
     records: [...records, { name: `_check.${zone}`, type: "TXT", ttl, value: String(serial) }],
   };
+}
+
+export function delegatedRecords(
+  domain: string,
+  zone: string,
+  inboundHost: string | null,
+): DomainRecord[] {
+  const owner = `${zoneLabel(domain)}.${zone}`;
+  const base = { type: "CNAME" as const, status: "not_started" as const, found: null };
+  return [
+    ...DKIM_SLOTS.map((slot) => ({
+      ...base,
+      record: "DKIM" as const,
+      name: `${slot}._domainkey.${domain}`,
+      value: `${slot}.${owner}`,
+      required: true,
+    })),
+    {
+      ...base,
+      record: "SPF",
+      type: "TXT",
+      name: domain,
+      value: `v=spf1 include:_spf.${zone} ~all`,
+      required: false,
+    },
+    dmarcRecord(domain, inboundHost),
+    ...(inboundHost
+      ? [
+          {
+            ...base,
+            record: "RETURN_PATH" as const,
+            name: bounceDomain(domain),
+            value: owner,
+            required: false,
+          },
+        ]
+      : []),
+  ];
+}
+
+export function domainRecords(
+  domain: { name: string; mode: DomainMode },
+  keys: PublicDkimKey[],
+  sourceIp: string | string[] | null,
+  inboundHost: string | null,
+  zone: string | null,
+): DomainRecord[] {
+  return domain.mode === "delegated" && zone
+    ? delegatedRecords(domain.name, zone, inboundHost)
+    : expectedRecords(domain.name, keys, sourceIp, inboundHost);
 }

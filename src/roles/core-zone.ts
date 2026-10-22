@@ -1,5 +1,11 @@
 import type { Logger } from "../core/log.ts";
-import { type DelegatedDomain, zoneRecords, zoneWithSerial } from "../domains/delegated.ts";
+import {
+  type DelegatedDomain,
+  slotKeys,
+  zoneRecords,
+  zoneWithSerial,
+} from "../domains/delegated.ts";
+import type { PublicDkimKey } from "../domains/domains.ts";
 import type { RpcClient } from "../ipc/rpc.ts";
 import { b } from "../validate/schema.ts";
 
@@ -22,15 +28,15 @@ export function zonePublisher(deps: ZonePublisherDeps) {
   let failing = false;
 
   const tick = async (): Promise<number | null> => {
-    const records = zoneRecords({
-      zone: deps.zone,
-      ttl: deps.ttl,
-      sourceIps: deps.sourceIps,
-      inboundHost: deps.inboundHost,
-      domains: await deps.domains(),
-    });
-    const content = JSON.stringify(records);
     try {
+      const records = zoneRecords({
+        zone: deps.zone,
+        ttl: deps.ttl,
+        sourceIps: deps.sourceIps,
+        inboundHost: deps.inboundHost,
+        domains: await deps.domains(),
+      });
+      const content = JSON.stringify(records);
       const current = await deps.ns.call("stats", {}, { timeoutMs: 5_000, result: stats });
       if (pushed && pushed.content === content && current.serial === pushed.serial) {
         return pushed.serial;
@@ -56,4 +62,38 @@ export function zonePublisher(deps: ZonePublisherDeps) {
   };
 
   return { tick };
+}
+
+const KEYS_MS = 300_000;
+
+export function delegatedDomains(deps: {
+  names: () => string[];
+  keys: (domain: string) => Promise<PublicDkimKey[]>;
+  log: Logger;
+  now?: () => number;
+}): () => Promise<DelegatedDomain[]> {
+  const now = deps.now ?? Date.now;
+  const cache = new Map<string, { at: number; keys: DelegatedDomain["keys"] }>();
+  return async () => {
+    const names = deps.names();
+    const live = new Set(names);
+    for (const name of cache.keys()) if (!live.has(name)) cache.delete(name);
+    const out: DelegatedDomain[] = [];
+    for (const name of names) {
+      let hit = cache.get(name);
+      if (!hit || now() - hit.at >= KEYS_MS) {
+        try {
+          const keys = slotKeys(await deps.keys(name));
+          if (!keys)
+            deps.log.warn("DKIM keys of a delegated domain are not in slots", { domain: name });
+          hit = { at: now(), keys: keys ?? {} };
+          cache.set(name, hit);
+        } catch (err) {
+          if (!hit) throw err;
+        }
+      }
+      out.push({ name, keys: hit.keys });
+    }
+    return out;
+  };
 }

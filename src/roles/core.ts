@@ -13,7 +13,13 @@ import { cachingLookups } from "../delivery/lookups.ts";
 import { shredBodies } from "../delivery/queue.ts";
 import type { DeliveryTransport } from "../delivery/transport.ts";
 import { pruneDmarc } from "../dmarc/store.ts";
-import { allDomains, bounceDomain, findDomain, returnPathReady } from "../domains/domains.ts";
+import {
+  allDomains,
+  bounceDomain,
+  delegatedDomainNames,
+  findDomain,
+  returnPathReady,
+} from "../domains/domains.ts";
 import { pruneIdempotency } from "../emails/idempotency.ts";
 import { pruneConversations } from "../emails/view.ts";
 import { beginAtEnd, exportEvents } from "../eventlog/export.ts";
@@ -40,7 +46,7 @@ import { rotation } from "./core-rotation.ts";
 import { routeMethods } from "./core-routes.ts";
 import { templateMethods } from "./core-templates.ts";
 import { trackingMethods } from "./core-tracking.ts";
-import { zonePublisher } from "./core-zone.ts";
+import { delegatedDomains, zonePublisher } from "./core-zone.ts";
 import { every, onStop, privateDir, ready } from "./runtime.ts";
 import {
   deliveryReportWire,
@@ -219,6 +225,7 @@ export async function runCore(config: Config, log: Logger) {
     currentKey,
     sourceIp: config.sourceIps.map((x) => x.ip),
     inboundHost: config.inboundHostname,
+    nsZone: config.ns?.zone ?? null,
     anomalyFloor: () => config.anomalyFloor,
     sharedBounces: () => config.sharedBounces,
     ips: config.sourceIps,
@@ -261,6 +268,7 @@ export async function runCore(config: Config, log: Logger) {
     dns,
     sourceIp: config.sourceIps.map((x) => x.ip),
     inboundHost: config.inboundHostname,
+    nsZone: config.ns?.zone ?? null,
     rotateDays: () => config.dkimRotateDays,
   });
   const tracking = trackingMethods({
@@ -437,7 +445,11 @@ export async function runCore(config: Config, log: Logger) {
           ttl: config.ns.ttl,
           sourceIps: config.sourceIps.map((x) => x.ip),
           inboundHost: config.inboundHostname,
-          domains: () => [],
+          domains: delegatedDomains({
+            names: () => delegatedDomainNames(db),
+            keys: (domain) => rotate.keys(domain),
+            log,
+          }),
           log,
         })
       : null;

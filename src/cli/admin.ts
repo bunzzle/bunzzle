@@ -6,6 +6,7 @@ import { parseArgs, UsageError } from "./args.ts";
 interface DomainRecordView {
   record: string;
   name: string;
+  type: string;
   value: string;
   required: boolean;
   status: string;
@@ -67,14 +68,14 @@ function printDomain(d: DomainView) {
   console.log(`${d.name}: ${d.status}\n`);
   for (const r of d.records) {
     console.log(
-      `[${mark(r.status)}] ${r.record}${r.required ? "" : " (recommended)"}  TXT  ${r.name}`,
+      `[${mark(r.status)}] ${r.record}${r.required ? "" : " (recommended)"}  ${r.type}  ${r.name}`,
     );
     console.log(`     ${r.value}`);
     if (r.status === "mismatch" && r.found) console.log(`     found instead: ${r.found}`);
   }
   if (d.status !== "verified") {
     console.log(
-      "\nAdd the TXT records above at your DNS provider, then run `bunzzle domains verify` (Bunzzle also checks every few minutes).",
+      "\nAdd the records above at your DNS provider, then run `bunzzle domains verify` (Bunzzle also checks every few minutes).",
     );
   }
 }
@@ -187,11 +188,18 @@ export async function domainsCommand(argv: string[], config: Config) {
     console.log(`[${mark(t.record.status)}] CNAME  ${t.host}  ${t.record.value}`);
     return;
   }
+  if (sub === "add") {
+    if (!name) throw new UsageError("usage: bunzzle domains add DOMAIN [--delegated]");
+    const args = parseArgs(rest, { flags: ["delegated"] });
+    return printDomain(
+      await call<DomainView>(config, "addDomain", {
+        name,
+        ...(args.flags.has("delegated") ? { mode: "delegated" } : {}),
+      }),
+    );
+  }
   if (rest.length > 0) throw new UsageError(`unexpected argument: ${rest[0]}`);
   switch (sub) {
-    case "add":
-      if (!name) throw new UsageError("usage: bunzzle domains add DOMAIN");
-      return printDomain(await call<DomainView>(config, "addDomain", { name }));
     case "verify":
       if (!name) throw new UsageError("usage: bunzzle domains verify DOMAIN");
       return printDomain(await call<DomainView>(config, "verifyDomain", { name }));

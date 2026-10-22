@@ -18,16 +18,18 @@ import {
   scheduledEmail,
 } from "../delivery/queue.ts";
 import { suppressedAtIntake } from "../delivery/simulator.ts";
+import { domainRecords, FIRST_SLOTS, slotKeys } from "../domains/delegated.ts";
 import {
   allDomains,
+  DOMAIN_MODES,
   type Domain,
   type DomainRecord,
   domainPool,
   evaluate,
-  expectedRecords,
   findDomain,
   getDomain,
   listDomains,
+  lookupRecords,
   saveDomain,
   setDomainPool,
 } from "../domains/domains.ts";
@@ -88,6 +90,7 @@ export interface CoreDeps {
   currentKey: () => Promise<EpochPublicKey>;
   sourceIp: string | string[] | null;
   inboundHost?: string | null;
+  nsZone?: string | null;
   anomalyFloor?: () => number;
   sharedBounces?: () => boolean;
   ips?: SourceIp[];
@@ -112,6 +115,7 @@ function domainView(d: Domain) {
   return {
     object: "domain",
     name: d.name,
+    mode: d.mode,
     status: d.status,
     created_at: new Date(d.createdAt).toISOString(),
     checked_at: d.checkedAt === null ? null : new Date(d.checkedAt).toISOString(),
@@ -402,18 +406,15 @@ export function coreMethods(deps: CoreDeps): {
   const verify = async (project: Actor["project"], name: string): Promise<Domain> => {
     const d = getDomain(db, project, name);
     if (!d) throw new RpcError("not-found", `domain ${name} is not registered`);
-    const queries = [
-      ...new Map(
-        d.records.map((r) => [`${r.type}:${r.name}`, { name: r.name, type: r.type }]),
-      ).values(),
-    ];
-    const found = await delivery.call(
-      "dns",
-      { queries },
-      {
-        result: b.record(b.string(), b.array(b.string())),
-        timeoutMs: 30_000,
-      },
+    const found = await lookupRecords(d.records, (queries) =>
+      delivery.call(
+        "dns",
+        { queries },
+        {
+          result: b.record(b.string(), b.array(b.string())),
+          timeoutMs: 30_000,
+        },
+      ),
     );
     const checked = evaluate(d.records, found, deps.sourceIp);
     const next: Domain = { ...d, ...checked, checkedAt: now() };
@@ -615,40 +616,66 @@ export function coreMethods(deps: CoreDeps): {
       })),
     ),
 
-    addDomain: method(b.object({ tokenHash, project, name: b.string().max(253) }), async (p) => {
-      const { project } = caller(p, "full");
-      const name = domainName(p.name);
-      const existing = findDomain(db, name);
-      if (existing && existing.project !== project) {
-        throw new RpcError("domain-taken", `${name} is already added on this server`);
-      }
-      if (existing) return domainView(existing);
-      const keys = await signer.call(
-        "ensureKeys",
-        { domain: name, selectorBase: selectorBase(now()) },
-        { result: publicKeyInfo, timeoutMs: 60_000 },
-      );
-      signerDomains = null;
-      const t = now();
-      const d: Domain = {
+    addDomain: method(
+      b.object({
+        tokenHash,
         project,
-        name,
-        status: "pending",
-        records: expectedRecords(name, keys, deps.sourceIp, deps.inboundHost ?? null),
-        createdAt: t,
-        checkedAt: null,
-      };
-      await writer.run((w) => {
-        if (!findDomain(w, name)) saveDomain(w, d, t);
-      });
-      log.info("domain added", { domain: name });
-      if (deps.publish && (await deps.publish(d.records))) {
-        await verify(project, name).catch(() => {});
-      }
-      const added = getDomain(db, project, name);
-      if (!added) throw new RpcError("domain-taken", `${name} is already added on this server`);
-      return domainView(added);
-    }),
+        name: b.string().max(253),
+        mode: b.enum(DOMAIN_MODES).optional(),
+      }),
+      async (p) => {
+        const { project } = caller(p, "full");
+        const name = domainName(p.name);
+        const mode = p.mode ?? "records";
+        const existing = findDomain(db, name);
+        if (existing && existing.project !== project) {
+          throw new RpcError("domain-taken", `${name} is already added on this server`);
+        }
+        if (existing) return domainView(existing);
+        const zone = deps.nsZone ?? null;
+        if (mode === "delegated" && (!zone || [deps.sourceIp ?? []].flat().length === 0)) {
+          throw new RpcError("invalid", "this server does not serve delegated domains");
+        }
+        const keys = await signer.call(
+          "ensureKeys",
+          { domain: name, selectorBase: mode === "delegated" ? FIRST_SLOTS : selectorBase(now()) },
+          { result: publicKeyInfo, timeoutMs: 60_000 },
+        );
+        signerDomains = null;
+        if (mode === "delegated" && !slotKeys(keys)) {
+          throw new RpcError(
+            "invalid",
+            `${name} already has DKIM keys on this server; add it without delegated mode`,
+          );
+        }
+        const t = now();
+        const d: Domain = {
+          project,
+          name,
+          mode,
+          status: "pending",
+          records: domainRecords(
+            { name, mode },
+            keys,
+            deps.sourceIp,
+            deps.inboundHost ?? null,
+            zone,
+          ),
+          createdAt: t,
+          checkedAt: null,
+        };
+        await writer.run((w) => {
+          if (!findDomain(w, name)) saveDomain(w, d, t);
+        });
+        log.info("domain added", { domain: name });
+        if (deps.publish && (await deps.publish(d.records))) {
+          await verify(project, name).catch(() => {});
+        }
+        const added = getDomain(db, project, name);
+        if (!added) throw new RpcError("domain-taken", `${name} is already added on this server`);
+        return domainView(added);
+      },
+    ),
 
     setDomainPool: method(
       b.object({
