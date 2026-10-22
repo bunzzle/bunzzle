@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
 import { keyFromTxt, selectorsOf, verifyDkim } from "../dkim/verify.ts";
-import { domainRecords } from "../domains/delegated.ts";
+import { domainRecords, SLOT_BASES } from "../domains/delegated.ts";
 import {
   allDomains,
   type Domain,
@@ -146,10 +146,23 @@ export function rotation(deps: RotationDeps) {
     return base;
   };
 
+  const served = async (domain: string, list: KeyInfo[]) => {
+    const names = list.map((k) => `${k.selector}._domainkey.${domain}`);
+    const found = await lookup(names.map((name) => ({ name, type: "TXT" as const })));
+    return list.every((k, i) =>
+      (found[`TXT:${names[i]}`] ?? []).some((t) => keyFromTxt(t)?.key.toBase64() === k.publicKey),
+    );
+  };
+
+  const freeSlot = (list: KeyInfo[]) => {
+    const used = (base: string) => list.some((k) => k.selector.startsWith(base));
+    return SLOT_BASES.find((base) => !used(base)) ?? null;
+  };
+
   const step = async (domain: string, force: boolean): Promise<string> => {
     const d = findDomain(db, domain);
     if (d?.status !== "verified") return "domain not verified";
-    if (d.mode === "delegated") return "rotation is not available for delegated domains";
+    const delegated = d.mode === "delegated";
     let list = await keys(domain);
     const t = now();
     const next = list.filter((k) => k.state === "next");
@@ -162,6 +175,13 @@ export function rotation(deps: RotationDeps) {
     ) {
       const gone = await signer.call("dropRetiring", { domain }, { result: keyInfo });
       await rebuild(domain, await keys(domain));
+      if (delegated) {
+        log.info("old DKIM keys destroyed; their slots are free", {
+          domain,
+          selectors: gone.map((k) => k.selector),
+        });
+        return "old keys removed";
+      }
       await publish(
         expectedRecords(
           domain,
@@ -179,9 +199,11 @@ export function rotation(deps: RotationDeps) {
 
     if (next.length > 0) {
       const rebuilt = await rebuild(domain, list);
-      const ready = rebuilt?.records
-        .filter((r) => r.record === "DKIM_NEXT")
-        .every((r) => r.status === "verified");
+      const ready = delegated
+        ? await served(domain, next)
+        : rebuilt?.records
+            .filter((r) => r.record === "DKIM_NEXT")
+            .every((r) => r.status === "verified");
       if (!ready) return "waiting for the new DKIM records in DNS";
       const check = await selfCheck(domain, "next");
       if (!check.ok) {
@@ -206,11 +228,16 @@ export function rotation(deps: RotationDeps) {
     const age = Math.min(...active.map((k) => k.createdAt ?? Number.POSITIVE_INFINITY));
     const due = Number.isFinite(age) && t - age >= (deps.rotateDays() - OVERLAP_DAYS) * DAY;
     if (!force && !due) return "keys are current";
-    list = await signer.call(
-      "rotateStart",
-      { domain, selectorBase: selectorBase(list) },
-      { result: keyInfo },
-    );
+    const base = delegated ? freeSlot(list) : selectorBase(list);
+    if (!base) return "waiting for the old keys to leave their slot";
+    list = await signer.call("rotateStart", { domain, selectorBase: base }, { result: keyInfo });
+    if (delegated) {
+      log.info("new DKIM keys created in the free slot", {
+        domain,
+        selectors: list.filter((k) => k.state === "next").map((k) => k.selector),
+      });
+      return "new keys created";
+    }
     const rebuilt = await rebuild(domain, list);
     await publish(rebuilt?.records.filter((r) => r.record === "DKIM_NEXT") ?? []);
     log.info("new DKIM keys created; publish their records to finish rotation", {

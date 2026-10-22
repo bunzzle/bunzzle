@@ -12,7 +12,8 @@ import {
 
 export const DKIM_SLOTS = ["bza-r", "bzb-r", "bza-e", "bzb-e"] as const;
 export type DkimSlot = (typeof DKIM_SLOTS)[number];
-export const FIRST_SLOTS = "bza-";
+export const SLOT_BASES = ["bza-", "bzb-"] as const;
+export const FIRST_SLOTS = SLOT_BASES[0];
 
 const isSlot = (selector: string): selector is DkimSlot =>
   (DKIM_SLOTS as readonly string[]).includes(selector);
