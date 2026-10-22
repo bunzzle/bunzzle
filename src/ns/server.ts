@@ -128,25 +128,29 @@ export class NsServer {
   }
 
   async listen(hostname: string, port: number): Promise<number> {
-    const sock = await Bun.udpSocket({
-      hostname,
-      port,
-      binaryType: "uint8array",
-      socket: {
-        data: (s, data, rport, address) => {
-          const out = this.answerUdp(data, address);
-          if (out) s.send(out, rport, address);
+    for (let attempt = 1; ; attempt++) {
+      const sock = await Bun.udpSocket({
+        hostname,
+        port,
+        binaryType: "uint8array",
+        socket: {
+          data: (s, data, rport, address) => {
+            const out = this.answerUdp(data, address);
+            if (out) s.send(out, rport, address);
+          },
         },
-      },
-    });
-    this.#udp.push(sock);
-    try {
-      this.#listeners.push(this.#listenTcp(hostname, sock.port));
-    } catch (err) {
-      sock.close();
-      throw err;
+      });
+      try {
+        this.#listeners.push(this.#listenTcp(hostname, sock.port));
+      } catch (err) {
+        sock.close();
+        const taken = (err as { code?: string }).code === "EADDRINUSE";
+        if (port === 0 && taken && attempt < 20) continue;
+        throw err;
+      }
+      this.#udp.push(sock);
+      return sock.port;
     }
-    return sock.port;
   }
 
   stop() {
