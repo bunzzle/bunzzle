@@ -8,11 +8,15 @@ import {
 
 export type DkimAlgorithm = "rsa-sha256" | "ed25519-sha256";
 
+export interface RemoteKey {
+  sign(input: Uint8Array, algorithm: DkimAlgorithm): Promise<Uint8Array>;
+}
+
 export interface DkimKey {
   domain: string;
   selector: string;
   algorithm: DkimAlgorithm;
-  privateKey: CryptoKey;
+  privateKey: CryptoKey | RemoteKey;
 }
 
 export const SIGNED_HEADERS = [
@@ -66,14 +70,14 @@ export function headerList(headers: HeaderField[]): string[] {
 
 export async function signData(key: DkimKey, data: string): Promise<string> {
   const bytes = enc.encode(data);
-  let sig: ArrayBuffer;
-  if (key.algorithm === "rsa-sha256") {
-    sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key.privateKey, bytes);
-  } else {
-    const digest = await crypto.subtle.digest("SHA-256", bytes);
-    sig = await crypto.subtle.sign("Ed25519", key.privateKey, digest);
-  }
-  return new Uint8Array(sig).toBase64();
+  const input =
+    key.algorithm === "rsa-sha256"
+      ? bytes
+      : new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  const k = key.privateKey;
+  if ("sign" in k) return (await k.sign(input, key.algorithm)).toBase64();
+  const name = key.algorithm === "rsa-sha256" ? "RSASSA-PKCS1-v1_5" : "Ed25519";
+  return new Uint8Array(await crypto.subtle.sign(name, k, input)).toBase64();
 }
 
 function fold(value: string): string {

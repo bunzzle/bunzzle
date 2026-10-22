@@ -15,6 +15,8 @@ const BY_ROLE: Record<Role, string[]> = {
   signer: [
     "BUNZZLE_KEYS_DIR",
     "BUNZZLE_DKIM_KEY_FILE",
+    "BUNZZLE_DKIM_STORE_SOCKET",
+    "BUNZZLE_DKIM_STORE_MOUNT",
     "BUNZZLE_RETENTION_DAYS",
     "BUNZZLE_PUBLIC_URL",
   ],

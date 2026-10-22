@@ -40,6 +40,8 @@ After editing the file, `sudo systemctl reload 'bunzzle-*'` (or `kill -HUP` on `
 | `BUNZZLE_MASTER_KEY` | | The master key itself, if a file is not possible. |
 | `BUNZZLE_KEYS_DIR` | `./keys` | The signer's encrypted key store and DKIM key files. |
 | `BUNZZLE_DKIM_KEY_FILE` | | One more DKIM key file to load, next to the ones in `BUNZZLE_KEYS_DIR`. |
+| `BUNZZLE_DKIM_STORE_SOCKET` | | Unix socket of an OpenBao or Vault agent with auto-auth and the transit engine. New DKIM keys, including rotated ones, are then created in the store as keys that cannot be exported, and every signature is made there. The key files keep only the key names and public keys. The agent logs in; Bunzzle holds no store token. |
+| `BUNZZLE_DKIM_STORE_MOUNT` | `transit` | Path where the transit engine is mounted. |
 | `BUNZZLE_DKIM_ROTATE_DAYS` | `90` | DKIM keys rotate after this many days. 7 to 3650. |
 | `BUNZZLE_RETENTION_DAYS` | `30` | Email bodies become unreadable after this many days, backups included. 7 to 3650. |
 | `BUNZZLE_MIN_FREE_MB` | `1024` | Below this much free space for `BUNZZLE_DATA_DIR`, new email is refused with a temporary error (HTTP 503 with `Retry-After`, SMTP 452 4.3.1) while queued email keeps being delivered. `0` turns the check off. |

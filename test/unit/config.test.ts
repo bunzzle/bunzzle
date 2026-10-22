@@ -13,6 +13,7 @@ describe("loadConfig", () => {
       sourceIp: null,
       dnsServers: [],
       dkimKeyFile: null,
+      dkimStore: null,
       ipv6: false,
       smtpPort: 25,
       allowPrivateDestinations: false,
