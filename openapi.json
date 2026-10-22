@@ -4420,6 +4420,12 @@
                     "null"
                   ]
                 },
+                "new_recipients_per_day": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
                 "ip_pool": {
                   "type": [
                     "string",
@@ -4447,6 +4453,7 @@
                 "name",
                 "per_hour",
                 "per_day",
+                "new_recipients_per_day",
                 "ip_pool",
                 "suspended",
                 "created_at",
@@ -4497,6 +4504,12 @@
               "null"
             ]
           },
+          "new_recipients_per_day": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "ip_pool": {
             "type": [
               "string",
@@ -4524,6 +4537,7 @@
           "name",
           "per_hour",
           "per_day",
+          "new_recipients_per_day",
           "ip_pool",
           "suspended",
           "created_at",
@@ -4547,6 +4561,14 @@
             "maximum": 100000000
           },
           "per_day": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 100000000
+          },
+          "new_recipients_per_day": {
             "type": [
               "integer",
               "null"

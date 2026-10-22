@@ -29,6 +29,7 @@ import domainMode from "./0028_domain_mode.sql" with { type: "text" };
 import domainSlotKeys from "./0029_domain_slot_keys.sql" with { type: "text" };
 import webhookAttempts from "./0030_webhook_attempts.sql" with { type: "text" };
 import poolRules from "./0031_pool_rules.sql" with { type: "text" };
+import projectRecipients from "./0032_project_recipients.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -68,4 +69,5 @@ export const migrations: readonly Migration[] = [
   { version: 29, name: "domain slot keys", sql: domainSlotKeys },
   { version: 30, name: "webhook attempts and resends", sql: webhookAttempts },
   { version: 31, name: "pool rules", sql: poolRules },
+  { version: 32, name: "project recipients", sql: projectRecipients },
 ];

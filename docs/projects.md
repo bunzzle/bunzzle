@@ -83,7 +83,24 @@ Limits count recipients that will be sent to: suppressed addresses and email sen
 
 Email over a limit is refused when it is sent, never held later: the API answers 429 `project_limit` with a `Retry-After` header in seconds, and SMTP submission answers `451 4.7.1`. A batch is accepted whole or not at all. Refused email does not count. An email with more recipients than the limit itself answers 422.
 
-When a project reaches 90 % of a limit, its webhooks get one `project.limit_approaching` event per hour or day, with `window`, `limit` and `used`.
+When a project reaches 90 % of a limit, its webhooks get one `project.limit_approaching` event per window, with `setting` (`per_hour`, `per_day` or `new_recipients_per_day`), `window`, `limit` and `used`. When a limit refuses email, the admin event log gets `project.limit_reached` with the `setting`, at most once per window.
+
+## First-time recipients
+
+```sh
+sudo bunzzle projects limits shop --new-recipients-per-day 200
+sudo bunzzle projects limits shop --new-recipients-per-day none
+```
+
+Or `PATCH /projects/shop` with `{"new_recipients_per_day": 200}`; `null` removes the limit. New projects have no limit. Set one for projects you do not fully trust: a leaked key or a bought list sends to many addresses the project never wrote to, long before it reaches its daily send limit.
+
+A first-time recipient is an address this project has not had an email accepted for in the last 90 days. Each project has its own list, so an address known to one project is new to another. Upper and lower case are the same address. Suppressed addresses, simulator addresses and email sent with a test key are not counted. An address that appears twice in one request counts once.
+
+The day is the current hour and the 23 before it. Over the limit, the API answers 429 `project_limit` with a `Retry-After` header and SMTP submission answers `451 4.7.1`, as for the other limits; the message names the new-recipient limit. An email with more new recipients than the limit itself answers 422.
+
+The list holds a keyed hash of each address, not the address. The key is made by the signer once, sealed with the master key in `recipients.json` in the keys directory, and backed up with the other keys. If it is lost, counting starts over and every address is new again. When Bunzzle is upgraded, the list is filled once from the recipients still in the database.
+
+`/metrics` reports `bunzzle_project_new_recipients{project}` for projects with this limit.
 
 ## Suspending a project
 

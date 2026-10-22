@@ -722,6 +722,7 @@ interface ProjectView {
   name: string;
   per_hour: number | null;
   per_day: number | null;
+  new_recipients_per_day: number | null;
   ip_pool: string | null;
   suspended: boolean;
   created_at: string;
@@ -729,10 +730,11 @@ interface ProjectView {
 
 function printProject(p: ProjectView) {
   console.log(`${p.name}  (${p.id})${p.suspended ? "  SUSPENDED" : ""}`);
-  console.log(`  per hour: ${p.per_hour ?? "no limit"}`);
-  console.log(`  per day:  ${p.per_day ?? "no limit"}`);
-  console.log(`  IP pool:  ${p.ip_pool ?? "default"}`);
-  console.log(`  created:  ${p.created_at}`);
+  console.log(`  per hour:           ${p.per_hour ?? "no limit"}`);
+  console.log(`  per day:            ${p.per_day ?? "no limit"}`);
+  console.log(`  new recipients/day: ${p.new_recipients_per_day ?? "no limit"}`);
+  console.log(`  IP pool:            ${p.ip_pool ?? "default"}`);
+  console.log(`  created:            ${p.created_at}`);
 }
 
 const limitArg = (v: string | undefined, flag: string): number | null | undefined => {
@@ -775,17 +777,24 @@ export async function projectsCommand(argv: string[], config: Config) {
       const [name, ...flags] = rest;
       if (!name)
         throw new UsageError(
-          "usage: bunzzle projects limits NAME [--per-hour N|none] [--per-day N|none] [--pool POOL|none]",
+          "usage: bunzzle projects limits NAME [--per-hour N|none] [--per-day N|none] [--new-recipients-per-day N|none] [--pool POOL|none]",
         );
-      const args = parseArgs(flags, { strings: ["per-hour", "per-day", "pool"] });
+      const args = parseArgs(flags, {
+        strings: ["per-hour", "per-day", "new-recipients-per-day", "pool"],
+      });
       const perHour = limitArg(args.strings.get("per-hour"), "per-hour");
       const perDay = limitArg(args.strings.get("per-day"), "per-day");
+      const newRecipientsPerDay = limitArg(
+        args.strings.get("new-recipients-per-day"),
+        "new-recipients-per-day",
+      );
       const pool = args.strings.get("pool");
       printProject(
         await call<ProjectView>(config, "updateProject", {
           id: name,
           ...(perHour !== undefined ? { perHour } : {}),
           ...(perDay !== undefined ? { perDay } : {}),
+          ...(newRecipientsPerDay !== undefined ? { newRecipientsPerDay } : {}),
           ...(pool !== undefined ? { pool: pool === "none" ? null : pool } : {}),
         }),
       );

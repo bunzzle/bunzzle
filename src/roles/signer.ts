@@ -2,6 +2,7 @@ import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { masterKeyFrom } from "../crypto/master.ts";
 import { method, RpcError, serveRpc } from "../ipc/rpc.ts";
+import { loadRecipientKey } from "../signer/recipient-key.ts";
 import { dkimKeyFilesIn, Signer, SignerError } from "../signer/signer.ts";
 import { b } from "../validate/schema.ts";
 import { every, onStop, privateDir, ready } from "./runtime.ts";
@@ -23,6 +24,7 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
     dkimDir: `${config.keysDir}/dkim`,
     publicUrl: config.publicUrl,
   });
+  const recipientKey = await loadRecipientKey(`${config.keysDir}/recipients.json`, master);
 
   const shred = async () => {
     const gone = await signer.shred(config.retentionDays);
@@ -36,6 +38,7 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
       return { epoch: k.epoch, publicKey: k.publicKey.toBase64() };
     }),
     domains: method(b.object({}), () => signer.domains()),
+    recipientKey: method(b.object({}), () => recipientKey.toBase64()),
     ensureKeys: method(
       b.object({
         domain: b.string().regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/),
