@@ -21,7 +21,7 @@ import { type RpcClient, RpcError } from "../ipc/rpc.ts";
 import { b } from "../validate/schema.ts";
 
 const DAY = 86_400_000;
-const OVERLAP_DAYS = 7;
+export const OVERLAP_DAYS = 7;
 
 const keyInfo = b.array(
   b.object({

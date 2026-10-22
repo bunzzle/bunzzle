@@ -4,7 +4,7 @@ import { cachingResolver } from "../../src/dns/cache.ts";
 import { forbiddenReason, parseIPv6 } from "../../src/dns/ip.ts";
 import { lookupDestination } from "../../src/dns/mx.ts";
 import { createResolver, DnsError, parseServer, type Resolver } from "../../src/dns/resolver.ts";
-import { decodeMessage, normalizeName } from "../../src/dns/wire.ts";
+import { decodeMessage, nameToWire, normalizeName } from "../../src/dns/wire.ts";
 import { providerOf, siteOf } from "../../src/routing/providers.ts";
 import { type FakeDns, startFakeDns } from "../support/fake-dns.ts";
 
@@ -303,4 +303,29 @@ describe("resolver failures", () => {
     });
     await expect(r.query("example.test", "A")).rejects.toBeInstanceOf(DnsError);
   });
+});
+
+test("the additional section is read; a broken one is left out", () => {
+  const q = nameToWire("dz.mail.example.net");
+  const glue = nameToWire("ns1.mail.example.net");
+  const rec = new Uint8Array(glue.length + 14);
+  rec.set(glue);
+  const rv = new DataView(rec.buffer, glue.length);
+  rv.setUint16(0, 1);
+  rv.setUint16(2, 1);
+  rv.setUint32(4, 300);
+  rv.setUint16(8, 4);
+  rec.set([192, 0, 2, 1], glue.length + 10);
+  const head = new Uint8Array(12);
+  const hv = new DataView(head.buffer);
+  hv.setUint16(0, 7);
+  hv.setUint16(2, 0x8000);
+  hv.setUint16(4, 1);
+  hv.setUint16(10, 1);
+  const packet = new Uint8Array([...head, ...q, 0, 2, 0, 1, ...rec]);
+  const msg = decodeMessage(packet);
+  expect(msg.additional?.map((r) => [r.name, r.type === "A" && r.address])).toEqual([
+    ["ns1.mail.example.net", "192.0.2.1"],
+  ]);
+  expect(decodeMessage(packet.subarray(0, packet.length - 3)).additional).toEqual([]);
 });

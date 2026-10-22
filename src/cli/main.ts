@@ -26,6 +26,7 @@ import {
   hooksCommand,
   ipsCommand,
   keysCommand,
+  nsCheckCommand,
   pathsCommand,
   poolsCommand,
   projectsCommand,
@@ -62,6 +63,7 @@ Usage:
   bunzzle ips         source IPs, reverse DNS and warm-up progress (needs \`serve\` running)
   bunzzle doctor      check configuration, IPs, every DNS record and DKIM against live DNS
   bunzzle dns-test    DOMAIN: publish a test record through the DNS provider, check it, remove it
+  bunzzle ns-check    the delegated zone: each listener over UDP and TCP, the delegation at the parent, DKIM slots (needs \`serve\` running)
   bunzzle postmaster  auth: sign in once to read Gmail spam rates from Postmaster Tools
   bunzzle holds       bulk mail paused by the reputation or anomaly guard; release ID (needs \`serve\` running)
   bunzzle suppressions list|add|remove suppressed addresses (needs \`serve\` running)
@@ -236,6 +238,9 @@ async function main(input: string[]) {
       return pathsCommand(argv.slice(1), loadConfig());
     case "doctor":
       process.exitCode = await doctorCommand(argv.slice(1), loadConfig());
+      return;
+    case "ns-check":
+      process.exitCode = await nsCheckCommand(argv.slice(1), loadConfig());
       return;
     case "dns-test":
       process.exitCode = await dnsTestCommand(argv.slice(1), loadConfig());

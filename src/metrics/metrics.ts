@@ -3,7 +3,7 @@ import type { ProjectId } from "../accounts/projects.ts";
 import { countByState } from "../core/jobs.ts";
 import type { StorageState } from "../core/storage.ts";
 import { PROJECT_HOLDS } from "../guards/guards.ts";
-import type { NsTargetView } from "../roles/core-ns.ts";
+import type { DelegationView, NsTargetView } from "../roles/core-ns.ts";
 import type { PathView } from "../shaping/shaper.ts";
 import { VERSION } from "../version.ts";
 
@@ -49,6 +49,7 @@ export function collect(
   startedAt: number,
   storage?: StorageState,
   ns?: NsTargetView[] | null,
+  delegation?: DelegationView | null,
 ): Family[] {
   const jobs = countByState(db, project);
   const recipients = db
@@ -241,6 +242,22 @@ export function collect(
             type: "gauge" as const,
             help: "Seconds the ns listener has been behind the zone serial core pushed.",
             samples: ns.map((v) => ({ labels: { ns: v.ns }, value: v.lagSeconds })),
+          },
+        ]
+      : []),
+    ...(delegation
+      ? [
+          {
+            name: "bunzzle_ns_delegation_ok",
+            type: "gauge" as const,
+            help: "0 from the ns.delegation_mismatch event until the ns.delegation_ok event.",
+            samples: [{ labels: {}, value: delegation.mismatched ? 0 : 1 }],
+          },
+          {
+            name: "bunzzle_ns_delegation_problems",
+            type: "gauge" as const,
+            help: "Differences between the delegation at the parent and the settings at the last check.",
+            samples: [{ labels: {}, value: delegation.problems.length }],
           },
         ]
       : []),
