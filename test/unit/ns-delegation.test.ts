@@ -111,7 +111,7 @@ test("each difference from the settings is one problem", () => {
   );
 });
 
-test("a mismatch raises one event and is checked hourly until fixed, then daily", async () => {
+test("a mismatch raises one event, is checked hourly, and is ok after two good checks", async () => {
   let t = 0;
   let ns = ["ns1.mail.example.net"];
   const events: string[] = [];
@@ -137,16 +137,19 @@ test("a mismatch raises one event and is checked hourly until fixed, then daily"
     log: { error: () => {}, info: () => {} } as unknown as Logger,
     now: () => t,
   });
+  const hour = 3_600_000;
   await check.poll();
   await check.poll();
   expect(events).toEqual(["ns.delegation_mismatch"]);
-  t += 3_600_000;
-  ns = NAMES;
-  await check.poll();
+  for (const good of [true, false, true, false, true, true]) {
+    t += hour;
+    ns = good ? NAMES : ["ns1.mail.example.net"];
+    await check.poll();
+  }
   expect(events).toEqual(["ns.delegation_mismatch", "ns.delegation_ok"]);
-  t += 3_600_000;
+  t += hour;
   await check.poll();
-  t += 86_400_000 - 3_600_000;
+  t += 86_400_000 - hour;
   await check.poll();
-  expect(lookups).toEqual([0, 3_600_000, 3_600_000 + 86_400_000]);
+  expect(lookups).toEqual([0, 1, 2, 3, 4, 5, 6, 30].map((h) => h * hour));
 });

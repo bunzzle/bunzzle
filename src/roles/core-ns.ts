@@ -154,6 +154,8 @@ export interface DelegationCheckDeps {
 export function delegationCheck(deps: DelegationCheckDeps) {
   const now = deps.now ?? Date.now;
   let last: DelegationView | null = null;
+  let mismatched = false;
+  let goodRuns = 0;
 
   const check = async (): Promise<DelegationView> => {
     const at = now();
@@ -174,13 +176,15 @@ export function delegationCheck(deps: DelegationCheckDeps) {
       addresses: d.addresses,
       problems: delegationProblems(d, deps.zone, deps.names, deps.listen),
     };
-    const before = last;
     last = view;
+    goodRuns = view.problems.length === 0 ? goodRuns + 1 : 0;
     const data = { zone: deps.zone, parent: view.parent, problems: view.problems };
-    if (view.problems.length > 0 && (before === null || before.problems.length === 0)) {
+    if (view.problems.length > 0 && !mismatched) {
+      mismatched = true;
       deps.log.error("the NS delegation does not match the settings", data);
       await deps.raise("ns.delegation_mismatch", data);
-    } else if (view.problems.length === 0 && before && before.problems.length > 0) {
+    } else if (mismatched && goodRuns >= 2) {
+      mismatched = false;
       deps.log.info("the NS delegation matches the settings again", data);
       await deps.raise("ns.delegation_ok", data);
     }
@@ -189,7 +193,7 @@ export function delegationCheck(deps: DelegationCheckDeps) {
 
   const poll = async () => {
     if (!last) return void (await check());
-    const wait = last.problems.length > 0 ? DELEGATION_RETRY_MS : DAY_MS;
+    const wait = mismatched ? DELEGATION_RETRY_MS : DAY_MS;
     if (now() - last.checkedAt >= wait) await check();
   };
 
