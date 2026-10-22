@@ -355,6 +355,8 @@ export const webhookResend = b.object({
   resent: b.number().int().describe("Deliveries put back in the queue so far"),
   created_at: time,
   updated_at: time,
+});
+
 export const poolRule = b.object({
   object: b.literal("pool_rule"),
   id,

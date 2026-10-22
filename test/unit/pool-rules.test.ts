@@ -79,14 +79,14 @@ test("relay is a server target; project rules are kept apart", () => {
   const relay = createPoolRule(db, null, "apple", "relay", T0);
   expect(choose(SHOP, "icloud.com", "apple")).toEqual({
     relay: true,
-    rule: relay?.id,
+    rule: relay?.id as string,
     skipped: [],
   });
   expect(choose(SHOP, "icloud.com", "apple", "main")).toMatchObject({ pool: "main" });
   expect(createPoolRule(db, null, "apple", "warm", T0)).toBeNull();
   const own = createPoolRule(db, SHOP, "apple", "shop-own", T0);
-  expect(listPoolRules(db, SHOP).map((r) => r.id)).toEqual([own?.id]);
-  expect(listPoolRules(db, null).map((r) => r.id)).toEqual([relay?.id]);
+  expect(listPoolRules(db, SHOP).map((r) => r.id)).toEqual([own?.id as string]);
+  expect(listPoolRules(db, null).map((r) => r.id)).toEqual([relay?.id as string]);
   expect(deletePoolRule(db, DEFAULT_PROJECT, own?.id ?? "")).toBe(false);
   expect(deletePoolRule(db, SHOP, own?.id ?? "")).toBe(true);
 });
