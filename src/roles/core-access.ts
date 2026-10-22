@@ -42,6 +42,7 @@ export const API_METHODS = [
   "resume",
   "retryRoute",
   "rotateDomain",
+  "setDomainMode",
   "setDomainPool",
   "setDomainTracking",
   "stats",

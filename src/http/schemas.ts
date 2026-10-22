@@ -13,6 +13,7 @@ export const createDomainSchema = b.object({
 });
 
 export const updateDomainSchema = b.object({
+  mode: b.enum(["records", "delegated"]).optional(),
   ip_pool: b
     .string()
     .regex(/^[a-z0-9-]{1,32}$/)

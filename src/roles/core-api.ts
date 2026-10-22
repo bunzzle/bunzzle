@@ -18,13 +18,13 @@ import {
   scheduledEmail,
 } from "../delivery/queue.ts";
 import { suppressedAtIntake } from "../delivery/simulator.ts";
-import { domainRecords, FIRST_SLOTS, labelClash, slotKeys } from "../domains/delegated.ts";
+import { domainRecords, FIRST_SLOTS, isSlot, labelClash } from "../domains/delegated.ts";
 import {
   allDomains,
   DOMAIN_MODES,
   type Domain,
+  type DomainMode,
   type DomainRecord,
-  delegatedDomainNames,
   domainPool,
   evaluate,
   findDomain,
@@ -33,6 +33,7 @@ import {
   lookupRecords,
   saveDomain,
   setDomainPool,
+  zoneDomainNames,
 } from "../domains/domains.ts";
 import { findIdempotent, rememberIdempotent } from "../emails/idempotency.ts";
 import { METRICS, searchEmails, statsFor } from "../emails/search.ts";
@@ -99,6 +100,7 @@ export interface CoreDeps {
   scan?: (data: string, from: string, recipients: string[]) => Promise<void>;
   hasCheckHooks?: () => boolean;
   publish?: (records: DomainRecord[]) => Promise<boolean>;
+  switchMode?: (name: string, mode: DomainMode) => Promise<Domain>;
   paths?: () => PathView[];
   storage?: () => StorageState;
   now?: () => number;
@@ -640,7 +642,7 @@ export function coreMethods(deps: CoreDeps): {
         if (mode === "delegated" && (!zone || [deps.sourceIp ?? []].flat().length === 0)) {
           throw new RpcError("invalid", "this server does not serve delegated domains");
         }
-        const clash = mode === "delegated" ? labelClash(name, delegatedDomainNames(db)) : null;
+        const clash = mode === "delegated" ? labelClash(name, zoneDomainNames(db)) : null;
         if (clash) {
           throw new RpcError("domain-taken", `${name} shares its zone name with ${clash}`);
         }
@@ -650,7 +652,7 @@ export function coreMethods(deps: CoreDeps): {
           { result: publicKeyInfo, timeoutMs: 60_000 },
         );
         signerDomains = null;
-        if (mode === "delegated" && !slotKeys(keys)) {
+        if (mode === "delegated" && !keys.every((k) => isSlot(k.selector))) {
           throw new RpcError(
             "invalid",
             `${name} already has DKIM keys on this server; add it without delegated mode`,
@@ -700,6 +702,20 @@ export function coreMethods(deps: CoreDeps): {
           throw new RpcError("not-found", "domain not found");
         }
         return { name, ip_pool: p.pool };
+      },
+    ),
+
+    setDomainMode: method(
+      b.object({ tokenHash, project, name: b.string().max(253), mode: b.enum(DOMAIN_MODES) }),
+      async (p) => {
+        const { project } = caller(p, "full");
+        const name = domainName(p.name);
+        if (!getDomain(db, project, name)) throw new RpcError("not-found", "domain not found");
+        if (p.mode === "delegated" && (!deps.nsZone || [deps.sourceIp ?? []].flat().length === 0)) {
+          throw new RpcError("invalid", "this server does not serve delegated domains");
+        }
+        if (!deps.switchMode) throw new RpcError("invalid", "this server cannot switch modes");
+        return domainView(await deps.switchMode(name, p.mode));
       },
     ),
 

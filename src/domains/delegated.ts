@@ -15,15 +15,12 @@ export type DkimSlot = (typeof DKIM_SLOTS)[number];
 export const SLOT_BASES = ["bza-", "bzb-"] as const;
 export const FIRST_SLOTS = SLOT_BASES[0];
 
-const isSlot = (selector: string): selector is DkimSlot =>
+export const isSlot = (selector: string): selector is DkimSlot =>
   (DKIM_SLOTS as readonly string[]).includes(selector);
 
-export function slotKeys(keys: PublicDkimKey[]): DelegatedDomain["keys"] | null {
+export function slotKeys(keys: PublicDkimKey[]): DelegatedDomain["keys"] {
   const out: DelegatedDomain["keys"] = {};
-  for (const k of keys) {
-    if (!isSlot(k.selector)) return null;
-    out[k.selector] = k;
-  }
+  for (const k of keys) if (isSlot(k.selector)) out[k.selector] = k;
   return out;
 }
 
@@ -141,7 +138,28 @@ export function domainRecords(
   inboundHost: string | null,
   zone: string | null,
 ): DomainRecord[] {
-  return domain.mode === "delegated" && zone
-    ? delegatedRecords(domain.name, zone, inboundHost)
-    : expectedRecords(domain.name, keys, sourceIp, inboundHost);
+  if (!zone) return expectedRecords(domain.name, keys, sourceIp, inboundHost);
+  const dated = keys.filter((k) => !isSlot(k.selector));
+  const signs = (list: PublicDkimKey[]) => list.some((k) => (k.state ?? "active") === "active");
+  if (domain.mode === "delegated") {
+    if (signs(dated)) {
+      return [
+        ...expectedRecords(domain.name, dated, sourceIp, inboundHost),
+        ...delegatedRecords(domain.name, zone, null)
+          .filter((r) => r.record === "DKIM")
+          .map((r) => ({ ...r, required: false })),
+      ];
+    }
+    return [
+      ...delegatedRecords(domain.name, zone, inboundHost),
+      ...expectedRecords(domain.name, dated, sourceIp).filter((r) => r.record === "DKIM_RETIRING"),
+    ];
+  }
+  if (signs(keys.filter((k) => isSlot(k.selector)))) {
+    return [
+      ...delegatedRecords(domain.name, zone, inboundHost),
+      ...expectedRecords(domain.name, dated, sourceIp).filter((r) => r.record === "DKIM_NEXT"),
+    ];
+  }
+  return expectedRecords(domain.name, keys, sourceIp, inboundHost);
 }

@@ -353,11 +353,22 @@ export function listDomains(db: Database, project: ProjectId): Domain[] {
     .map(fromRow);
 }
 
-export function delegatedDomainNames(db: Database): string[] {
+export function zoneDomainNames(db: Database): string[] {
   return db
-    .query<{ name: string }, []>("SELECT name FROM domains WHERE mode = 'delegated' ORDER BY name")
+    .query<{ name: string }, []>(
+      "SELECT name FROM domains WHERE mode = 'delegated' OR slot_keys = 1 ORDER BY name",
+    )
     .all()
     .map((r) => r.name);
+}
+
+export function setDomainMode(db: Database, name: string, mode: DomainMode, now: number): void {
+  domainCache(db).delete(name);
+  db.query("UPDATE domains SET mode = ?, updated_at = ? WHERE name = ?").run(mode, now, name);
+}
+
+export function setSlotKeys(db: Database, name: string, on: boolean): void {
+  db.query("UPDATE domains SET slot_keys = ? WHERE name = ?").run(on ? 1 : 0, name);
 }
 
 export function isVerified(db: Database, name: string): boolean {

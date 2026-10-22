@@ -140,6 +140,13 @@ export async function domainsCommand(argv: string[], config: Config) {
     );
     return;
   }
+  if (sub === "mode") {
+    const [mode] = rest;
+    if (!name || (mode !== "records" && mode !== "delegated") || rest.length > 1) {
+      throw new UsageError("usage: bunzzle domains mode DOMAIN records|delegated");
+    }
+    return printDomain(await call<DomainView>(config, "setDomainMode", { name, mode }));
+  }
   if (sub === "move") {
     const [to] = rest;
     if (!name || !to || rest.length > 1) {
@@ -220,7 +227,7 @@ export async function domainsCommand(argv: string[], config: Config) {
       return;
     }
     default:
-      throw new UsageError("usage: bunzzle domains add|verify|show|rotate|list|reports|move");
+      throw new UsageError("usage: bunzzle domains add|verify|show|rotate|mode|list|reports|move");
   }
 }
 

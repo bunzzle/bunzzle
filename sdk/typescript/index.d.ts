@@ -318,6 +318,7 @@ export type DomainDetail = {
 };
 
 export type UpdateDomain = {
+  mode?: "records" | "delegated";
   ip_pool?: string | null;
   tracking?: {
     host: string;

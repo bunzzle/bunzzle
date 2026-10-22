@@ -16,9 +16,9 @@ import { pruneDmarc } from "../dmarc/store.ts";
 import {
   allDomains,
   bounceDomain,
-  delegatedDomainNames,
   findDomain,
   returnPathReady,
+  zoneDomainNames,
 } from "../domains/domains.ts";
 import { pruneIdempotency } from "../emails/idempotency.ts";
 import { pruneConversations } from "../emails/view.ts";
@@ -232,6 +232,7 @@ export async function runCore(config: Config, log: Logger) {
     paths: () => shaper.views(),
     storage: () => storage.state(),
     publish: (records) => rotate.publish(records),
+    switchMode: (name, mode) => rotate.switchMode(name, mode),
     tracking: (domain) => tracking.view(domain),
     scan: hooks.scan,
     hasCheckHooks: hooks.hasCheckHooks,
@@ -446,9 +447,8 @@ export async function runCore(config: Config, log: Logger) {
           sourceIps: config.sourceIps.map((x) => x.ip),
           inboundHost: config.inboundHostname,
           domains: delegatedDomains({
-            names: () => delegatedDomainNames(db),
+            names: () => zoneDomainNames(db),
             keys: (domain) => rotate.keys(domain),
-            log,
           }),
           log,
         })
