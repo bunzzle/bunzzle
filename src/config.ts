@@ -29,6 +29,11 @@ const schema = b.object({
   BUNZZLE_SOURCE_IP: optional,
   BUNZZLE_DNS_SERVERS: optional,
   BUNZZLE_DKIM_KEY_FILE: optional,
+  BUNZZLE_DKIM_STORE_SOCKET: optional,
+  BUNZZLE_DKIM_STORE_MOUNT: b
+    .string()
+    .regex(/^[A-Za-z0-9_-]+(\/[A-Za-z0-9_-]+)*$/)
+    .default("transit"),
   BUNZZLE_IPV6: bool,
   BUNZZLE_SMTP_PORT: b.coerce.number().int().min(1).max(65535).default(25),
   BUNZZLE_ALLOW_PRIVATE_DESTINATIONS: bool,
@@ -166,6 +171,7 @@ export interface Config {
   sourceIp: string | null;
   dnsServers: string[];
   dkimKeyFile: string | null;
+  dkimStore: { socket: string; mount: string } | null;
   ipv6: boolean;
   smtpPort: number;
   allowPrivateDestinations: boolean;
@@ -459,6 +465,9 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
       .map((s) => s.trim())
       .filter(Boolean),
     dkimKeyFile: c.BUNZZLE_DKIM_KEY_FILE,
+    dkimStore: c.BUNZZLE_DKIM_STORE_SOCKET
+      ? { socket: c.BUNZZLE_DKIM_STORE_SOCKET, mount: c.BUNZZLE_DKIM_STORE_MOUNT }
+      : null,
     ipv6: c.BUNZZLE_IPV6,
     smtpPort: c.BUNZZLE_SMTP_PORT,
     allowPrivateDestinations: c.BUNZZLE_ALLOW_PRIVATE_DESTINATIONS,

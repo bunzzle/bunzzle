@@ -11,6 +11,7 @@ import {
   sealKeyFile,
 } from "../dkim/keys.ts";
 import { type DkimKey, signMessage } from "../dkim/sign.ts";
+import type { KeyStore } from "../dkim/store.ts";
 import { AddressError } from "../mime/address.ts";
 import { senderDomainOf } from "../mime/from.ts";
 import { Keystore } from "./keystore.ts";
@@ -41,6 +42,7 @@ export interface SignerOptions {
   keystorePath: string;
   dkimKeyFiles: string[];
   dkimDir?: string;
+  store?: KeyStore | null;
   clock?: Clock;
 }
 
@@ -110,7 +112,7 @@ export class Signer {
   }
 
   async #add(path: string, file: KeyFile) {
-    const imported = await importKeys(file, this.#o.master);
+    const imported = await importKeys(file, this.#o.master, this.#o.store ?? null);
     const existing = this.#domains.get(file.domain);
     const keys = new Map(existing?.keys ?? []);
     for (const k of imported) keys.set(k.selector, k);
@@ -168,7 +170,7 @@ export class Signer {
   async #generate(domain: string, selectorBase: string): Promise<PublicKeyInfo[]> {
     const dir = this.#o.dkimDir;
     if (!dir) throw new KeyFileError("this signer has no directory for new DKIM keys");
-    const fresh = await generateKeyFile(domain, selectorBase);
+    const fresh = await generateKeyFile(domain, selectorBase, this.#o.store ?? null);
     const now = this.#clock.now();
     const file = await sealKeyFile(
       {
@@ -199,7 +201,8 @@ export class Signer {
     const d = this.#rotatable(domain);
     await this.#write(d.path, file, true);
     const keys = new Map<string, DkimKey>();
-    for (const k of await importKeys(file, this.#o.master)) keys.set(k.selector, k);
+    for (const k of await importKeys(file, this.#o.master, this.#o.store ?? null))
+      keys.set(k.selector, k);
     this.#domains.set(domain, { path: d.path, file, keys });
   }
 
@@ -209,7 +212,7 @@ export class Signer {
     if (d.file.keys.some((k) => k.selector.startsWith(selectorBase))) {
       throw new KeyFileError(`selector ${selectorBase} is already used for ${domain}`);
     }
-    const fresh = await generateKeyFile(domain, selectorBase);
+    const fresh = await generateKeyFile(domain, selectorBase, this.#o.store ?? null);
     const now = this.#clock.now();
     const sealed = await sealKeyFile(
       { ...fresh, keys: fresh.keys.map((k) => ({ ...k, state: "next" as const, createdAt: now })) },

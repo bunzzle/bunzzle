@@ -10,7 +10,7 @@ How Bunzzle limits what an attacker gets. To report a vulnerability, see [SECURI
 | core | the database (bodies encrypted) | signer, delivery, dns | none |
 | delivery | one email at a time while sending | signer | DNS answers, SMTP replies, HTTPS (webhooks, MTA-STS) |
 | dns | the DNS provider token, if one is set | the DNS provider's API | its API replies |
-| signer | DKIM keys, master key | nobody | none |
+| signer | DKIM keys, master key | nobody, or a key store agent on a Unix socket | none |
 | inbound | its TLS key, if STARTTLS is on | core | SMTP from the internet |
 
 - Roles exchange small JSON messages over Unix sockets; every message is validated on arrival.
@@ -23,7 +23,7 @@ With the systemd units or the six-container compose file, each role is a separat
 ## Data
 
 - **Master key** outside the database: a file or a systemd credential, given only to the signer.
-- **DKIM keys** are encrypted with the master key; only the signer decrypts them.
+- **DKIM keys** are encrypted with the master key; only the signer decrypts them. With `BUNZZLE_DKIM_STORE_SOCKET`, they are created in an external key store instead and never leave it: the signer asks the store for each signature over a Unix socket, so it still has no network access.
 - **Every email body** is encrypted with its own key, wrapped for the signer. `core` can encrypt bodies but can't decrypt them. When retention ends (30 days by default), the key is destroyed and the body is unreadable everywhere, backups included.
 - **API keys** are stored as SHA-256 hashes and shown once.
 - **Webhook secrets** are derived from the master key in the signer and never stored.

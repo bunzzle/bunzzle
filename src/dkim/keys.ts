@@ -1,6 +1,7 @@
 import type { MasterKey } from "../crypto/master.ts";
 import { b } from "../validate/schema.ts";
 import type { DkimAlgorithm, DkimKey } from "./sign.ts";
+import type { KeyStore } from "./store.ts";
 
 const keyFileSchema = b.object({
   domain: b.string().min(1),
@@ -13,14 +14,18 @@ const keyFileSchema = b.object({
           algorithm: b.enum(["rsa-sha256", "ed25519-sha256"]),
           privateKey: b.string().min(1).optional(),
           sealedPrivateKey: b.string().min(1).optional(),
+          storeKey: b.string().min(1).max(200).optional(),
           publicKey: b.string().min(1),
           state: b.enum(["active", "next", "retiring"]).optional(),
           createdAt: b.number().int().optional(),
           retiringSince: b.number().int().optional(),
         })
-        .refine((k) => (k.privateKey === undefined) !== (k.sealedPrivateKey === undefined), {
-          message: "each key needs exactly one of privateKey or sealedPrivateKey",
-        }),
+        .refine(
+          (k) =>
+            [k.privateKey, k.sealedPrivateKey, k.storeKey].filter((v) => v !== undefined).length ===
+            1,
+          { message: "each key needs exactly one of privateKey, sealedPrivateKey or storeKey" },
+        ),
     )
     .min(1),
 });
@@ -63,8 +68,34 @@ async function generateOne(selector: string, algorithm: DkimAlgorithm) {
   return { selector, algorithm, privateKey: priv.toBase64(), publicKey: pub.toBase64() };
 }
 
-export async function generateKeyFile(domain: string, selectorBase: string): Promise<KeyFile> {
+export const storeKeyName = (domain: string, selector: string) =>
+  `bunzzle-dkim-${domain}-${selector}`;
+
+async function createInStore(
+  store: KeyStore,
+  domain: string,
+  selector: string,
+  algorithm: DkimAlgorithm,
+) {
+  const storeKey = storeKeyName(domain, selector);
+  return { selector, algorithm, storeKey, publicKey: await store.create(storeKey, algorithm) };
+}
+
+export async function generateKeyFile(
+  domain: string,
+  selectorBase: string,
+  store: KeyStore | null = null,
+): Promise<KeyFile> {
   const d = domain.toLowerCase();
+  if (store) {
+    return {
+      domain: d,
+      keys: [
+        await createInStore(store, d, `${selectorBase}r`, "rsa-sha256"),
+        await createInStore(store, d, `${selectorBase}e`, "ed25519-sha256"),
+      ],
+    };
+  }
   return {
     domain: d,
     keys: [
@@ -97,6 +128,10 @@ const keyContext = (domain: string, selector: string) => `bunzzle dkim v1:${doma
 export async function sealKeyFile(file: KeyFile, master: MasterKey): Promise<KeyFile> {
   const keys = [];
   for (const { privateKey, sealedPrivateKey: _, ...k } of file.keys) {
+    if (k.storeKey !== undefined) {
+      keys.push(k);
+      continue;
+    }
     if (privateKey === undefined) throw new KeyFileError("key file is already encrypted");
     const sealed = await master.seal(
       Uint8Array.fromBase64(privateKey),
@@ -138,9 +173,24 @@ async function privateBytes(
 export async function importKeys(
   file: KeyFile,
   master: MasterKey | null = null,
+  store: KeyStore | null = null,
 ): Promise<DkimKey[]> {
   const keys: DkimKey[] = [];
   for (const k of file.keys) {
+    if (k.storeKey !== undefined) {
+      if (!store) {
+        throw new KeyFileError(
+          `DKIM key ${k.selector} of ${file.domain} is in an external key store: set BUNZZLE_DKIM_STORE_SOCKET`,
+        );
+      }
+      keys.push({
+        domain: file.domain,
+        selector: k.selector,
+        algorithm: k.algorithm,
+        privateKey: store.key(k.storeKey),
+      });
+      continue;
+    }
     let privateKey: CryptoKey;
     const bytes = await privateBytes(file, k, master);
     try {

@@ -1,6 +1,7 @@
 import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { masterKeyFrom } from "../crypto/master.ts";
+import { transitStore } from "../dkim/store.ts";
 import { method, RpcError, serveRpc } from "../ipc/rpc.ts";
 import { loadRecipientKey } from "../signer/recipient-key.ts";
 import { dkimKeyFilesIn, Signer, SignerError } from "../signer/signer.ts";
@@ -23,6 +24,7 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
     dkimKeyFiles: files,
     dkimDir: `${config.keysDir}/dkim`,
     publicUrl: config.publicUrl,
+    store: config.dkimStore ? transitStore(config.dkimStore.socket, config.dkimStore.mount) : null,
   });
   const recipientKey = await loadRecipientKey(`${config.keysDir}/recipients.json`, master);
 
