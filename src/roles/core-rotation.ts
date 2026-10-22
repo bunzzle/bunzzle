@@ -45,6 +45,7 @@ export interface RotationDeps {
   sourceIp: string | string[] | null;
   inboundHost: string | null;
   nsZone?: string | null;
+  zoneServes?: (domain: string, keys: KeyInfo[]) => boolean;
   rotateDays: () => number;
   now?: () => number;
 }
@@ -213,7 +214,11 @@ export function rotation(deps: RotationDeps) {
 
     if (next.length > 0) {
       const rebuilt = await rebuild(domain, list);
-      const ready = next.every((k) => isSlot(k.selector))
+      const slotted = next.every((k) => isSlot(k.selector));
+      if (slotted && deps.zoneServes && !deps.zoneServes(domain, next)) {
+        return "waiting for every NS to serve the new keys";
+      }
+      const ready = slotted
         ? rebuilt?.records
             .filter((r) => r.record === "DKIM" && r.type === "CNAME")
             .every((r) => r.status === "verified") && (await served(domain, next))

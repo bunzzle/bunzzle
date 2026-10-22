@@ -84,6 +84,7 @@ export interface Nsec3Data {
 
 export interface SoaData {
   mname: string;
+  serial: number;
   minimum: number;
 }
 
@@ -117,6 +118,7 @@ export interface DnsMessage {
   rcode: number;
   truncated: boolean;
   authenticated: boolean;
+  authoritative?: boolean;
   question: { name: string; type: number } | null;
   answers: ResourceRecord[];
   authority: ResourceRecord[];
@@ -368,9 +370,12 @@ function readData(r: Reader, type: number, len: number, end: number): [RecordDat
       const mname = r.wireName(true);
       const rname = r.wireName(true);
       const fixed = r.bytes(20);
-      const minimum = new DataView(fixed.buffer, fixed.byteOffset + 16, 4).getUint32(0);
+      const view = new DataView(fixed.buffer, fixed.byteOffset, 20);
       return [
-        { type: "SOA", soa: { mname: mname.text, minimum } },
+        {
+          type: "SOA",
+          soa: { mname: mname.text, serial: view.getUint32(0), minimum: view.getUint32(16) },
+        },
         concat(mname.wire, rname.wire, fixed),
       ];
     }
@@ -501,6 +506,7 @@ export function decodeMessage(buf: Uint8Array): DnsMessage {
     rcode: flags & 0x000f,
     truncated,
     authenticated: (flags & 0x0020) !== 0,
+    authoritative: (flags & 0x0400) !== 0,
     question,
     answers,
     authority,

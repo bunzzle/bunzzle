@@ -3,6 +3,7 @@ import type { ProjectId } from "../accounts/projects.ts";
 import { countByState } from "../core/jobs.ts";
 import type { StorageState } from "../core/storage.ts";
 import { PROJECT_HOLDS } from "../guards/guards.ts";
+import type { NsTargetView } from "../roles/core-ns.ts";
 import type { PathView } from "../shaping/shaper.ts";
 import { VERSION } from "../version.ts";
 
@@ -47,6 +48,7 @@ export function collect(
   now: number,
   startedAt: number,
   storage?: StorageState,
+  ns?: NsTargetView[] | null,
 ): Family[] {
   const jobs = countByState(db, project);
   const recipients = db
@@ -211,5 +213,36 @@ export function collect(
         },
       ],
     },
+    ...(ns
+      ? [
+          {
+            name: "bunzzle_ns_up",
+            type: "gauge" as const,
+            help: "1 when the ns listener answered the last probe over this protocol.",
+            samples: ns.flatMap((v) => [
+              { labels: { ns: v.ns, proto: "udp" }, value: v.udp ? 1 : 0 },
+              { labels: { ns: v.ns, proto: "tcp" }, value: v.tcp ? 1 : 0 },
+            ]),
+          },
+          {
+            name: "bunzzle_ns_healthy",
+            type: "gauge" as const,
+            help: "0 from the ns.unhealthy event until the ns.healthy event for this listener.",
+            samples: ns.map((v) => ({ labels: { ns: v.ns }, value: v.healthy ? 1 : 0 })),
+          },
+          {
+            name: "bunzzle_ns_failures",
+            type: "gauge" as const,
+            help: "Failed probes of this listener in a row.",
+            samples: ns.map((v) => ({ labels: { ns: v.ns }, value: v.failures })),
+          },
+          {
+            name: "bunzzle_ns_serial_lag_seconds",
+            type: "gauge" as const,
+            help: "Seconds the ns listener has been behind the zone serial core pushed.",
+            samples: ns.map((v) => ({ labels: { ns: v.ns }, value: v.lagSeconds })),
+          },
+        ]
+      : []),
   ];
 }

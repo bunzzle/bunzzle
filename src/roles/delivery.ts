@@ -3,6 +3,7 @@ import type { Logger } from "../core/log.ts";
 import { localTransport, rememberingTransport } from "../delivery/transport.ts";
 import { cachingResolver } from "../dns/cache.ts";
 import { localValidatingResolver } from "../dns/dnssec.ts";
+import { measureNs } from "../dns/probe.ts";
 import { createResolver, parseServer, type Resolver, systemServers } from "../dns/resolver.ts";
 import { checkReverse, type ReverseCheck } from "../dns/reverse.ts";
 import { ownValidation } from "../dnssec/resolver.ts";
@@ -271,6 +272,14 @@ export async function runDelivery(config: Config, log: Logger) {
         }
         return out;
       },
+    ),
+    nsProbe: method(
+      b.object({
+        host: b.string().min(1).max(255),
+        port: b.number().int().min(1).max(65535),
+        zone: b.string().min(1).max(253),
+      }),
+      ({ host, port, zone }) => measureNs({ host, port }, zone),
     ),
     deliver: method(deliverRequestWire, async (wire) => {
       const req = requestFromWire(wire);

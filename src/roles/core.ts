@@ -1,3 +1,4 @@
+import { recordAdminEvent, SYSTEM_PROJECT } from "../accounts/projects.ts";
 import { purgeDeletedProject } from "../accounts/purge.ts";
 import { pruneUsage } from "../accounts/usage.ts";
 import type { Config } from "../config.ts";
@@ -17,6 +18,7 @@ import {
   allDomains,
   bounceDomain,
   findDomain,
+  type PublicDkimKey,
   returnPathReady,
   zoneDomainNames,
 } from "../domains/domains.ts";
@@ -41,6 +43,7 @@ import { coreMethods } from "./core-api.ts";
 import { doctorMethods, ipInfo } from "./core-doctor.ts";
 import { feedbackMethods } from "./core-feedback.ts";
 import { hookMethods } from "./core-hooks.ts";
+import { nsProbe } from "./core-ns.ts";
 import { projectMethods } from "./core-projects.ts";
 import { rotation } from "./core-rotation.ts";
 import { routeMethods } from "./core-routes.ts";
@@ -216,6 +219,66 @@ export async function runCore(config: Config, log: Logger) {
   };
 
   const hooks = hookMethods({ db, writer, log, delivery });
+  const zone =
+    config.ns && ns
+      ? zonePublisher({
+          ns,
+          zone: config.ns.zone,
+          ttl: config.ns.ttl,
+          sourceIps: config.sourceIps.map((x) => x.ip),
+          inboundHost: config.inboundHostname,
+          domains: delegatedDomains({
+            names: () => zoneDomainNames(db),
+            keys: (domain) => rotate.keys(domain),
+          }),
+          log,
+        })
+      : null;
+  const probe =
+    config.ns && ns && zone
+      ? nsProbe({
+          measure: (server) =>
+            delivery.call(
+              "nsProbe",
+              { ...server, zone: config.ns?.zone ?? "" },
+              {
+                timeoutMs: 10_000,
+                result: b.object({
+                  udp: b.number().nullable(),
+                  tcp: b.number().nullable(),
+                  served: b.number().nullable(),
+                }),
+              },
+            ),
+          targets: () =>
+            ns.call(
+              "listeners",
+              {},
+              {
+                timeoutMs: 5_000,
+                result: b.array(b.object({ host: b.string(), port: b.number().int() })),
+              },
+            ),
+          pushed: () => zone.pushed(),
+          raise: (kind, data) =>
+            writer.run((w) =>
+              recordAdminEvent(
+                w,
+                { kind, project: SYSTEM_PROJECT, actor: "core", data },
+                Date.now(),
+              ),
+            ),
+          log,
+        })
+      : null;
+  const zoneServes = (domain: string, keys: PublicDkimKey[]) => {
+    const pushed = zone?.pushed();
+    return (
+      !zone ||
+      !probe ||
+      (!!pushed && zone.holds(domain, keys) && probe.servesAtLeast(pushed.serial))
+    );
+  };
   const api = coreMethods({
     db,
     writer,
@@ -231,6 +294,7 @@ export async function runCore(config: Config, log: Logger) {
     ips: config.sourceIps,
     paths: () => shaper.views(),
     storage: () => storage.state(),
+    nsHealth: () => probe?.view() ?? null,
     publish: (records) => rotate.publish(records),
     switchMode: (name, mode) => rotate.switchMode(name, mode),
     tracking: (domain) => tracking.view(domain),
@@ -270,6 +334,7 @@ export async function runCore(config: Config, log: Logger) {
     sourceIp: config.sourceIps.map((x) => x.ip),
     inboundHost: config.inboundHostname,
     nsZone: config.ns?.zone ?? null,
+    zoneServes,
     rotateDays: () => config.dkimRotateDays,
   });
   const tracking = trackingMethods({
@@ -438,28 +503,16 @@ export async function runCore(config: Config, log: Logger) {
 
   const stopSettled = every(5_000, flushSettled);
 
-  const zone =
-    config.ns && ns
-      ? zonePublisher({
-          ns,
-          zone: config.ns.zone,
-          ttl: config.ns.ttl,
-          sourceIps: config.sourceIps.map((x) => x.ip),
-          inboundHost: config.inboundHostname,
-          domains: delegatedDomains({
-            names: () => zoneDomainNames(db),
-            keys: (domain) => rotate.keys(domain),
-          }),
-          log,
-        })
-      : null;
   const stopZone = zone ? every(10_000, () => zone.tick()) : () => {};
   if (zone) setTimeout(() => void zone.tick(), 1_000);
+  const stopProbe = probe ? every(10_000, () => probe.poll()) : () => {};
+  if (probe) setTimeout(() => void probe.poll(), 3_000);
 
   await scheduler.start();
   onStop(log, async () => {
     stopSettled();
     stopZone();
+    stopProbe();
     stopShred();
     stopPrune();
     stopPurge();

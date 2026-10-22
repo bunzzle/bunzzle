@@ -44,12 +44,15 @@ export async function runNs(config: Config, log: Logger) {
       return { serial: wire.serial };
     }),
     stats: method(b.object({}), () => server.snapshot()),
+    listeners: method(b.object({}), () => listeners),
   });
 
   const ports: number[] = [];
+  const listeners: { host: string; port: number }[] = [];
   for (const ip of ns.listen) {
+    let port: number;
     try {
-      ports.push(await server.listen(ip, ns.port));
+      port = await server.listen(ip, ns.port);
     } catch (err) {
       const code = (err as { code?: string }).code ?? null;
       log.error("ns cannot listen", {
@@ -69,6 +72,8 @@ export async function runNs(config: Config, log: Logger) {
       server.stop();
       throw err;
     }
+    ports.push(port);
+    listeners.push({ host: ip, port });
   }
 
   let last = server.snapshot();

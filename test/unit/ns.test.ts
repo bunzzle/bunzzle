@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { measureNs } from "../../src/dns/probe.ts";
 import { createResolver } from "../../src/dns/resolver.ts";
 import { decodeMessage, encodeQuery, Rcode, RRType } from "../../src/dns/wire.ts";
 import { respond } from "../../src/ns/answer.ts";
@@ -272,6 +273,14 @@ describe("ns server on sockets", () => {
   });
 
   afterAll(() => server.stop());
+
+  test("the probe reads the serial over UDP and TCP and the _check record", async () => {
+    expect(await measureNs({ host: "127.0.0.1", port }, `${APEX}.`)).toEqual({
+      udp: 7,
+      tcp: 7,
+      served: 7,
+    });
+  });
 
   test("a resolver gets answers over UDP and TCP", async () => {
     const r = createResolver({ servers: [{ host: "127.0.0.1", port }], timeoutMs: 1000 });

@@ -181,3 +181,16 @@ test("a verified delegated domain switches to records through PATCH; the CLI wai
   expect(again.stderr).toContain("still running");
   expect((await cli("domains", "mode", "shop.test")).code).not.toBe(0);
 });
+
+test("core probes the ns listener over UDP and TCP and reports it in /metrics", async () => {
+  let text = "";
+  const end = Date.now() + 20_000;
+  while (Date.now() < end) {
+    text = await (await api("/metrics")).text();
+    if (text.includes(`bunzzle_ns_up{ns="127.0.0.1",proto="udp"} 1`)) break;
+    await Bun.sleep(250);
+  }
+  expect(text).toContain('bunzzle_ns_up{ns="127.0.0.1",proto="udp"} 1');
+  expect(text).toContain('bunzzle_ns_up{ns="127.0.0.1",proto="tcp"} 1');
+  expect(text).toContain('bunzzle_ns_serial_lag_seconds{ns="127.0.0.1"} 0');
+}, 30_000);

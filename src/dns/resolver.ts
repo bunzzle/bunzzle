@@ -206,6 +206,23 @@ function tcpExchange(
   });
 }
 
+export function askServer(
+  server: Server,
+  rawName: string,
+  type: QueryType,
+  proto: "udp" | "tcp",
+  timeoutMs = 2000,
+): Promise<DnsMessage> {
+  const name = normalizeName(rawName);
+  const code = RRType[type as RRTypeName];
+  const id = randomId();
+  const packet = encodeQuery(id, name, code);
+  packet[2] = (packet[2] as number) & ~0x01;
+  return proto === "udp"
+    ? udpExchange(server, packet, id, name, code, timeoutMs)
+    : tcpExchange(server, packet, id, name, code, timeoutMs);
+}
+
 export function answerFrom(msg: DnsMessage, name: string, type: QueryType): DnsAnswer {
   const records = chainRecords(msg, name, type);
   const ttl = records.length > 0 ? Math.min(...records.map((r) => r.ttl)) : negativeTtl(msg);
