@@ -223,6 +223,33 @@ describe("limit summary", () => {
   });
 });
 
+test("listening on any port tries another port when the TCP one is taken", async () => {
+  const server = new NsServer({ apex: APEX, names: NAMES });
+  const real = Bun.listen;
+  let calls = 0;
+  Bun.listen = ((opts: Parameters<typeof Bun.listen>[0]) => {
+    calls++;
+    if (calls === 1) throw Object.assign(new Error("Failed to listen"), { code: "EADDRINUSE" });
+    return real(opts);
+  }) as typeof Bun.listen;
+  try {
+    const port = await server.listen("127.0.0.1", 0);
+    expect(calls).toBe(2);
+    expect(port).toBeGreaterThan(0);
+  } finally {
+    Bun.listen = real;
+    server.stop();
+  }
+  const fixed = new NsServer({ apex: APEX, names: NAMES });
+  const blocker = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+  try {
+    await expect(fixed.listen("127.0.0.1", blocker.port)).rejects.toThrow();
+  } finally {
+    blocker.stop(true);
+    fixed.stop();
+  }
+});
+
 describe("ns server on sockets", () => {
   let server: NsServer;
   let port: number;
