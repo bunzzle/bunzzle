@@ -18,6 +18,7 @@ import {
   PROJECT_NAME,
   type Project,
   type ProjectId,
+  purgedProjectId,
   recordAdminEvent,
   updateProject,
 } from "../accounts/projects.ts";
@@ -278,6 +279,8 @@ export function projectMethods(deps: ProjectDeps): Methods {
       const caller = resolveAdmin(db, p);
       const removed = findRemovedProject(db, p.id);
       if (removed) return { object: "project", id: removed.id, deleted: true };
+      const purged = findProject(db, p.id) ? null : purgedProjectId(db, p.id);
+      if (purged) return { object: "project", id: purged, deleted: true };
       const t = target(p.id);
       if (t.id === DEFAULT_PROJECT) {
         throw new RpcError("invalid", "the default project cannot be removed");

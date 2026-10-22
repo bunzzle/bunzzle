@@ -16,6 +16,7 @@ import {
   listProjects,
   type ProjectId,
   projectOfMessage,
+  purgedProjectId,
   recordAdminEvent,
   SYSTEM_PROJECT,
   updateProject,
@@ -376,6 +377,15 @@ describe("projects", () => {
     }
     expect(purgeDeletedProject(db)).toEqual({ project: null, messages: 0, finished: false });
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(purgedProjectId(db, B)).toBeNull();
+    recordAdminEvent(
+      db,
+      { kind: "project.deleted", project: B, actor: "operator", data: { name: "other" } },
+      T0 + 1,
+    );
+    expect(purgedProjectId(db, B)).toBe(B);
+    expect(purgedProjectId(db, "other")).toBe(B);
+    expect(purgedProjectId(db, "never")).toBeNull();
   });
 
   test("purge waits for mail that is being sent", () => {
