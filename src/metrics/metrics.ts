@@ -9,7 +9,7 @@ import { VERSION } from "../version.ts";
 
 type Labels = Record<string, string>;
 
-interface Family {
+export interface Family {
   name: string;
   type: "gauge" | "counter" | "info";
   help: string;

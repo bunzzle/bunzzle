@@ -44,6 +44,11 @@ interface Caller {
   hooks: boolean;
 }
 
+const traceOf = (req: Request) => {
+  const t = req.headers.get("traceparent");
+  return t && t.length <= 100 ? { traceparent: t } : {};
+};
+
 export const authResult = b.object({
   id: b.string(),
   scope: b.enum(["send", "read", "full", "admin"]),
@@ -416,6 +421,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
             "enqueue",
             {
               tokenHash: caller.hash,
+              ...traceOf(req),
               ...enqueueFields(email),
               ...(idempotencyKey !== null ? { idempotencyKey, bodyHash: hashToken(text) } : {}),
             },
@@ -464,7 +470,7 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           }
           const r = await rpc(
             "enqueueBatch",
-            { tokenHash: caller.hash, emails },
+            { tokenHash: caller.hash, ...traceOf(req), emails },
             b.object({ data: b.array(b.object({ id: b.string() })) }),
           );
           return Response.json({ data: r.data.map((x) => ({ id: x.id })) });

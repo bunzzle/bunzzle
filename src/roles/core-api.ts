@@ -64,9 +64,10 @@ import {
 } from "../guards/guards.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import { dayOf, estimatedDays, listWarmup } from "../ips/warmup.ts";
-import { collect, render } from "../metrics/metrics.ts";
+import { collect, type Family, render } from "../metrics/metrics.ts";
 import { AddressError, domainOf, normalizeAddress } from "../mime/address.ts";
 import { senderDomainOf } from "../mime/from.ts";
+import type { Span } from "../otel/otlp.ts";
 import { queueSummary, removeQueued, resume, type Suspension, suspend } from "../queue/control.ts";
 import { PROVIDER_IDS } from "../routing/providers.ts";
 import type { PathView } from "../shaping/shaper.ts";
@@ -83,6 +84,7 @@ import {
 } from "./actor.ts";
 import { domainName, knownPool, usablePool } from "./checks.ts";
 import type { DelegationView, NsCheckView, NsTargetView } from "./core-ns.ts";
+import { intakeSpan } from "./core-telemetry.ts";
 import { DOMAIN, enqueueParams, MESSAGE_ID, project, tokenHash } from "./wire.ts";
 
 const SUSPEND_TARGET =
@@ -126,6 +128,7 @@ export interface CoreDeps {
   ips?: SourceIp[];
   relay?: boolean;
   tracking?: (domain: string) => unknown;
+  span?: (s: Span) => void;
   filter?: (
     data: string,
     m: { id: string; from: string; recipients: string[]; user: string },
@@ -182,6 +185,7 @@ export function coreMethods(deps: CoreDeps): {
   methods: Methods;
   verifyPending(): Promise<void>;
   enqueueInternal(from: string, to: string, data: string): Promise<string>;
+  families(): Family[];
 } {
   const { db, writer, log, signer, delivery } = deps;
   const sealer = new BodySealer();
@@ -474,10 +478,48 @@ export function coreMethods(deps: CoreDeps): {
     });
   };
 
+  const batchParams = b.object({
+    tokenHash,
+    project,
+    traceparent: b.string().max(100).optional(),
+    emails: b
+      .array(enqueueParams.omit({ tokenHash: true, project: true }))
+      .min(1)
+      .max(100),
+  });
+
+  const errorOf = (err: unknown) =>
+    err instanceof RpcError ? `${err.code}: ${err.message}` : (err as Error).message;
+
   const enqueueFailed = (err: unknown): never => {
     if (err instanceof RpcError) throw err;
     if (err instanceof AddressError) throw new RpcError("invalid", err.message);
     throw new RpcError("invalid", (err as Error).message);
+  };
+
+  const enqueueAll = async (
+    p: b.infer<typeof batchParams>,
+    ready: Awaited<ReturnType<typeof prepareEnqueue>>[],
+  ) => {
+    const actor = caller(p, "send");
+    for (const [i, e] of p.emails.entries()) {
+      try {
+        ready.push(await prepareEnqueue(e, actor));
+      } catch (err) {
+        if (err instanceof RpcError) throw new RpcError(err.code, `emails[${i}]: ${err.message}`);
+        throw err;
+      }
+    }
+    try {
+      return {
+        data: await writer.run((d) =>
+          ready.map((r) => (r.existed ? { id: r.id, existed: true } : r.persist(d))),
+        ),
+      };
+    } catch (err) {
+      await noteRefusal(err);
+      return enqueueFailed(err);
+    }
   };
 
   const changeable = ({ project, key }: Actor, id: string) => {
@@ -539,53 +581,73 @@ export function coreMethods(deps: CoreDeps): {
     }),
 
     enqueue: method(enqueueParams, async (p) => {
-      const actor = caller(p, "send");
-      const r = await prepareEnqueue(p, actor);
-      if (r.existed) return { id: r.id, existed: true };
+      const started = now();
+      let id = p.id ?? null;
+      let existed = false;
+      let error: string | null = null;
       try {
-        return await writer.run((d) => r.persist(d));
-      } catch (err) {
-        if (!(err instanceof RpcError) && projectOfMessage(db, r.id) === actor.project) {
-          return { id: r.id, existed: true };
-        }
-        await noteRefusal(err);
-        return enqueueFailed(err);
-      }
-    }),
-
-    enqueueBatch: method(
-      b.object({
-        tokenHash,
-        project,
-        emails: b
-          .array(enqueueParams.omit({ tokenHash: true, project: true }))
-          .min(1)
-          .max(100),
-      }),
-      async (p) => {
         const actor = caller(p, "send");
-        const ready: Awaited<ReturnType<typeof prepareEnqueue>>[] = [];
-        for (const [i, e] of p.emails.entries()) {
-          try {
-            ready.push(await prepareEnqueue(e, actor));
-          } catch (err) {
-            if (err instanceof RpcError)
-              throw new RpcError(err.code, `emails[${i}]: ${err.message}`);
-            throw err;
-          }
-        }
+        const r = await prepareEnqueue(p, actor);
+        id = r.id;
+        existed = r.existed;
+        if (r.existed) return { id: r.id, existed: true };
         try {
-          return {
-            data: await writer.run((d) =>
-              ready.map((r) => (r.existed ? { id: r.id, existed: true } : r.persist(d))),
-            ),
-          };
+          return await writer.run((d) => r.persist(d));
         } catch (err) {
+          if (!(err instanceof RpcError) && projectOfMessage(db, r.id) === actor.project) {
+            existed = true;
+            return { id: r.id, existed: true };
+          }
           await noteRefusal(err);
           return enqueueFailed(err);
         }
-      },
-    ),
+      } catch (err) {
+        error = errorOf(err);
+        throw err;
+      } finally {
+        deps.span?.(
+          intakeSpan(
+            id,
+            started,
+            now(),
+            { "bunzzle.recipients": p.recipients.length, "bunzzle.existed": existed },
+            error,
+            p.traceparent,
+          ),
+        );
+      }
+    }),
+
+    enqueueBatch: method(batchParams, async (p) => {
+      const started = now();
+      const ready: Awaited<ReturnType<typeof prepareEnqueue>>[] = [];
+      let error: string | null = null;
+      try {
+        return await enqueueAll(p, ready);
+      } catch (err) {
+        error = errorOf(err);
+        throw err;
+      } finally {
+        const end = now();
+        for (const [i, e] of p.emails.entries()) {
+          const r = ready[i];
+          deps.span?.(
+            intakeSpan(
+              r?.id ?? e.id ?? null,
+              started,
+              end,
+              {
+                "bunzzle.recipients": e.recipients.length,
+                "bunzzle.existed": r?.existed ?? false,
+                "bunzzle.batch.size": p.emails.length,
+              },
+              error,
+              p.traceparent,
+            ),
+          );
+        }
+      }
+    }),
 
     getEmail: method(b.object({ tokenHash, project, id: b.string() }), (p) => {
       const { project } = caller(p, "read");
@@ -1113,5 +1175,17 @@ export function coreMethods(deps: CoreDeps): {
     return (await writer.run((d) => r.persist(d))).id;
   };
 
-  return { methods, verifyPending, enqueueInternal };
+  const families = () =>
+    collect(
+      db,
+      null,
+      deps.paths?.() ?? [],
+      now(),
+      startedAt,
+      deps.storage?.(),
+      deps.nsHealth?.() ?? null,
+      deps.nsDelegation?.() ?? null,
+    );
+
+  return { methods, verifyPending, enqueueInternal, families };
 }

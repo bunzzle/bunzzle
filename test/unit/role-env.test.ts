@@ -31,6 +31,7 @@ describe("role environments under bunzzle serve", () => {
   test("credentials reach only the role that uses them", () => {
     expect(rolesGetting("BUNZZLE_RELAY_PASSWORD_FILE")).toEqual(["delivery"]);
     expect(rolesGetting("BUNZZLE_SPAMHAUS_KEY_FILE")).toEqual(["delivery"]);
+    expect(rolesGetting("BUNZZLE_OTLP_HEADERS_FILE")).toEqual(["delivery"]);
     for (const name of [
       "BUNZZLE_CLOUDFLARE_API_TOKEN",
       "BUNZZLE_CLOUDFLARE_API_TOKEN_FILE",

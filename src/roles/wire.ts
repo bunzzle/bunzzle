@@ -202,6 +202,7 @@ export const emailMeta = b.object({
 export const enqueueParams = b.object({
   tokenHash,
   project,
+  traceparent: b.string().max(100).optional(),
   idempotencyKey: b.string().min(1).max(256).optional(),
   bodyHash: b.string().regex(TOKEN_HASH).optional(),
   scheduledAt: b.number().int().positive().optional(),
