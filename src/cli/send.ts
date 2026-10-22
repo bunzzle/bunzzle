@@ -3,7 +3,7 @@ import { loadMasterKey } from "../crypto/load.ts";
 import { loadKeyFile } from "../dkim/keys.ts";
 import { signMessage } from "../dkim/sign.ts";
 import { cachingResolver } from "../dns/cache.ts";
-import { createResolver, parseServer, systemServers } from "../dns/resolver.ts";
+import { createResolver, dnsServers } from "../dns/resolver.ts";
 import { type Address, domainOf, parseAddress } from "../mime/address.ts";
 import { buildMessage, newMessageId } from "../mime/builder.ts";
 import { type Classification, classify } from "../replies/classify.ts";
@@ -167,9 +167,7 @@ export async function sendCommand(argv: string[], config: Config): Promise<numbe
     );
   }
   const sourceIp = args.strings.get("source-ip") ?? config.sourceIp;
-  const servers = config.dnsServers.length
-    ? config.dnsServers.map(parseServer)
-    : await systemServers();
+  const servers = await dnsServers(config.dnsServers);
   const resolver = cachingResolver(createResolver({ servers }));
 
   const byDomain = new Map<string, string[]>();

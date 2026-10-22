@@ -62,6 +62,13 @@ export function parseServer(spec: string): Server {
   return { host: s, port: 53 };
 }
 
+export async function dnsServers(
+  configured: string[],
+  path = "/etc/resolv.conf",
+): Promise<Server[]> {
+  return configured.length ? configured.map(parseServer) : systemServers(path);
+}
+
 export async function systemServers(path = "/etc/resolv.conf"): Promise<Server[]> {
   const file = Bun.file(path);
   if (!(await file.exists())) return [];

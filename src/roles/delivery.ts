@@ -4,7 +4,7 @@ import { localTransport, rememberingTransport } from "../delivery/transport.ts";
 import { cachingResolver } from "../dns/cache.ts";
 import { localValidatingResolver } from "../dns/dnssec.ts";
 import { delegationAt, measureNs } from "../dns/probe.ts";
-import { createResolver, parseServer, type Resolver, systemServers } from "../dns/resolver.ts";
+import { createResolver, dnsServers, type Resolver } from "../dns/resolver.ts";
 import { checkReverse, type ReverseCheck } from "../dns/reverse.ts";
 import { ownValidation } from "../dnssec/resolver.ts";
 import { method, RpcClient, serveRpc } from "../ipc/rpc.ts";
@@ -21,9 +21,7 @@ import { deliverRequestWire, requestFromWire, sealedBodyWire, sockets, toWire } 
 
 export async function runDelivery(config: Config, log: Logger) {
   const sock = sockets(config.runDir);
-  const servers = config.dnsServers.length
-    ? config.dnsServers.map(parseServer)
-    : await systemServers();
+  const servers = await dnsServers(config.dnsServers);
   const uncached = createResolver({ servers });
   let dnssec: { mode: "resolver" | "own" | "off"; detail: string } = {
     mode: "off",

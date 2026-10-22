@@ -1,6 +1,6 @@
 import type { Config } from "../config.ts";
 import { cachingResolver } from "../dns/cache.ts";
-import { createResolver, parseServer, type Resolver, systemServers } from "../dns/resolver.ts";
+import { createResolver, dnsServers, type Resolver } from "../dns/resolver.ts";
 import { type DnsProvider, openDnsProvider } from "../net/providers.ts";
 import { guardedRequest } from "../net/request.ts";
 import { UsageError } from "./args.ts";
@@ -19,9 +19,7 @@ export interface DnsTestDeps {
 }
 
 async function defaultDeps(config: Config): Promise<DnsTestDeps> {
-  const servers = config.dnsServers.length
-    ? config.dnsServers.map(parseServer)
-    : await systemServers();
+  const servers = await dnsServers(config.dnsServers);
   const resolver = createResolver({ servers });
   const cached = cachingResolver(resolver);
   const api = (r: Parameters<typeof guardedRequest>[0]) =>
