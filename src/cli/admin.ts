@@ -358,8 +358,59 @@ export async function webhooksCommand(argv: string[], config: Config) {
       console.log(`Removed ${id}.`);
       return;
     }
+    case "deliveries": {
+      const [id, ...flags] = rest;
+      if (!id) throw new UsageError("usage: bunzzle webhooks deliveries ID [--failed] [--limit N]");
+      const args = parseArgs(flags, { flags: ["failed"], strings: ["limit"] });
+      const limit = args.strings.get("limit");
+      const list = await call<
+        {
+          id: string;
+          type: string;
+          state: string;
+          created_at: string;
+          attempts: { at: string; status: number | null; error: string | null }[];
+        }[]
+      >(config, "listWebhookDeliveries", {
+        id,
+        failed: args.flags.has("failed"),
+        ...(limit ? { limit: Number(limit) } : {}),
+      });
+      if (list.length === 0) console.log("No deliveries.");
+      for (const d of list) {
+        console.log(`${d.id}  ${d.state.padEnd(7)} ${d.type}  ${d.created_at}`);
+        for (const a of d.attempts) {
+          console.log(`    ${a.at}  ${a.status ?? "-"}${a.error ? `  ${a.error}` : ""}`);
+        }
+      }
+      return;
+    }
+    case "resend": {
+      const [id, ...more] = rest;
+      const usage =
+        "usage: bunzzle webhooks resend ID DELIVERY | resend ID --from TIME --to TIME [--failed]";
+      if (!id) throw new UsageError(usage);
+      if (more[0] && !more[0].startsWith("--")) {
+        if (more.length > 1) throw new UsageError(usage);
+        await call(config, "resendWebhookDelivery", { id, delivery: more[0] });
+        console.log(`${more[0]} will be sent again.`);
+        return;
+      }
+      const args = parseArgs(more, { flags: ["failed"], strings: ["from", "to"] });
+      const from = Date.parse(args.strings.get("from") ?? "");
+      const to = Date.parse(args.strings.get("to") ?? "");
+      if (Number.isNaN(from) || Number.isNaN(to)) throw new UsageError(usage);
+      const r = await call<{ resent: number }>(config, "resendWebhookRange", {
+        id,
+        from,
+        to,
+        failed: args.flags.has("failed"),
+      });
+      console.log(`${r.resent} deliveries will be sent again.`);
+      return;
+    }
     default:
-      throw new UsageError("usage: bunzzle webhooks add|list|remove");
+      throw new UsageError("usage: bunzzle webhooks add|list|remove|deliveries|resend");
   }
 }
 

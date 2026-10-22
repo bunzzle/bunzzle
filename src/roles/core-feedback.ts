@@ -18,9 +18,15 @@ import { projectEvents } from "../webhooks/project.ts";
 import {
   claimDeliveries,
   createWebhook,
+  type Delivery,
   deleteWebhook,
   EVENT_TYPES,
+  listDeliveries,
   listWebhooks,
+  MAX_RESEND,
+  recordAttempt,
+  resendDelivery,
+  resendRange,
   resetSending,
   settleDelivery,
 } from "../webhooks/store.ts";
@@ -42,6 +48,23 @@ export interface FeedbackDeps {
 const tokenResult = b
   .object({ purpose: b.enum(["b", "u", "o", "c"]), messageId: b.string() })
   .nullable();
+
+const iso = (t: number) => new Date(t).toISOString();
+
+const deliveryView = (d: Delivery) => ({
+  object: "webhook_delivery",
+  id: d.id,
+  type: d.type,
+  state: d.state,
+  created_at: iso(d.createdAt),
+  next_attempt_at: d.nextAt === null ? null : iso(d.nextAt),
+  attempts: d.attempts.map((a) => ({
+    at: iso(a.at),
+    status: a.status,
+    error: a.error,
+    duration_ms: a.durationMs,
+  })),
+});
 
 export function feedbackMethods(deps: FeedbackDeps) {
   const { db, writer, log, signer, delivery } = deps;
@@ -257,6 +280,66 @@ export function feedbackMethods(deps: FeedbackDeps) {
       }));
     }),
 
+    listWebhookDeliveries: method(
+      b.object({
+        tokenHash,
+        project,
+        id: b.string().max(64),
+        from: b.number().int().min(0).optional(),
+        to: b.number().int().min(0).optional(),
+        failed: b.boolean().default(false),
+        before: b.string().max(64).optional(),
+        limit: b.number().int().min(1).max(100).default(50),
+      }),
+      (p) => {
+        const actor = resolveActor(db, p, "read");
+        const list = listDeliveries(db, actor.project, p.id, p);
+        if (!list) throw new RpcError("not-found", "webhook not found");
+        return list.map(deliveryView);
+      },
+    ),
+
+    resendWebhookDelivery: method(
+      b.object({ tokenHash, project, id: b.string().max(64), delivery: b.string().max(64) }),
+      async (p) => {
+        const actor = resolveActor(db, p, "full");
+        const r = await writer.run((d) =>
+          resendDelivery(d, actor.project, p.id, p.delivery, now()),
+        );
+        if (r === "not-found") throw new RpcError("not-found", "webhook delivery not found");
+        if (r === "in-flight") {
+          throw new RpcError("invalid", "this delivery is still being sent or waiting to retry");
+        }
+        return { resent: 1 };
+      },
+    ),
+
+    resendWebhookRange: method(
+      b.object({
+        tokenHash,
+        project,
+        id: b.string().max(64),
+        from: b.number().int().min(0),
+        to: b.number().int().min(0),
+        failed: b.boolean().default(false),
+      }),
+      async (p) => {
+        const actor = resolveActor(db, p, "full");
+        if (p.to <= p.from) throw new RpcError("invalid", "`to` must be after `from`");
+        const r = await writer.run((d) =>
+          resendRange(d, actor.project, p.id, { from: p.from, to: p.to, failed: p.failed }, now()),
+        );
+        if (!r) throw new RpcError("not-found", "webhook not found");
+        if ("tooMany" in r) {
+          throw new RpcError(
+            "invalid",
+            `${r.tooMany} deliveries in that range; resend at most ${MAX_RESEND} at a time`,
+          );
+        }
+        return { resent: r.resent };
+      },
+    ),
+
     deleteWebhook: method(b.object({ tokenHash, project, id: b.string().max(64) }), async (p) => {
       const actor = resolveActor(db, p, "full");
       if (!(await writer.run((d) => deleteWebhook(d, actor.project, p.id, now())))) {
@@ -278,6 +361,8 @@ export function feedbackMethods(deps: FeedbackDeps) {
         due.map(async (d) => {
           let ok = false;
           let error: string | null = null;
+          let status: number | null = null;
+          const started = now();
           try {
             const timestamp = Math.floor(now() / 1000);
             const msgId = `msg_${d.id}`;
@@ -306,15 +391,24 @@ export function feedbackMethods(deps: FeedbackDeps) {
               },
             );
             if (r.ok) {
+              status = r.status;
               ok = r.status >= 200 && r.status < 300;
               if (!ok) error = `endpoint answered ${r.status}`;
             } else error = r.error;
           } catch (err) {
             error = (err as Error).message;
           }
-          const result = await writer.run((w) =>
-            settleDelivery(w, d, ok, error, now(), deps.scale ?? 1),
-          );
+          const at = now();
+          const result = await writer.run((w) => {
+            recordAttempt(w, {
+              deliveryId: d.id,
+              at,
+              status,
+              error,
+              durationMs: Math.max(0, at - started),
+            });
+            return settleDelivery(w, d, ok, error, at, deps.scale ?? 1);
+          });
           if (result === "failed") {
             log.warn("webhook delivery gave up", { webhook: d.webhookId, type: d.type, error });
           }

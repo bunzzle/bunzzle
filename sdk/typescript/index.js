@@ -162,6 +162,26 @@ export class Bunzzle {
     return this.#request("POST", `/webhooks`, { body });
   }
 
+  listWebhookDeliveries(id, options = {}) {
+    return this.#request("GET", `/webhooks/${segment(id)}/deliveries`, {
+      query: {
+        from: options.from,
+        to: options.to,
+        failed: options.failed,
+        before: options.before,
+        limit: options.limit,
+      },
+    });
+  }
+
+  resendWebhookDelivery(id, delivery) {
+    return this.#request("POST", `/webhooks/${segment(id)}/deliveries/${segment(delivery)}/resend`);
+  }
+
+  resendWebhookRange(id, body) {
+    return this.#request("POST", `/webhooks/${segment(id)}/resend`, { body });
+  }
+
   deleteWebhook(id) {
     return this.#request("DELETE", `/webhooks/${segment(id)}`);
   }

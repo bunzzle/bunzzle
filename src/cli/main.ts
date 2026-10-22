@@ -56,7 +56,7 @@ Usage:
   bunzzle projects    add|list|show|limits|suspend|resume|remove projects (needs \`serve\` running)
   bunzzle pools       list IP pools; own POOL PROJECT gives a pool to one project; share POOL (needs \`serve\` running)
   bunzzle paths       sending speed per destination and why it changed (needs \`serve\` running)
-  bunzzle webhooks    add|list|remove event webhooks (needs \`serve\` running)
+  bunzzle webhooks    add|list|remove event webhooks; deliveries ID shows every attempt; resend ID DELIVERY or --from --to (needs \`serve\` running)
   bunzzle routes      add|list|remove|retry inbound routes: mail for an address posted to a URL (needs \`serve\` running)
   bunzzle hooks       add|list|remove checks that can accept, change or refuse email before it is queued (needs \`serve\` running)
   bunzzle ips         source IPs, reverse DNS and warm-up progress (needs \`serve\` running)
@@ -109,6 +109,7 @@ API (bunzzle serve):
   POST /emails            Idempotency-Key header; fields include expires_at, require_tls, lane
   GET  /paths             sending speed per destination, limits and recent changes
   GET|POST /webhooks, DELETE /webhooks/:id     signed in the Standard Webhooks format
+  GET /webhooks/:id/deliveries, POST /webhooks/:id/deliveries/:delivery/resend, POST /webhooks/:id/resend
   GET|POST /routes, DELETE /routes/:id, POST /routes/:id/retry   inbound mail to a URL
   GET|POST /suppressions, DELETE /suppressions/:email
   GET|POST /u/:token      one-click unsubscribe (public, added to bulk email)

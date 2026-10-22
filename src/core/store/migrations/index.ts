@@ -27,6 +27,7 @@ import poolOwners from "./0026_pool_owners.sql" with { type: "text" };
 import suppressionsAddress from "./0027_suppressions_address.sql" with { type: "text" };
 import domainMode from "./0028_domain_mode.sql" with { type: "text" };
 import domainSlotKeys from "./0029_domain_slot_keys.sql" with { type: "text" };
+import webhookAttempts from "./0030_webhook_attempts.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -64,4 +65,5 @@ export const migrations: readonly Migration[] = [
   { version: 27, name: "suppressions by address", sql: suppressionsAddress },
   { version: 28, name: "domain mode", sql: domainMode },
   { version: 29, name: "domain slot keys", sql: domainSlotKeys },
+  { version: 30, name: "webhook attempts", sql: webhookAttempts },
 ];
