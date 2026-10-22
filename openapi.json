@@ -32,6 +32,9 @@
       "name": "Webhooks"
     },
     {
+      "name": "IP pools"
+    },
+    {
       "name": "Inbound routes"
     },
     {
@@ -1347,6 +1350,120 @@
           "Webhooks"
         ],
         "summary": "Remove a webhook",
+        "description": "API key scope: full (full keys can do everything).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deleted"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pool-rules": {
+      "get": {
+        "operationId": "listPoolRules",
+        "tags": [
+          "IP pools"
+        ],
+        "summary": "Rules that pick the IP pool by recipient domain or provider",
+        "description": "API key scope: read (full keys can do everything).",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolRuleList"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createPoolRule",
+        "tags": [
+          "IP pools"
+        ],
+        "summary": "Send mail for a recipient domain or provider from a pool",
+        "description": "API key scope: full (full keys can do everything).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePoolRule"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolRule"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pool-rules/{id}": {
+      "delete": {
+        "operationId": "deletePoolRule",
+        "tags": [
+          "IP pools"
+        ],
+        "summary": "Remove a pool rule",
         "description": "API key scope: full (full keys can do everything).",
         "parameters": [
           {
@@ -4921,6 +5038,116 @@
         "required": [
           "id",
           "deleted"
+        ]
+      },
+      "PoolRuleList": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "list"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "object": {
+                  "const": "pool_rule"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "match": {
+                  "type": "string",
+                  "description": "Recipient domain, or a provider such as google or microsoft"
+                },
+                "pool": {
+                  "type": "string",
+                  "description": "IP pool name, or relay (server rules only)"
+                },
+                "scope": {
+                  "type": "string",
+                  "enum": [
+                    "project",
+                    "server"
+                  ]
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "required": [
+                "object",
+                "id",
+                "match",
+                "pool",
+                "scope",
+                "created_at"
+              ]
+            }
+          }
+        },
+        "required": [
+          "object",
+          "data"
+        ]
+      },
+      "CreatePoolRule": {
+        "type": "object",
+        "properties": {
+          "match": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 253
+          },
+          "pool": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          }
+        },
+        "required": [
+          "match",
+          "pool"
+        ]
+      },
+      "PoolRule": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "const": "pool_rule"
+          },
+          "id": {
+            "type": "string"
+          },
+          "match": {
+            "type": "string",
+            "description": "Recipient domain, or a provider such as google or microsoft"
+          },
+          "pool": {
+            "type": "string",
+            "description": "IP pool name, or relay (server rules only)"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "project",
+              "server"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "object",
+          "id",
+          "match",
+          "pool",
+          "scope",
+          "created_at"
         ]
       },
       "RouteList": {

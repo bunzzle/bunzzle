@@ -21,6 +21,8 @@ const TABLE: [suffix: string, provider: Provider][] = [
   ["web.de", { id: "gmx", name: "GMX / WEB.DE", tlsRequired: true }],
 ];
 
+export const PROVIDER_IDS: readonly string[] = [...new Set(TABLE.map(([, p]) => p.id))];
+
 export function providerOf(mxHost: string): Provider | null {
   const host = mxHost.toLowerCase().replace(/\.$/, "");
   for (const [suffix, provider] of TABLE) {
@@ -31,4 +33,14 @@ export function providerOf(mxHost: string): Provider | null {
 
 export function siteOf(mxHosts: string[]): string {
   return [...new Set(mxHosts.map((h) => h.toLowerCase()))].sort().join(",");
+}
+
+export function providerOfTargets(
+  targets: { host: string; preference: number }[],
+): Provider | null {
+  if (targets.length === 0) return null;
+  const best = Math.min(...targets.map((t) => t.preference));
+  const found = targets.filter((t) => t.preference === best).map((t) => providerOf(t.host));
+  const first = found[0] ?? null;
+  return first && found.every((p) => p?.id === first.id) ? first : null;
 }

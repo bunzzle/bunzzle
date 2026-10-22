@@ -121,3 +121,40 @@ test("a domain tied to a pool records it on its email; unknown pools are refused
   expect((await cli("keys", "create", "--name", "k", "--pool", "nowhere")).code).not.toBe(0);
   expect((await cli("keys", "create", "--name", "k", "--pool", "acme")).code).toBe(0);
 }, 60_000);
+
+test("pool rules: the CLI adds server rules, the API adds project rules; bad targets are refused", async () => {
+  const added = await cli("pools", "rules", "add", "Google", "acme");
+  expect(added.code).toBe(0);
+  expect(added.stdout).toMatch(/^\S+ {2}mail for google goes out from acme/);
+  const id = added.stdout.split(" ")[0] as string;
+  expect((await cli("pools", "rules")).stdout).toContain(`${id}  google`);
+  expect((await cli("pools", "rules", "add", "google", "acme")).stderr).toContain(
+    "there is already a rule for google",
+  );
+  expect((await cli("pools", "rules", "add", "example.org", "relay")).stderr).toContain(
+    "this server has no BUNZZLE_RELAY_HOST",
+  );
+  expect((await cli("pools", "rules", "add", "example.org", "nowhere")).stderr).toContain(
+    "no source IP is in the pool nowhere",
+  );
+
+  const project = await api("/pool-rules", {
+    method: "POST",
+    body: JSON.stringify({ match: "Example.ORG", pool: "acme" }),
+  });
+  expect(await project.json()).toMatchObject({
+    match: "example.org",
+    pool: "acme",
+    scope: "project",
+  });
+  const relay = await api("/pool-rules", {
+    method: "POST",
+    body: JSON.stringify({ match: "example.net", pool: "relay" }),
+  });
+  expect(relay.status).toBe(422);
+  const list = (await (await api("/pool-rules")).json()) as { data: { match: string }[] };
+  expect(list.data.map((r) => r.match)).toEqual(["example.org"]);
+
+  expect((await cli("pools", "rules", "remove", id)).stdout).toBe(`Removed ${id}.\n`);
+  expect((await cli("pools", "rules")).stdout).toContain("No pool rules");
+}, 60_000);

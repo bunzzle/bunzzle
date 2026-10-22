@@ -190,6 +190,18 @@ export class Bunzzle {
     return this.#request("DELETE", `/webhooks/${segment(id)}`);
   }
 
+  listPoolRules() {
+    return this.#request("GET", `/pool-rules`);
+  }
+
+  createPoolRule(body) {
+    return this.#request("POST", `/pool-rules`, { body });
+  }
+
+  deletePoolRule(id) {
+    return this.#request("DELETE", `/pool-rules/${segment(id)}`);
+  }
+
   listRoutes() {
     return this.#request("GET", `/routes`);
   }

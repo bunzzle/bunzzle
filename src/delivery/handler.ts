@@ -1,4 +1,6 @@
 import type { Database } from "bun:sqlite";
+import type { PoolChoice } from "../accounts/pool-rules.ts";
+import type { ProjectId } from "../accounts/projects.ts";
 import { projectOfMessage } from "../accounts/projects.ts";
 import type { SourceIp } from "../config.ts";
 import { type Clock, systemClock } from "../core/clock.ts";
@@ -15,7 +17,7 @@ import { bucketOf, choose, countWarmup } from "../ips/warmup.ts";
 import { domainOf } from "../mime/address.ts";
 import { SUSPENDED_PREFIX, suspensionFor } from "../queue/control.ts";
 import { type Classification, classify } from "../replies/classify.ts";
-import { providerOf, siteOf } from "../routing/providers.ts";
+import { providerOfTargets, siteOf } from "../routing/providers.ts";
 import type { JobContext } from "../scheduler/scheduler.ts";
 import { type Admission, Shaper } from "../shaping/shaper.ts";
 import type { DeliveryReport } from "../smtp/deliver.ts";
@@ -46,6 +48,12 @@ export interface DeliveryHandlerOptions {
   suspendRetryMs?: number;
   relayRoutes?: () => { targets: string[]; blocked: boolean } | null;
   listed?: (ip: string) => boolean;
+  poolRules?: (job: {
+    project: ProjectId;
+    domain: string;
+    provider: string | null;
+    senderPool: string | null;
+  }) => PoolChoice;
 }
 
 const RELAY = "relay";
@@ -64,7 +72,7 @@ const SOURCE = "delivery";
 
 function targetFor(destination: Destination, domain: string): string {
   if (destination.kind !== "targets") return domain;
-  return providerOf(destination.mxHosts[0] ?? "")?.id ?? siteOf(destination.mxHosts);
+  return providerOfTargets(destination.targets)?.id ?? siteOf(destination.mxHosts);
 }
 
 function stateOf(r: RecipientResult, v: Classification): RecipientState {
@@ -257,9 +265,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
     }
     const target = targetFor(destination, job.target);
     const provider =
-      destination.kind === "targets"
-        ? (providerOf(destination.mxHosts[0] ?? "")?.id ?? null)
-        : null;
+      destination.kind === "targets" ? (providerOfTargets(destination.targets)?.id ?? null) : null;
     const byProvider = provider ? suspended(provider) : null;
     if (byProvider) return byProvider;
     const lane = job.priority > 0 ? "bulk" : "transactional";
@@ -293,10 +299,28 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
     const routes =
       destination.kind === "targets" && !simulated ? (o.relayRoutes?.() ?? null) : null;
     const canFallback = routes?.blocked === true && !email.requireTls;
+    const senderPool = (job.metadata["pool"] as string | null | undefined) ?? null;
+    const rules =
+      destination.kind === "targets" && !simulated && o.poolRules
+        ? o.poolRules({
+            project: job.project as ProjectId,
+            domain: job.target,
+            provider,
+            senderPool,
+          })
+        : null;
+    if (rules && rules.skipped.length > 0) {
+      o.log.warn("pool rule skipped: its pool has no source IPs or belongs to another project", {
+        rules: rules.skipped,
+        project: job.project,
+        domain: job.target,
+      });
+    }
     let via: typeof RELAY | null =
       routes &&
       (routes.targets.includes(job.target) ||
-        (provider !== null && routes.targets.includes(provider)))
+        (provider !== null && routes.targets.includes(provider)) ||
+        (rules !== null && "relay" in rules))
         ? RELAY
         : null;
     let source: string = simulated ? SIMULATOR_SOURCE : RELAY;
@@ -312,7 +336,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
             now,
             (ip) => o.shaper.pausedUntil(Shaper.key(ip, target)),
             o.listed,
-            (job.metadata["pool"] as string | null | undefined) ?? null,
+            rules && "pool" in rules ? rules.pool : senderPool,
           )
         : { source: fixedSource };
       if ("wait" in choice) {

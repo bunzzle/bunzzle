@@ -357,6 +357,22 @@ export const webhookResend = b.object({
   updated_at: time,
 });
 
+export const poolRule = b.object({
+  object: b.literal("pool_rule"),
+  id,
+  match: b.string().describe("Recipient domain, or a provider such as google or microsoft"),
+  pool: b.string().describe("IP pool name, or relay (server rules only)"),
+  scope: b.enum(["project", "server"]),
+  created_at: time,
+});
+
+export const poolRuleList = list(poolRule);
+
+export const createPoolRuleSchema = b.object({
+  match: b.string().min(1).max(253),
+  pool: b.string().min(1).max(32),
+});
+
 export const route = b.object({
   object: b.literal("route"),
   id,

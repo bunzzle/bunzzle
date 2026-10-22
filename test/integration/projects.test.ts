@@ -34,7 +34,10 @@ async function call(key: string, method: string, path: string, body?: unknown) {
 const json = (text: string) => JSON.parse(text) as Record<string, unknown>;
 
 beforeAll(async () => {
-  served = await startServe({ BUNZZLE_MASTER_KEY: generateMasterKey() });
+  served = await startServe({
+    BUNZZLE_MASTER_KEY: generateMasterKey(),
+    BUNZZLE_SOURCE_IPS: "127.0.0.1",
+  });
   a = lastLine(
     await cli(
       "keys",
@@ -86,6 +89,9 @@ beforeAll(async () => {
     (await call(a, "POST", "/templates", { name: "welcome", subject: "Hi", text: "Hi" })).text,
   )["id"] as string;
   await call(a, "POST", "/suppressions", { email: "blocked@dest.test" });
+  owned["pool-rules"] = json(
+    (await call(a, "POST", "/pool-rules", { match: "dest.test", pool: "main" })).text,
+  )["id"] as string;
   owned["domains"] = "acme.test";
   owned["suppressions"] = "blocked@dest.test";
 }, 30_000);
@@ -116,6 +122,7 @@ const CREATES = new Set([
   "POST /routes",
   "POST /templates",
   "POST /suppressions",
+  "POST /pool-rules",
 ]);
 
 describe("projects", () => {

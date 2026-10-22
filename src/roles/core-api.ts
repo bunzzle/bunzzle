@@ -1,6 +1,13 @@
 import type { Database } from "bun:sqlite";
 import { keyForHash, type Scope, touchKey } from "../accounts/api-keys.ts";
-import { poolUsableBy } from "../accounts/pools.ts";
+import {
+  createPoolRule,
+  deletePoolRule,
+  listPoolRules,
+  type PoolRule,
+  RELAY_TARGET,
+} from "../accounts/pool-rules.ts";
+import { poolOwner, poolUsableBy } from "../accounts/pools.ts";
 import { findProject, projectOfMessage, SYSTEM_PROJECT } from "../accounts/projects.ts";
 import { type Over, takeQuota } from "../accounts/usage.ts";
 import type { SourceIp } from "../config.ts";
@@ -54,6 +61,7 @@ import { collect, render } from "../metrics/metrics.ts";
 import { AddressError, domainOf, normalizeAddress } from "../mime/address.ts";
 import { senderDomainOf } from "../mime/from.ts";
 import { queueSummary, removeQueued, resume, type Suspension, suspend } from "../queue/control.ts";
+import { PROVIDER_IDS } from "../routing/providers.ts";
 import type { PathView } from "../shaping/shaper.ts";
 import { suppressionFor } from "../suppressions/store.ts";
 import { b } from "../validate/schema.ts";
@@ -66,7 +74,7 @@ import {
   resolveServer,
   scopeOf,
 } from "./actor.ts";
-import { domainName, usablePool } from "./checks.ts";
+import { domainName, knownPool, usablePool } from "./checks.ts";
 import type { DelegationView, NsCheckView, NsTargetView } from "./core-ns.ts";
 import { DOMAIN, enqueueParams, MESSAGE_ID, project, tokenHash } from "./wire.ts";
 
@@ -97,6 +105,7 @@ export interface CoreDeps {
   anomalyFloor?: () => number;
   sharedBounces?: () => boolean;
   ips?: SourceIp[];
+  relay?: boolean;
   tracking?: (domain: string) => unknown;
   scan?: (data: string, from: string, recipients: string[]) => Promise<void>;
   hasCheckHooks?: () => boolean;
@@ -117,6 +126,15 @@ const publicKeyInfo = b.array(
     publicKey: b.string(),
   }),
 );
+
+const poolRuleView = (r: PoolRule) => ({
+  object: "pool_rule",
+  id: r.id,
+  match: r.match,
+  pool: r.target,
+  scope: r.project === null ? "server" : "project",
+  created_at: new Date(r.createdAt).toISOString(),
+});
 
 function domainView(d: Domain) {
   return {
@@ -727,6 +745,53 @@ export function coreMethods(deps: CoreDeps): {
       requireServerWide(db, server(p, "full"));
       if (!deps.nsCheck) throw new RpcError("invalid", "this server has no BUNZZLE_NS_ZONE");
       return deps.nsCheck();
+    }),
+
+    listPoolRules: method(b.object({ tokenHash, project }), (p) => {
+      const scope = scopeOf(server(p, "read"));
+      return listPoolRules(db, scope).map(poolRuleView);
+    }),
+
+    createPoolRule: method(
+      b.object({
+        tokenHash,
+        project,
+        match: b.string().min(1).max(253),
+        pool: b.string().min(1).max(32),
+      }),
+      async (p) => {
+        const scope = scopeOf(server(p, "full"));
+        const match = PROVIDER_IDS.includes(p.match.toLowerCase())
+          ? p.match.toLowerCase()
+          : domainName(p.match);
+        if (p.pool === RELAY_TARGET) {
+          if (scope !== null)
+            throw new RpcError("invalid", "only the server can send through the relay");
+          if (!deps.relay) throw new RpcError("invalid", "this server has no BUNZZLE_RELAY_HOST");
+        } else if (scope !== null) {
+          usablePool(db, deps.ips, scope, p.pool);
+        } else {
+          knownPool(deps.ips, p.pool);
+          const owner = poolOwner(db, p.pool);
+          if (owner) {
+            throw new RpcError(
+              "invalid",
+              `the pool ${p.pool} belongs to a project; add the rule with that project's key`,
+            );
+          }
+        }
+        const rule = await writer.run((d) => createPoolRule(d, scope, match, p.pool, now()));
+        if (!rule) throw new RpcError("started", `there is already a rule for ${match}`);
+        return poolRuleView(rule);
+      },
+    ),
+
+    deletePoolRule: method(b.object({ tokenHash, project, id: b.string().max(64) }), async (p) => {
+      const scope = scopeOf(server(p, "full"));
+      if (!(await writer.run((d) => deletePoolRule(d, scope, p.id)))) {
+        throw new RpcError("not-found", "pool rule not found");
+      }
+      return { id: p.id, deleted: true };
     }),
 
     getDomain: method(b.object({ tokenHash, project, name: b.string().max(253) }), (p) => {
