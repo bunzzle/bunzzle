@@ -553,6 +553,32 @@ export type Deleted = {
   deleted: boolean;
 };
 
+export type PoolRuleList = {
+  object: "list";
+  data: {
+    object: "pool_rule";
+    id: string;
+    match: string;
+    pool: string;
+    scope: "project" | "server";
+    created_at: string;
+  }[];
+};
+
+export type CreatePoolRule = {
+  match: string;
+  pool: string;
+};
+
+export type PoolRule = {
+  object: "pool_rule";
+  id: string;
+  match: string;
+  pool: string;
+  scope: "project" | "server";
+  created_at: string;
+};
+
 export type RouteList = {
   object: "list";
   data: {
@@ -793,6 +819,9 @@ export declare class Bunzzle {
   resendWebhookRange(id: string, body: ResendWebhook): Promise<WebhookResend>;
   getWebhookResend(id: string, resend: string): Promise<WebhookResend>;
   deleteWebhook(id: string): Promise<Deleted>;
+  listPoolRules(): Promise<PoolRuleList>;
+  createPoolRule(body: CreatePoolRule): Promise<PoolRule>;
+  deletePoolRule(id: string): Promise<Deleted>;
   listRoutes(): Promise<RouteList>;
   createRoute(body: CreateRoute): Promise<Route>;
   deleteRoute(id: string): Promise<Deleted>;
