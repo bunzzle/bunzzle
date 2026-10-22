@@ -392,7 +392,7 @@ export async function runCore(config: Config, log: Logger) {
     publish: (records) => rotate.publish(records),
     switchMode: (name, mode) => rotate.switchMode(name, mode),
     tracking: (domain) => tracking.view(domain),
-    scan: hooks.scan,
+    filter: hooks.filter,
     hasCheckHooks: hooks.hasCheckHooks,
   });
   const feedback = feedbackMethods({

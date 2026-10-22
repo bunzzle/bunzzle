@@ -126,7 +126,10 @@ export interface CoreDeps {
   ips?: SourceIp[];
   relay?: boolean;
   tracking?: (domain: string) => unknown;
-  scan?: (data: string, from: string, recipients: string[]) => Promise<void>;
+  filter?: (
+    data: string,
+    m: { id: string; from: string; recipients: string[]; user: string },
+  ) => Promise<string>;
   hasCheckHooks?: () => boolean;
   publish?: (records: DomainRecord[]) => Promise<boolean>;
   switchMode?: (name: string, mode: DomainMode) => Promise<Domain>;
@@ -355,8 +358,15 @@ export function coreMethods(deps: CoreDeps): {
     }
     const counted = key?.test ? 0 : sending.size;
     const hashes = key?.test ? [] : await Promise.all([...sending].map(deps.recipientHash));
-    await deps.scan?.(p.data, envelopeFrom, p.recipients);
-    const body = await sealer.seal(await deps.currentKey(), id, p.data);
+    const data = deps.filter
+      ? await deps.filter(p.data, {
+          id,
+          from: envelopeFrom,
+          recipients: p.recipients,
+          user: key?.id ?? project,
+        })
+      : p.data;
+    const body = await sealer.seal(await deps.currentKey(), id, data);
     return {
       id,
       existed: false as const,

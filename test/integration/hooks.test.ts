@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { generateMasterKey } from "../../src/crypto/master.ts";
+import { frame } from "../../src/milter/protocol.ts";
 import { type FakeDns, startFakeDns, type Zone } from "../support/fake-dns.ts";
+import { type FakeMilter, startFakeMilter } from "../support/fake-milter.ts";
 import { type FakeMx, startFakeMx } from "../support/fake-mx.ts";
 import { type Served, startServe } from "../support/serve.ts";
 
@@ -15,6 +17,7 @@ let served: Served;
 let token: string;
 let checker: ReturnType<typeof Bun.serve>;
 let scanner: ReturnType<typeof Bun.serve>;
+let milter: FakeMilter;
 let checkReply: () => Response | Promise<Response> = () => Response.json({ action: "accept" });
 let score = 0;
 const checked: { email: Record<string, unknown>; api_key_id: string | null }[] = [];
@@ -80,6 +83,7 @@ beforeAll(async () => {
       return Response.json({ score, action: "no action" });
     },
   });
+  milter = startFakeMilter();
   served = await startServe({
     BUNZZLE_MASTER_KEY: generateMasterKey(),
     BUNZZLE_DNS_SERVERS: `127.0.0.1:${dns.port}`,
@@ -107,6 +111,7 @@ afterAll(async () => {
   await served.stop();
   checker.stop(true);
   scanner.stop(true);
+  milter.stop();
   dns.stop();
   mx.stop();
 });
@@ -206,5 +211,42 @@ describe("hooks before sending", () => {
     expect(((await r.json()) as { message: string }).message).toBe(
       "The content check refused this email (score 9, limit 6).",
     );
+  });
+
+  test("a milter sees the email, changes headers and can refuse", async () => {
+    for (const line of (await cli("hooks", "list")).stdout.split("\n"))
+      await cli("hooks", "remove", line.split(/\s+/)[0] as string);
+    expect((await cli("hooks", "add", "milter", "http://127.0.0.1:1/")).code).not.toBe(0);
+    const add = await cli("hooks", "add", "milter", `inet:127.0.0.1:${milter.port}`);
+    expect(add.code).toBe(0);
+    milter.onEnd = () => [
+      frame("h", "X-Filtered\0", "yes\0"),
+      frame("m", new Uint8Array([0, 0, 0, 1]), "Subject\0", "Milter subject\0"),
+      frame("a"),
+    ];
+    expect((await send()).status).toBe(200);
+    const raw = await received("Milter subject");
+    expect(raw).toContain("X-Filtered: yes");
+    expect(raw).toMatch(/^DKIM-Signature:/m);
+    const codes = milter.sessions.at(-1)?.frames.map((f) => f.code) ?? [];
+    expect(codes).toContain("B");
+    expect(
+      new TextDecoder().decode(milter.sessions.at(-1)?.frames.find((f) => f.code === "M")?.data),
+    ).toBe("<hello@acme.test>\0");
+
+    milter.onEnd = () => [frame("y", "550 5.7.1 Blocked by policy\0")];
+    const refused = await send();
+    expect(refused.status).toBe(422);
+    expect(((await refused.json()) as { message: string }).message).toBe(
+      "A content filter refused this email: 550 5.7.1 Blocked by policy",
+    );
+    milter.onEnd = () => [frame("t")];
+    expect((await send()).status).toBe(503);
+
+    milter.onEnd = () => [];
+    await cli("hooks", "remove", add.stdout.split(/\s+/)[1] as string);
+    await cli("hooks", "add", "milter", `inet:127.0.0.1:${milter.port}`, "--timeout-ms", "300");
+    expect((await send({ subject: "Through anyway" })).status).toBe(200);
+    expect(await received("Through anyway")).toContain("Subject: Through anyway");
   });
 });
