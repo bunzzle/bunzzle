@@ -1,11 +1,14 @@
+import { DerError } from "../asn1/der.ts";
 import type { Config } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import { masterKeyFrom } from "../crypto/master.ts";
 import { transitStore } from "../dkim/store.ts";
 import { method, RpcError, serveRpc } from "../ipc/rpc.ts";
+import { NodeCa } from "../signer/node-ca.ts";
 import { loadRecipientKey } from "../signer/recipient-key.ts";
 import { dkimKeyFilesIn, Signer, SignerError } from "../signer/signer.ts";
 import { b } from "../validate/schema.ts";
+import { parseCertificateRequest } from "../x509/issue.ts";
 import { every, onStop, privateDir, ready } from "./runtime.ts";
 import { fromWire, MESSAGE_ID, sealedBodyWire, sockets } from "./wire.ts";
 
@@ -18,15 +21,19 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
     ...(config.dkimKeyFile ? [config.dkimKeyFile] : []),
     ...(await dkimKeyFilesIn(`${config.keysDir}/dkim`)),
   ];
+  const store = config.dkimStore
+    ? transitStore(config.dkimStore.socket, config.dkimStore.mount)
+    : null;
   const signer = await Signer.create({
     master,
     keystorePath: `${config.keysDir}/epochs.json`,
     dkimKeyFiles: files,
     dkimDir: `${config.keysDir}/dkim`,
     publicUrl: config.publicUrl,
-    store: config.dkimStore ? transitStore(config.dkimStore.socket, config.dkimStore.mount) : null,
+    store,
   });
   const recipientKey = await loadRecipientKey(`${config.keysDir}/recipients.json`, master);
+  const nodeCa = await NodeCa.open(`${config.keysDir}/node-ca.json`, master, store, Date.now());
 
   const shred = async () => {
     const gone = await signer.shred(config.retentionDays);
@@ -41,6 +48,25 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
     }),
     domains: method(b.object({}), () => signer.domains()),
     recipientKey: method(b.object({}), () => recipientKey.toBase64()),
+    nodeCa: method(b.object({}), () => nodeCa.trusted()),
+    issueNodeCertificate: method(
+      b.object({
+        csr: b.string().max(4000),
+        purpose: b.enum(["client", "server"]),
+        days: b.number().int().min(1).max(30),
+      }),
+      async ({ csr, purpose, days }) => {
+        let request: Awaited<ReturnType<typeof parseCertificateRequest>>;
+        try {
+          request = await parseCertificateRequest(Uint8Array.fromBase64(csr));
+        } catch (err) {
+          throw new RpcError("invalid", err instanceof DerError ? err.message : "bad request");
+        }
+        const cert = await nodeCa.issue(request.name, request.spki, purpose, days, Date.now());
+        log.info("node certificate issued", { name: request.name, purpose, days });
+        return { cert, ca: nodeCa.trusted() };
+      },
+    ),
     ensureKeys: method(
       b.object({
         domain: b.string().regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/),

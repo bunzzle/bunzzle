@@ -90,7 +90,10 @@ async function rsaKey(spki: Uint8Array, alg: { name: string; hash: string }): Pr
   return key;
 }
 
-export async function verifySignature(cert: Certificate, issuerSpki: Uint8Array): Promise<boolean> {
+export async function verifySignature(
+  cert: Pick<Certificate, "tbs" | "signature" | "signatureAlgorithm">,
+  issuerSpki: Uint8Array,
+): Promise<boolean> {
   try {
     const sig = cert.signatureAlgorithm;
     const key = keyAlgorithm(issuerSpki);

@@ -12,6 +12,12 @@ type StoreFile = b.infer<typeof schema>;
 
 const context = (epoch: number) => `bunzzle epoch v1:${epoch}`;
 
+export async function writePrivateJson(path: string, data: unknown): Promise<void> {
+  const tmp = `${path}.${crypto.randomUUID()}.tmp`;
+  await Bun.write(tmp, `${JSON.stringify(data, null, 2)}\n`);
+  await Bun.$`chmod 600 ${tmp} && mv -f ${tmp} ${path}`.quiet();
+}
+
 export class Keystore {
   readonly #path: string;
   readonly #master: MasterKey;
@@ -101,11 +107,7 @@ export class Keystore {
   }
 
   #persist(): Promise<void> {
-    const run = async () => {
-      const tmp = `${this.#path}.${crypto.randomUUID()}.tmp`;
-      await Bun.write(tmp, `${JSON.stringify(this.#file, null, 2)}\n`);
-      await Bun.$`chmod 600 ${tmp} && mv -f ${tmp} ${this.#path}`.quiet();
-    };
+    const run = () => writePrivateJson(this.#path, this.#file);
     this.#writing = this.#writing.then(run, run);
     return this.#writing;
   }
