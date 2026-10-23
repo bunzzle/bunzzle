@@ -41,6 +41,7 @@ import { UsageError } from "./args.ts";
 import { backupCommand, restoreCommand } from "./backup.ts";
 import { dkimCommand } from "./dkim.ts";
 import { dnsTestCommand } from "./dnstest.ts";
+import { nodesCommand } from "./nodes.ts";
 import { postmasterCommand } from "./postmaster.ts";
 import { sendCommand } from "./send.ts";
 
@@ -56,6 +57,7 @@ Usage:
   bunzzle keys        create|list|revoke API keys; --admin for a key that manages projects (needs \`serve\` running)
   bunzzle projects    add|list|show|limits|suspend|resume|remove projects (needs \`serve\` running)
   bunzzle pools       list IP pools; own POOL PROJECT gives a pool to one project; share POOL; rules [add DOMAIN|PROVIDER POOL|relay | remove ID] (needs \`serve\` running)
+  bunzzle nodes       delivery nodes: request NAME (on the node); add NAME ADDRESS CSR_FILE, list, remove NAME (on core, needs \`serve\` running); install BUNDLE_FILE (on the node)
   bunzzle paths       sending speed per destination and why it changed (needs \`serve\` running)
   bunzzle webhooks    add|list|remove event webhooks; deliveries ID shows every attempt; resend ID DELIVERY or --from --to (needs \`serve\` running)
   bunzzle routes      add|list|remove|retry inbound routes: mail for an address posted to a URL (needs \`serve\` running)
@@ -235,6 +237,8 @@ async function main(input: string[]) {
       return projectsCommand(argv.slice(1), loadConfig());
     case "pools":
       return poolsCommand(argv.slice(1), loadConfig());
+    case "nodes":
+      return nodesCommand(argv.slice(1), loadConfig());
     case "paths":
       return pathsCommand(argv.slice(1), loadConfig());
     case "doctor":

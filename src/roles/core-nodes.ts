@@ -37,8 +37,7 @@ export function nodeMethods(deps: NodeDeps): Methods {
         if (!validName(name)) {
           throw new RpcError("invalid", "node names use a-z, 0-9 and -, up to 63 characters");
         }
-        const at = parseLinkAddress(address);
-        if (!at)
+        if (!parseLinkAddress(address))
           throw new RpcError("invalid", "use <ip>:<port> or [<ipv6>]:<port>, port 1024-65535");
         if (getNode(db, name)) throw new RpcError("invalid", `there is already a node ${name}`);
         const { cert, ca } = await signer.call(

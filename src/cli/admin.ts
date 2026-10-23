@@ -38,7 +38,7 @@ export function useProject(name: string): void {
   projectName = name;
 }
 
-async function call<T>(config: Config, method: string, params: unknown): Promise<T> {
+export async function call<T>(config: Config, method: string, params: unknown): Promise<T> {
   const runDir = await runDirOf(config);
   const core = new RpcClient(adminSocket(runDir));
   const withProject =
