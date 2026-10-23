@@ -481,6 +481,15 @@ export const OPERATIONS: Operation[] = [
   },
   {
     method: "GET",
+    path: "/nodes",
+    id: "listNodes",
+    tag: "Operations",
+    summary: "Delivery roles with their state, source IPs and jobs in flight",
+    scope: ["read"],
+    response: ["OperatorList", s.operatorList],
+  },
+  {
+    method: "GET",
     path: "/holds",
     id: "listHolds",
     tag: "Operations",

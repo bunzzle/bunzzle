@@ -16,6 +16,7 @@ export interface NodeHealth {
   lastSeen: number | null;
   ips: string[];
   error: string | null;
+  delivered: number;
 }
 
 interface State {
@@ -25,6 +26,7 @@ interface State {
   failures: number;
   ips: string[];
   error: string | null;
+  delivered: number;
 }
 
 export interface FleetDeps {
@@ -53,6 +55,7 @@ export class DeliveryFleet {
       failures: 0,
       ips: [],
       error: null,
+      delivered: 0,
     });
   }
 
@@ -67,7 +70,15 @@ export class DeliveryFleet {
   #stateOf(name: string): State {
     let s = this.#state.get(name);
     if (!s) {
-      s = { up: false, downSince: this.#now(), lastSeen: null, failures: 0, ips: [], error: null };
+      s = {
+        up: false,
+        downSince: this.#now(),
+        lastSeen: null,
+        failures: 0,
+        ips: [],
+        error: null,
+        delivered: 0,
+      };
       this.#state.set(name, s);
     }
     return s;
@@ -114,6 +125,11 @@ export class DeliveryFleet {
     this.#d.log.warn("delivery node down", { name, error });
   }
 
+  delivered(name: string, n: number): void {
+    const s = this.#state.get(name);
+    if (s) s.delivered += n;
+  }
+
   #owners(ip: string): string[] {
     return [...this.#state.entries()].filter(([, s]) => s.ips.includes(ip)).map(([n]) => n);
   }
@@ -155,6 +171,11 @@ export class DeliveryFleet {
     return this.down(ip) === null;
   }
 
+  nodeOf(source: string): string | null {
+    const owner = this.ownerOf(source);
+    return owner === LOCAL ? null : owner;
+  }
+
   clientFor(source: string): { name: string; client: RpcClient } {
     const owner = this.ownerOf(source);
     const name = owner ?? LOCAL;
@@ -164,7 +185,14 @@ export class DeliveryFleet {
   health(): NodeHealth[] {
     return this.#names().map((name) => {
       const s = this.#stateOf(name);
-      return { name, up: s.up, lastSeen: s.lastSeen, ips: [...s.ips], error: s.error };
+      return {
+        name,
+        up: s.up,
+        lastSeen: s.lastSeen,
+        ips: [...s.ips],
+        error: s.error,
+        delivered: s.delivered,
+      };
     });
   }
 }

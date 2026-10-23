@@ -3,6 +3,7 @@ import type { ProjectId } from "../accounts/projects.ts";
 import { countByState } from "../core/jobs.ts";
 import type { StorageState } from "../core/storage.ts";
 import { PROJECT_HOLDS } from "../guards/guards.ts";
+import type { NodeHealth } from "../nodes/fleet.ts";
 import type { DelegationView, NsTargetView } from "../roles/core-ns.ts";
 import type { PathView } from "../shaping/shaper.ts";
 import { VERSION } from "../version.ts";
@@ -41,6 +42,22 @@ export function render(families: Family[]): string {
   return `${lines.join("\n")}\n`;
 }
 
+function nodeJobs(db: Database, project: ProjectId | null, nodes: NodeHealth[]) {
+  const rows = db
+    .query<{ node: string; state: string; n: number }, [string | null]>(
+      `SELECT coalesce(node, 'local') AS node, state, count(*) AS n FROM jobs
+       WHERE state IN ('leased', 'unknown') AND (?1 IS NULL OR project_id = ?1)
+       GROUP BY 1, 2`,
+    )
+    .all(project);
+  return nodes.flatMap((n) =>
+    (["leased", "unknown"] as const).map((state) => ({
+      labels: { node: n.name, state },
+      value: rows.find((r) => r.node === n.name && r.state === state)?.n ?? 0,
+    })),
+  );
+}
+
 export function collect(
   db: Database,
   project: ProjectId | null,
@@ -50,6 +67,7 @@ export function collect(
   storage?: StorageState,
   ns?: NsTargetView[] | null,
   delegation?: DelegationView | null,
+  nodes?: NodeHealth[] | null,
 ): Family[] {
   const jobs = countByState(db, project);
   const recipients = db
@@ -228,6 +246,34 @@ export function collect(
         .all(Math.floor(now / 3_600_000) - 24, project)
         .map((r) => ({ labels: { project: r.name }, value: r.n })),
     },
+    ...(nodes
+      ? [
+          {
+            name: "bunzzle_node_up",
+            type: "gauge" as const,
+            help: "1 while core reaches this delivery role.",
+            samples: nodes.map((n) => ({ labels: { node: n.name }, value: n.up ? 1 : 0 })),
+          },
+          {
+            name: "bunzzle_node_ips",
+            type: "gauge" as const,
+            help: "Source IPs this delivery role reported at the last check.",
+            samples: nodes.map((n) => ({ labels: { node: n.name }, value: n.ips.length })),
+          },
+          {
+            name: "bunzzle_node_delivered",
+            type: "counter" as const,
+            help: "Recipients delivered through this delivery role since the core role started.",
+            samples: nodes.map((n) => ({ labels: { node: n.name }, value: n.delivered })),
+          },
+          {
+            name: "bunzzle_node_jobs",
+            type: "gauge" as const,
+            help: "Jobs whose last attempt went to this delivery role and are still leased or waiting for a check.",
+            samples: nodeJobs(db, project, nodes),
+          },
+        ]
+      : []),
     ...(ns
       ? [
           {

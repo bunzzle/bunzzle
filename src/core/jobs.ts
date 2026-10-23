@@ -82,6 +82,7 @@ export interface ClaimedJob {
   unresolvedAttempt: number | null;
   priority: number;
   path: string | null;
+  node: string | null;
 }
 
 export interface ClaimFilter {
@@ -99,6 +100,7 @@ interface LeasedRow {
   unresolved_attempt: number | null;
   priority: number;
   path: string | null;
+  node: string | null;
 }
 
 interface Fairness {
@@ -144,7 +146,7 @@ const PATHS_OPEN = (paused: string, full: string) => `(path IS NULL OR (
          ))`;
 
 const RETURNING =
-  "RETURNING id, message_id, target, project_id, attempt, expires_at, unresolved_attempt, priority, path";
+  "RETURNING id, message_id, target, project_id, attempt, expires_at, unresolved_attempt, priority, path, node";
 
 export function claim(
   db: Database,
@@ -258,6 +260,7 @@ export function claim(
         unresolvedAttempt: r.unresolved_attempt,
         priority: r.priority,
         path: r.path,
+        node: r.node,
       },
     ];
   });
@@ -406,14 +409,15 @@ export function renewLease(
   job: Pick<ClaimedJob, "id" | "attempt">,
   until: number,
   now: number,
+  node?: string | null,
 ): boolean {
   return (
     db
-      .query<unknown, [number, number, string, number]>(
-        `UPDATE jobs SET lease_until = ?, updated_at = ?
+      .query<unknown, [number, number, number, string | null, string, number]>(
+        `UPDATE jobs SET lease_until = ?, updated_at = ?, node = iif(?, ?, node)
          WHERE id = ? AND attempt = ? AND state = 'leased'`,
       )
-      .run(until, now, job.id, job.attempt).changes > 0
+      .run(until, now, node === undefined ? 0 : 1, node ?? null, job.id, job.attempt).changes > 0
   );
 }
 

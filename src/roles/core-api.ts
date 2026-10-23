@@ -67,6 +67,8 @@ import { dayOf, estimatedDays, listWarmup } from "../ips/warmup.ts";
 import { collect, type Family, render } from "../metrics/metrics.ts";
 import { AddressError, domainOf, normalizeAddress } from "../mime/address.ts";
 import { senderDomainOf } from "../mime/from.ts";
+import type { NodeHealth } from "../nodes/fleet.ts";
+import { listNodes } from "../nodes/registry.ts";
 import type { Span } from "../otel/otlp.ts";
 import { queueSummary, removeQueued, resume, type Suspension, suspend } from "../queue/control.ts";
 import { PROVIDER_IDS } from "../routing/providers.ts";
@@ -138,6 +140,7 @@ export interface CoreDeps {
   switchMode?: (name: string, mode: DomainMode) => Promise<Domain>;
   nsHealth?: () => NsTargetView[] | null;
   nsDelegation?: () => DelegationView | null;
+  nodes?: () => NodeHealth[];
   nsCheck?: () => Promise<NsCheckView>;
   paths?: () => PathView[];
   storage?: () => StorageState;
@@ -1128,9 +1131,39 @@ export function coreMethods(deps: CoreDeps): {
             deps.storage?.(),
             deps.nsHealth?.() ?? null,
             deps.nsDelegation?.() ?? null,
+            deps.nodes?.() ?? null,
           ),
         ),
       };
+    }),
+
+    nodes: method(b.object({ tokenHash, project }), (p) => {
+      const scope = scopeOf(server(p, "read"));
+      const registered = listNodes(db);
+      const jobs = db
+        .query<{ node: string; state: string; n: number }, [string | null]>(
+          `SELECT coalesce(node, 'local') AS node, state, count(*) AS n FROM jobs
+           WHERE state IN ('leased', 'unknown') AND (?1 IS NULL OR project_id = ?1)
+           GROUP BY 1, 2`,
+        )
+        .all(scope);
+      const count = (name: string, state: string) =>
+        jobs.find((j) => j.node === name && j.state === state)?.n ?? 0;
+      return (deps.nodes?.() ?? []).map((h) => {
+        const n = registered.find((x) => x.name === h.name);
+        return {
+          object: "node",
+          name: h.name,
+          address: n?.address ?? null,
+          up: h.up,
+          last_seen_at: h.lastSeen ? new Date(h.lastSeen).toISOString() : null,
+          error: h.error,
+          ips: h.ips,
+          certificate_expires_at: n ? new Date(n.notAfter).toISOString() : null,
+          delivered: h.delivered,
+          jobs: { leased: count(h.name, "leased"), unknown: count(h.name, "unknown") },
+        };
+      });
     }),
 
     paths: method(b.object({ tokenHash, project }), (p) => {
@@ -1185,6 +1218,7 @@ export function coreMethods(deps: CoreDeps): {
       deps.storage?.(),
       deps.nsHealth?.() ?? null,
       deps.nsDelegation?.() ?? null,
+      deps.nodes?.() ?? null,
     );
 
   return { methods, verifyPending, enqueueInternal, families };

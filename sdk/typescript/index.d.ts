@@ -850,6 +850,7 @@ export declare class Bunzzle {
   ): Promise<SuppressionRemoved>;
   runDoctor(): Promise<Doctor>;
   listIps(): Promise<OperatorList>;
+  listNodes(): Promise<OperatorList>;
   listHolds(options?: { all?: boolean }): Promise<OperatorView>;
   releaseHold(id: string): Promise<OperatorView>;
   getQueue(): Promise<OperatorView>;

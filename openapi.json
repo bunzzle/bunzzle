@@ -2110,6 +2110,38 @@
         }
       }
     },
+    "/nodes": {
+      "get": {
+        "operationId": "listNodes",
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Delivery roles with their state, source IPs and jobs in flight",
+        "description": "API key scope: read (full keys can do everything).",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorList"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/holds": {
       "get": {
         "operationId": "listHolds",

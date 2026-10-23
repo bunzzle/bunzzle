@@ -19,7 +19,7 @@ import { defaultRetryPolicy, type RetryPolicy } from "../core/retry.ts";
 import type { Writer } from "../core/store/writer.ts";
 
 export interface JobContext {
-  renew(): Promise<boolean>;
+  renew(node?: string | null): Promise<boolean>;
 }
 
 export type JobHandler = (
@@ -173,9 +173,11 @@ export class Scheduler {
       let outcome: Outcome;
       try {
         outcome = await handle(job, signal, {
-          renew: () =>
+          renew: (node) =>
             writer
-              .run((db) => renewLease(db, job, clock.now() + leaseMs, clock.now()), { quiet: true })
+              .run((db) => renewLease(db, job, clock.now() + leaseMs, clock.now(), node), {
+                quiet: true,
+              })
               .catch(() => false),
         });
       } catch (err) {

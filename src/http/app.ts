@@ -999,6 +999,13 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
           return Response.json({ object: "list", data });
         }),
       },
+      "/nodes": {
+        GET: handle(async (req) => {
+          const caller = await authenticate(req);
+          const data = await rpc("nodes", { tokenHash: caller.hash }, b.array(b.unknown()));
+          return Response.json({ object: "list", data });
+        }),
+      },
       "/holds": {
         GET: handle(async (req) => {
           const caller = await authenticate(req);

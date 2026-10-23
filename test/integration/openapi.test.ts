@@ -188,6 +188,7 @@ describe("API responses match openapi.json", () => {
     await call("GET", "/doctor");
     await call("POST", "/domains/acme.test/rotate");
     await call("GET", "/ips");
+    await call("GET", "/nodes");
     await call("GET", "/holds");
     await call("GET", "/queue");
     await call("POST", "/queue/suspensions", { target: "domain:example.test", reason: "r" });
