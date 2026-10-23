@@ -1,4 +1,6 @@
 import type { Logger } from "../core/log.ts";
+import type { RpcClient } from "../ipc/rpc.ts";
+import { cpuSeconds } from "../metrics/usage.ts";
 
 export function ready(info: Record<string, unknown> = {}) {
   process.send?.({ type: "ready", ...info });
@@ -61,4 +63,13 @@ export function every(ms: number, fn: () => Promise<unknown> | unknown): () => v
     }
   }, ms);
   return () => clearInterval(timer);
+}
+
+export function reportUsage(core: RpcClient, role: "api" | "inbound"): () => void {
+  const send = () =>
+    core
+      .call("roleUsage", { role, cpuSeconds: cpuSeconds() }, { timeoutMs: 5_000 })
+      .catch(() => {});
+  void send();
+  return every(15_000, send);
 }

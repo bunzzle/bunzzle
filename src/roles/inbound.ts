@@ -12,7 +12,7 @@ import { RpcClient, RpcError } from "../ipc/rpc.ts";
 import { blocklists } from "../ips/blocklists.ts";
 import { MimeParseError } from "../mime/parse.ts";
 import { b } from "../validate/schema.ts";
-import { onStop, ready, watchFile } from "./runtime.ts";
+import { onStop, ready, reportUsage, watchFile } from "./runtime.ts";
 import { sockets } from "./wire.ts";
 
 async function loadTls(config: Config): Promise<{ cert: string; key: string } | null> {
@@ -202,7 +202,9 @@ export async function runInbound(config: Config, log: Logger) {
           },
         });
   const idle = server ? null : setInterval(() => {}, 1 << 30);
+  const stopUsage = reportUsage(core, "inbound");
   const restart = onStop(log, () => {
+    stopUsage();
     server?.stop();
     if (idle) clearInterval(idle);
     core.close();

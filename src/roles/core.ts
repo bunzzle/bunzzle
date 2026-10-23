@@ -40,8 +40,9 @@ import { EventLog } from "../eventlog/log.ts";
 import { gmailGuard, savePostmaster } from "../guards/gmail.ts";
 import { reputationGuard } from "../guards/guards.ts";
 import { pruneRouted } from "../inbound/routes.ts";
-import { RpcClient, serveRpc } from "../ipc/rpc.ts";
+import { method, RpcClient, serveRpc } from "../ipc/rpc.ts";
 import { rollover } from "../ips/warmup.ts";
+import { RoleUsage } from "../metrics/usage.ts";
 import { DeliveryFleet, LOCAL } from "../nodes/fleet.ts";
 import { CoreIdentity } from "../nodes/identity.ts";
 import { NodeLinks } from "../nodes/links.ts";
@@ -120,6 +121,18 @@ export async function runCore(config: Config, log: Logger) {
   const links = new NodeLinks({ db, writer, log, signer, identity });
   const fleet = new DeliveryFleet({ local: delivery, links, log });
   await fleet.check();
+  const usage = new RoleUsage({
+    targets: () => [
+      { role: "signer", node: null, client: signer },
+      { role: "dns", node: null, client: dns },
+      { role: "delivery", node: null, client: delivery },
+      ...(ns ? [{ role: "ns", node: null, client: ns }] : []),
+      ...links
+        .names()
+        .map((name) => ({ role: "delivery", node: name, client: links.client(name) })),
+    ],
+    pushed: ["api", "inbound"],
+  });
 
   const settled = new Map<string, string[]>();
   const sentTo = new Map<string, string>();
@@ -396,6 +409,7 @@ export async function runCore(config: Config, log: Logger) {
     nsHealth: () => probe?.view() ?? null,
     nsDelegation: () => delegation?.view() ?? null,
     nodes: () => fleet.health(),
+    roles: () => usage.samples(),
     ...(config.ns && zone
       ? {
           nsCheck: async () => {
@@ -483,6 +497,8 @@ export async function runCore(config: Config, log: Logger) {
   void linkTick();
   const stopLinks = every(3_600_000, linkTick);
   const stopFleet = every(fleet.checkMs, () => fleet.check());
+  void usage.poll();
+  const stopUsage = every(usage.pollMs, () => usage.poll());
   const doctor = doctorMethods({
     db,
     config,
@@ -504,6 +520,13 @@ export async function runCore(config: Config, log: Logger) {
     ...tracking.methods,
     ...hooks.methods,
     ...doctor,
+    roleUsage: method(
+      b.object({ role: b.enum(["api", "inbound"]), cpuSeconds: b.number().min(0).nullable() }),
+      (p) => {
+        usage.report(p.role, p.cpuSeconds);
+        return {};
+      },
+    ),
   };
   const admin = await serveRpc(adminSocket(config.runDir), all, { mode: "600" });
   const inboundDir = sock.coreInbound.slice(0, sock.coreInbound.lastIndexOf("/"));
@@ -699,6 +722,7 @@ export async function runCore(config: Config, log: Logger) {
     await tel?.stop();
     stopLinks();
     stopFleet();
+    stopUsage();
     links.closeAll();
     stopSettled();
     stopZone();

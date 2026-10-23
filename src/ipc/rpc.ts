@@ -1,4 +1,5 @@
 import type { Socket, SocketListener, UnixSocketListener } from "bun";
+import { cpuSeconds } from "../metrics/usage.ts";
 import { b } from "../validate/schema.ts";
 import { parseCertificate } from "../x509/cert.ts";
 
@@ -184,11 +185,14 @@ export interface ServeOptions {
   onRefused?(reason: string, remote: string): void;
 }
 
+const usage = method(b.object({}), async () => ({ cpuSeconds: await cpuSeconds() }));
+
 export async function serveRpc(
   endpoint: Endpoint,
-  methods: Methods,
+  served: Methods,
   opts: ServeOptions = {},
 ): Promise<RpcServer> {
+  const methods: Methods = { usage, ...served };
   const framers = new Map<Socket<undefined>, Framer>();
   const respond = async (framer: Framer, frame: unknown) => {
     const req = request.safeParse(frame);

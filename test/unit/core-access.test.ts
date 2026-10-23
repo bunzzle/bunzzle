@@ -31,6 +31,7 @@ describe("core sockets", () => {
     const called = await calledIn([
       "http/*.ts",
       "roles/api.ts",
+      "roles/runtime.ts",
       "submission/*.ts",
       "tracking/*.ts",
     ]);
@@ -40,7 +41,7 @@ describe("core sockets", () => {
   });
 
   test("the inbound socket has exactly what the inbound role calls", async () => {
-    const called = await calledIn(["roles/inbound.ts", "inbound/*.ts"]);
+    const called = await calledIn(["roles/inbound.ts", "roles/runtime.ts", "inbound/*.ts"]);
     expect([...called].sort()).toEqual([...INBOUND_METHODS].sort());
   });
 

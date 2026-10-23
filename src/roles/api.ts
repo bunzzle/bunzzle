@@ -4,7 +4,7 @@ import { startApp } from "../http/app.ts";
 import { startTrackServer, trackCerts } from "../http/track.ts";
 import { RpcClient } from "../ipc/rpc.ts";
 import { startSubmission } from "../submission/server.ts";
-import { every, onStop, ready, watchFile } from "./runtime.ts";
+import { every, onStop, ready, reportUsage, watchFile } from "./runtime.ts";
 import { sockets } from "./wire.ts";
 
 async function loadCert(certFile: string, keyFile: string): Promise<{ cert: string; key: string }> {
@@ -63,8 +63,10 @@ export async function runApi(config: Config, log: Logger) {
   };
   await loadTracker();
   const stopTrackWatch = track ? every(10 * 60_000, loadTracker) : () => {};
+  const stopUsage = reportUsage(core, "api");
   const restart = onStop(log, async () => {
     stopTrackWatch();
+    stopUsage();
     await tracker?.stop();
     for (const l of listeners) l.stop();
     await server.stop();
