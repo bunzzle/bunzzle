@@ -7,6 +7,7 @@ import type { NodeHealth } from "../nodes/fleet.ts";
 import type { DelegationView, NsTargetView } from "../roles/core-ns.ts";
 import type { PathView } from "../shaping/shaper.ts";
 import { VERSION } from "../version.ts";
+import type { RoleSample } from "./usage.ts";
 
 type Labels = Record<string, string>;
 
@@ -42,6 +43,9 @@ export function render(families: Family[]): string {
   return `${lines.join("\n")}\n`;
 }
 
+const roleLabels = (r: RoleSample): Labels =>
+  r.node === null ? { role: r.role } : { role: r.role, node: r.node };
+
 function nodeJobs(db: Database, project: ProjectId | null, nodes: NodeHealth[]) {
   const rows = db
     .query<{ node: string; state: string; n: number }, [string | null]>(
@@ -68,6 +72,7 @@ export function collect(
   ns?: NsTargetView[] | null,
   delegation?: DelegationView | null,
   nodes?: NodeHealth[] | null,
+  roles?: RoleSample[] | null,
 ): Family[] {
   const jobs = countByState(db, project);
   const recipients = db
@@ -246,6 +251,24 @@ export function collect(
         .all(Math.floor(now / 3_600_000) - 24, project)
         .map((r) => ({ labels: { project: r.name }, value: r.n })),
     },
+    ...(roles
+      ? [
+          {
+            name: "bunzzle_role_up",
+            type: "gauge" as const,
+            help: "1 when the role answered core in the last 45 seconds.",
+            samples: roles.map((r) => ({ labels: roleLabels(r), value: r.up ? 1 : 0 })),
+          },
+          {
+            name: "bunzzle_role_cpu_seconds",
+            type: "counter" as const,
+            help: "CPU time (user and system) the role's process has used since it started.",
+            samples: roles.flatMap((r) =>
+              r.cpuSeconds === null ? [] : [{ labels: roleLabels(r), value: r.cpuSeconds }],
+            ),
+          },
+        ]
+      : []),
     ...(nodes
       ? [
           {

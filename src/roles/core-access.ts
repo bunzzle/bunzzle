@@ -61,7 +61,7 @@ export const API_METHODS = [
   "verifyDomain",
 ];
 
-export const API_PUBLIC_METHODS = ["health", "trackOpen", "trackClick", "unsubscribe"];
+export const API_PUBLIC_METHODS = ["health", "roleUsage", "trackOpen", "trackClick", "unsubscribe"];
 
 export const INBOUND_METHODS = [
   "inboundRecipient",
@@ -70,6 +70,7 @@ export const INBOUND_METHODS = [
   "inboundScan",
   "inboundDmarc",
   "inboundReport",
+  "roleUsage",
 ];
 
 function pick(all: Methods, names: string[]): Methods {

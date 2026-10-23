@@ -65,6 +65,7 @@ import {
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import { dayOf, estimatedDays, listWarmup } from "../ips/warmup.ts";
 import { collect, type Family, render } from "../metrics/metrics.ts";
+import type { RoleSample } from "../metrics/usage.ts";
 import { AddressError, domainOf, normalizeAddress } from "../mime/address.ts";
 import { senderDomainOf } from "../mime/from.ts";
 import type { NodeHealth } from "../nodes/fleet.ts";
@@ -141,6 +142,7 @@ export interface CoreDeps {
   nsHealth?: () => NsTargetView[] | null;
   nsDelegation?: () => DelegationView | null;
   nodes?: () => NodeHealth[];
+  roles?: () => RoleSample[];
   nsCheck?: () => Promise<NsCheckView>;
   paths?: () => PathView[];
   storage?: () => StorageState;
@@ -1132,6 +1134,7 @@ export function coreMethods(deps: CoreDeps): {
             deps.nsHealth?.() ?? null,
             deps.nsDelegation?.() ?? null,
             deps.nodes?.() ?? null,
+            deps.roles?.() ?? null,
           ),
         ),
       };
@@ -1219,6 +1222,7 @@ export function coreMethods(deps: CoreDeps): {
       deps.nsHealth?.() ?? null,
       deps.nsDelegation?.() ?? null,
       deps.nodes?.() ?? null,
+      deps.roles?.() ?? null,
     );
 
   return { methods, verifyPending, enqueueInternal, families };
