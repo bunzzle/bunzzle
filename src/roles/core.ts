@@ -460,6 +460,7 @@ export async function runCore(config: Config, log: Logger) {
     paths: () => shaper.views(),
     storage: () => storage.state(),
     nodeCa: () => identity.current().ca,
+    corePin: () => identity.current().pin,
   });
   const all = {
     ...api.methods,

@@ -149,6 +149,7 @@ export function nodeMethods(deps: NodeDeps): Methods {
           notAfter: parsed.notAfter,
           ca: issuer,
           trustedCas,
+          corePins: [identity.current().pin],
           createdAt: now(),
         };
         if (!(await writer.run((d) => addNode(d, node)))) {

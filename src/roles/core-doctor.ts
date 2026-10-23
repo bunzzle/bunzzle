@@ -32,6 +32,7 @@ export interface DoctorDeps {
   paths: () => PathView[];
   storage?: () => StorageState;
   nodeCa?: () => string;
+  corePin?: () => string;
   now?: () => number;
 }
 
@@ -63,7 +64,12 @@ export const ipInfo = b.array(
   }),
 );
 
-export function nodeChecks(nodes: DeliveryNode[], caPem: string, now: number): Check[] {
+export function nodeChecks(
+  nodes: DeliveryNode[],
+  caPem: string,
+  corePin: string,
+  now: number,
+): Check[] {
   if (nodes.length === 0) return [];
   const checks: Check[] = [];
   const expiry = (item: string, notAfter: number, warnDays: number) => {
@@ -81,7 +87,17 @@ export function nodeChecks(nodes: DeliveryNode[], caPem: string, now: number): C
     const ca = parseCertificate(der);
     expiry(`CA ${ca.commonNames[0] ?? ""}`, ca.notAfter, CA_WARN_DAYS);
   }
-  for (const n of nodes) expiry(`${n.name} certificate`, n.notAfter, NODE_WARN_DAYS);
+  for (const n of nodes) {
+    if (n.corePins.length > 0 && !n.corePins.includes(corePin)) {
+      checks.push({
+        area: "nodes",
+        item: `${n.name} link`,
+        status: "fail",
+        detail: `does not accept core's current key (core renewed while ${n.name} was not reachable): run bunzzle nodes remove ${n.name}, then request, add and install again`,
+      });
+    }
+    expiry(`${n.name} certificate`, n.notAfter, NODE_WARN_DAYS);
+  }
   return checks;
 }
 
@@ -270,7 +286,10 @@ export function doctorMethods(deps: DoctorDeps): Methods {
     if (failed > 0)
       add("webhooks", "deliveries", "warn", `${failed} webhook deliveries gave up in the last day`);
 
-    if (scope === null) checks.push(...nodeChecks(listNodes(db), deps.nodeCa?.() ?? "", now()));
+    if (scope === null)
+      checks.push(
+        ...nodeChecks(listNodes(db), deps.nodeCa?.() ?? "", deps.corePin?.() ?? "", now()),
+      );
     return checks;
   };
 

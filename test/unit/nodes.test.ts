@@ -232,13 +232,15 @@ describe("delivery nodes", () => {
       notAfter,
       ca: "",
       trustedCas: [],
+      corePins: [],
       createdAt: 0,
     });
-    expect(nodeChecks([], ca.trusted(), Date.now())).toEqual([]);
+    expect(nodeChecks([], ca.trusted(), "sha256/core", Date.now())).toEqual([]);
     const at = caEnd - 61 * DAY;
     const fresh = nodeChecks(
       [node("a", at + 10 * DAY), node("b", at + 2 * DAY), node("c", at - DAY)],
       ca.trusted(),
+      "sha256/core",
       at,
     );
     expect(fresh.map((c) => [c.item.replace(/-[0-9a-f]{8}$/, ""), c.status])).toEqual([
@@ -249,7 +251,7 @@ describe("delivery nodes", () => {
     ]);
     expect(fresh[2]?.detail).toMatch(/in 2 days$/);
     expect(fresh[3]?.detail).toMatch(/^expired /);
-    const late = nodeChecks([node("a", caEnd)], ca.trusted(), caEnd - 59 * DAY);
+    const late = nodeChecks([node("a", caEnd)], ca.trusted(), "sha256/core", caEnd - 59 * DAY);
     expect(late[0]?.status).toBe("warn");
   });
 
@@ -437,6 +439,15 @@ describe("node links", () => {
     expect(c.identity.current().pin).not.toBe(old);
     expect(await pinsOn(up.nodeDir)).toEqual([c.identity.current().pin]);
     expect(await pinsOn(down.nodeDir)).toEqual([old]);
+    const checks = nodeChecks(
+      listNodes(c.db),
+      c.identity.current().ca,
+      c.identity.current().pin,
+      clock.now,
+    );
+    const links = checks.filter((x) => x.item.endsWith(" link"));
+    expect(links.map((x) => [x.item, x.status])).toEqual([["link-j link", "fail"]]);
+    expect(links[0]?.detail).toMatch(/bunzzle nodes remove link-j, then request, add and install/);
   });
 
   test("remove closes the link at once", async () => {
