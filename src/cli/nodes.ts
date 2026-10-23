@@ -48,6 +48,17 @@ function split(argv: string[]): [string[], string[]] {
 
 const SYSTEM_NODE_DIR = "/var/lib/bunzzle/node";
 
+async function run(cmd: string[], path: string) {
+  const p = Bun.spawn(cmd, {
+    ...(path.startsWith("/") ? { cwd: "/" } : {}),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  if ((await p.exited) !== 0) {
+    throw new Error(`${cmd.join(" ")}: ${(await new Response(p.stderr).text()).trim()}`);
+  }
+}
+
 async function nodeDirOf(config: Config): Promise<string> {
   if (Bun.env["BUNZZLE_NODE_DIR"]) return config.nodeDir;
   const system = await Bun.file(SYSTEM_NODE_DIR)
@@ -59,7 +70,7 @@ async function nodeDirOf(config: Config): Promise<string> {
 
 async function writePrivate(path: string, text: string) {
   await Bun.write(path, text);
-  await Bun.$`chmod 600 ${path}`.quiet();
+  await run(["chmod", "600", path], path);
 }
 
 async function request(argv: string[], config: Config) {
@@ -72,7 +83,8 @@ async function request(argv: string[], config: Config) {
   if ((await Bun.file(`${dir}/key.pem`).exists()) && !args.flags.has("force")) {
     throw new UsageError(`${dir}/key.pem already exists (use --force to replace it)`);
   }
-  await Bun.$`mkdir -p ${dir} && chmod 700 ${dir}`.quiet();
+  await run(["mkdir", "-p", dir], dir);
+  await run(["chmod", "700", dir], dir);
   const key = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
     "sign",
     "verify",
