@@ -49,7 +49,12 @@ fi
 install -m 0755 "$binary" "$PREFIX/bunzzle"
 install -m 0644 "$SRC/systemd/bunzzle.sysusers" /usr/lib/sysusers.d/bunzzle.conf
 install -m 0644 "$SRC/systemd/bunzzle.tmpfiles" /usr/lib/tmpfiles.d/bunzzle.conf
-for unit in bunzzle.target bunzzle-signer.service bunzzle-dns.service bunzzle-core.service bunzzle-delivery.service bunzzle-api.service bunzzle-inbound.service; do
+if [ -n "${BUNZZLE_NODE:-}" ]; then
+  units="bunzzle-delivery.service"
+else
+  units="bunzzle.target bunzzle-signer.service bunzzle-dns.service bunzzle-core.service bunzzle-delivery.service bunzzle-api.service bunzzle-inbound.service"
+fi
+for unit in $units; do
   install -m 0644 "$SRC/systemd/$unit" "/etc/systemd/system/$unit"
 done
 systemd-sysusers bunzzle.conf
@@ -60,14 +65,23 @@ if [ ! -f /etc/bunzzle/bunzzle.env ]; then
   install -m 0644 "$SRC/bunzzle.env" /etc/bunzzle/bunzzle.env
   echo "created /etc/bunzzle/bunzzle.env: set BUNZZLE_EHLO_NAME, BUNZZLE_SOURCE_IPS and BUNZZLE_PUBLIC_URL"
 fi
+if [ -f "$SRC/nftables/bunzzle.nft" ]; then
+  install -m 0644 "$SRC/nftables/bunzzle.nft" /etc/bunzzle/bunzzle.nft
+fi
+
+if [ -n "${BUNZZLE_NODE:-}" ]; then
+  systemctl daemon-reload
+  systemctl add-wants multi-user.target bunzzle-delivery.service >/dev/null
+  echo "delivery node installed: set BUNZZLE_EHLO_NAME, BUNZZLE_SOURCE_IPS and BUNZZLE_DELIVERY_LISTEN in /etc/bunzzle/bunzzle.env"
+  echo "then: sudo -u bunzzle-delivery bunzzle nodes request NAME"
+  exit 0
+fi
+
 if [ ! -f /etc/bunzzle/master.key ]; then
   (umask 077 && "$PREFIX/bunzzle" master-key > /etc/bunzzle/master.key)
   echo "created /etc/bunzzle/master.key: back it up somewhere safe, losing it makes stored keys and queued email unreadable"
 fi
 chmod 0600 /etc/bunzzle/master.key
-if [ -f "$SRC/nftables/bunzzle.nft" ]; then
-  install -m 0644 "$SRC/nftables/bunzzle.nft" /etc/bunzzle/bunzzle.nft
-fi
 
 systemctl daemon-reload
 systemctl enable bunzzle.target >/dev/null

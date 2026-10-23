@@ -35,6 +35,7 @@ export interface DoctorDeps {
   nodeCa?: () => string;
   corePin?: () => string;
   fleet?: () => { health: NodeHealth[]; conflicts: { ip: string; nodes: string[] }[] };
+  nodeClients?: () => RpcClient[];
   now?: () => number;
 }
 
@@ -203,11 +204,17 @@ export function doctorMethods(deps: DoctorDeps): Methods {
       );
     }
 
-    const ips = await delivery
+    const local = await delivery
       .call("ips", {}, { result: ipInfo, timeoutMs: 10_000 })
       .catch(() => null);
+    const remote = await Promise.all(
+      (deps.nodeClients?.() ?? []).map((c) =>
+        c.call("ips", {}, { result: ipInfo, timeoutMs: 10_000 }).catch(() => []),
+      ),
+    );
+    const ips = local ? [...local, ...remote.flat()] : null;
     if (!ips) add("ips", "delivery role", "fail", "the delivery role is not answering");
-    else if (ips.length === 0) {
+    else if (config.sourceIps.length === 0) {
       add(
         "ips",
         "source IPs",

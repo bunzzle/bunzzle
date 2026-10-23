@@ -98,6 +98,13 @@ jobs:
           sudo nft add element inet bunzzle link_ports '{ 7465 }'
           sudo nft add element inet bunzzle node_links4 '{ 198.51.100.7 . 7465 }'
           sudo nft delete table inet bunzzle
+      - name: Install a delivery node
+        run: |
+          sudo BUNZZLE_NODE=1 ./deploy/install.sh dist/bunzzle
+          test -L /etc/systemd/system/multi-user.target.wants/bunzzle-delivery.service
+          sudo -u bunzzle-delivery /usr/local/bin/bunzzle nodes request ci-node
+          test "$(sudo stat -c %U:%a /var/lib/bunzzle/node/key.pem)" = bunzzle-delivery:600
+          systemctl show -p ReadWritePaths --value bunzzle-delivery | grep -q /var/lib/bunzzle/node
       - name: Journal
         if: failure()
         run: sudo journalctl -u 'bunzzle-*' --no-pager | tail -200

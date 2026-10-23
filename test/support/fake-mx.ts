@@ -26,6 +26,7 @@ export interface MxSession {
   commands: string[];
   tls: boolean;
   messages: string[];
+  remote: string;
 }
 
 export interface FakeMx {
@@ -177,7 +178,12 @@ export function startFakeMx(scenario: MxScenario = {}, port = 0): FakeMx {
       }
       active++;
       peak = Math.max(peak, active);
-      const session: MxSession = { commands: [], tls: false, messages: [] };
+      const session: MxSession = {
+        commands: [],
+        tls: false,
+        messages: [],
+        remote: s.remoteAddress,
+      };
       sessions.push(session);
       states.set(s, { session, active: s, buffer: "", inData: false, data: "", accepted: 0 });
       const g = scenario.greeting;
