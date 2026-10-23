@@ -328,17 +328,22 @@ function nsConfig(c: {
   };
 }
 
-function linkAddress(value: string | null): { hostname: string; port: number } | null {
-  if (!value) return null;
+export function parseLinkAddress(value: string): { hostname: string; port: number } | null {
   const m = /^(?:\[([0-9A-Fa-f:.]+)\]|([0-9.]+)):(\d{1,5})$/.exec(value);
   const hostname = m?.[1] ?? m?.[2] ?? "";
   const port = Number(m?.[3]);
-  if (!m || !familyOf(hostname) || port < 1024 || port > 65535) {
+  return m && familyOf(hostname) && port >= 1024 && port <= 65535 ? { hostname, port } : null;
+}
+
+function linkAddress(value: string | null): { hostname: string; port: number } | null {
+  if (!value) return null;
+  const address = parseLinkAddress(value);
+  if (!address) {
     throw new ConfigError(
       "invalid configuration:\n  BUNZZLE_DELIVERY_LISTEN: use <ip>:<port> or [<ipv6>]:<port> with a port from 1024 to 65535",
     );
   }
-  return { hostname, port };
+  return address;
 }
 
 export function loadConfig(env: Record<string, string | undefined> = Bun.env): Config {
