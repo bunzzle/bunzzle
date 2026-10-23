@@ -14,6 +14,7 @@ import { enqueueEmail, recipientsOf, shredBodies } from "../../src/delivery/queu
 import { localTransport } from "../../src/delivery/transport.ts";
 import { generateKeyFile, sealKeyFile } from "../../src/dkim/keys.ts";
 import { createResolver } from "../../src/dns/resolver.ts";
+import { deliverRequestWire, requestFromWire, requestToWire } from "../../src/roles/wire.ts";
 import { Shaper } from "../../src/shaping/shaper.ts";
 import { Signer, SignerError } from "../../src/signer/signer.ts";
 import { verifyDkim } from "../support/dkim-verify.ts";
@@ -423,5 +424,47 @@ describe("delivery: encryption at rest and crypto-shredding", () => {
     expect(await t.step(T0)).toEqual(["retry"]);
     expect(mx?.sessions.length).toBe(0);
     expect(recipientsOf(t.db, id)[0]?.reply).toContain("no DKIM key for other.test");
+  });
+});
+
+describe("delivery: through a delivery node", () => {
+  test("a delivery role with no signer sends the message core opened, DKIM-signed", async () => {
+    const t = await setup();
+    const node = localTransport(
+      {
+        resolver: createResolver({ servers: [{ host: "127.0.0.1", port: dns.port }] }),
+        ehloName: "out.bunzzle.test",
+        port: mx?.port ?? 0,
+        allowPrivate: true,
+        tlsCa: TEST_CA,
+        timeouts: { greeting: 2_000, quit: 200 },
+      },
+      async () => {
+        throw new Error("no signer on this machine");
+      },
+    );
+    const id = Bun.randomUUIDv7();
+    const body = await sealBody(await t.signer.epochKey(), id, DATA);
+    const opened = await t.signer.open(id, body, { lane: "transactional", bounceDomain: null });
+    const sent = JSON.parse(
+      JSON.stringify(
+        requestToWire({
+          key: `${id}#1`,
+          recall: null,
+          messageId: id,
+          domain: "example.test",
+          destination: await node.lookup("example.test"),
+          from: "a@bunzzle.test",
+          recipients: ["x@example.test"],
+          smtpUtf8: false,
+          requireTls: false,
+          opened,
+        }),
+      ),
+    );
+    expect(sent.body).toBeUndefined();
+    const report = await node.deliver(requestFromWire(deliverRequestWire.parse(sent)));
+    expect(report.recipients.map((r) => r.status)).toEqual(["delivered"]);
+    expect(mx?.sessions[0]?.messages[0] ?? "").toStartWith("DKIM-Signature:");
   });
 });
