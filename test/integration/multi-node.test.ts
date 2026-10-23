@@ -163,7 +163,7 @@ beforeAll(async () => {
   await waitFor("signer", () => exists(`${CORE}/run/signer.sock`));
   await startRole("dns", "dns", CORE, coreEnv);
   await waitFor("dns", () => exists(`${CORE}/run/dns.sock`));
-  await startRole("delivery", "delivery", CORE, { ...coreEnv, BUNZZLE_SOURCE_IPS: "127.0.0.1" });
+  await startRole("delivery", "delivery", CORE, { ...coreEnv, BUNZZLE_SOURCE_IPS: "" });
   await waitFor("local delivery", () => exists(`${CORE}/run/delivery.sock`));
   await startRole("core", "core", CORE, coreEnv);
   await waitFor("core", () => exists(`${CORE}/run/admin.sock`));
@@ -248,7 +248,7 @@ describe.skipIf(!usable)("one core and two delivery nodes", () => {
         list.some((v) => v.name === n.name && v.up && v.ips.includes(n.ip)),
       );
     });
-    expect((await nodeView("local"))?.ips).toEqual(["127.0.0.1"]);
+    expect((await nodeView("local"))?.ips).toEqual([]);
   }, 60_000);
 
   test("mail goes out from each node's own IP", async () => {
