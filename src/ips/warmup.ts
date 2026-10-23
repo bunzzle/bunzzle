@@ -177,6 +177,14 @@ export interface Wait {
   wait: { delayMs: number; reason: string; blocked?: boolean };
 }
 
+export interface IpDown {
+  reason: string;
+  since: number;
+}
+
+const DOWN_WAIT_MIN_MS = 60_000;
+const DOWN_WAIT_MAX_MS = 10 * 60_000;
+
 export function choose(
   db: Database,
   ips: SourceIp[],
@@ -188,6 +196,7 @@ export function choose(
   pausedUntil: (ip: string) => number | null,
   listed: (ip: string) => boolean = () => false,
   assigned: string | null = null,
+  down: (ip: string) => IpDown | null = () => null,
 ): Choice | Wait {
   if (ips.length === 0) return { source: "default" };
   const pool = (name: string) => ips.filter((x) => x.pool === name);
@@ -215,7 +224,13 @@ export function choose(
   const bucket = bucketOf(provider);
   let soonestPause: number | null = null;
   let overBudget: { ip: string; budget: number; day: number } | null = null;
+  const unavailable: (IpDown & { ip: string })[] = [];
   for (const ip of ordered) {
+    const gone = down(ip.ip);
+    if (gone) {
+      unavailable.push({ ...gone, ip: ip.ip });
+      continue;
+    }
     const paused = pausedUntil(ip.ip);
     if (paused !== null) {
       soonestPause = soonestPause === null ? paused : Math.min(soonestPause, paused);
@@ -232,6 +247,14 @@ export function choose(
       }
     }
     return { source: ip.ip };
+  }
+  if (unavailable.length > 0) {
+    const newest = Math.max(...unavailable.map((u) => u.since));
+    const backoff = Math.min(DOWN_WAIT_MAX_MS, Math.max(DOWN_WAIT_MIN_MS, now - newest));
+    const delayMs =
+      soonestPause === null ? backoff : Math.max(1_000, Math.min(backoff, soonestPause - now));
+    const reasons = [...new Set(unavailable.map((u) => u.reason))];
+    return { wait: { delayMs, reason: reasons.join("; ") } };
   }
   if (overBudget) {
     const tomorrow = (dayOf(now) + 1) * DAY_MS;

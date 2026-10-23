@@ -122,15 +122,21 @@ export async function nodesCommand(argv: string[], config: Config) {
   switch (sub) {
     case undefined:
     case "list": {
-      const nodes = await call<{ name: string; address: string; certificate_expires_at: string }[]>(
-        config,
-        "listNodes",
-        {},
-      );
+      const nodes = await call<
+        {
+          name: string;
+          address: string;
+          up: boolean;
+          last_seen_at: string | null;
+          ips: string[];
+          certificate_expires_at: string;
+        }[]
+      >(config, "listNodes", {});
       if (nodes.length === 0) console.log("No delivery nodes.");
       for (const n of nodes) {
+        const state = n.up ? "up" : `down (last seen ${n.last_seen_at ?? "never"})`;
         console.log(
-          `${n.name.padEnd(24)} ${n.address.padEnd(24)} until ${n.certificate_expires_at}`,
+          `${n.name.padEnd(20)} ${n.address.padEnd(22)} ${state.padEnd(10)} ips ${n.ips.join(",") || "-"}  cert until ${n.certificate_expires_at.slice(0, 10)}`,
         );
       }
       return;
