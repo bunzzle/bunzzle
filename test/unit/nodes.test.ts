@@ -91,7 +91,7 @@ describe("delivery nodes", () => {
     const { db, identity, methods } = await core();
     const nodeDir = `${dir}/node-a`;
     const csr = await requestCsr(nodeDir, "node-a");
-    expect((await Bun.$`stat -f %Lp ${nodeDir}/key.pem`.text()).trim()).toBe("600");
+    expect((await Bun.file(`${nodeDir}/key.pem`).stat()).mode & 0o777).toBe(0o600);
 
     const result = (await invoke(methods, "addNode", {
       name: "node-a",
@@ -138,7 +138,7 @@ describe("delivery nodes", () => {
     const again = await CoreIdentity.load(at, signer, Date.now());
     expect(again.current().pin).toBe(first.current().pin);
     expect(first.current().notAfter - Date.now()).toBeGreaterThan(6.9 * 86_400_000);
-    expect((await Bun.$`stat -f %Lp ${at}/core.json`.text()).trim()).toBe("600");
+    expect((await Bun.file(`${at}/core.json`).stat()).mode & 0o777).toBe(0o600);
     const expired = await CoreIdentity.load(at, signer, Date.now() + 8 * 86_400_000);
     expect(expired.current().pin).not.toBe(first.current().pin);
   });

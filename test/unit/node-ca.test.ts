@@ -60,7 +60,7 @@ describe("node CA", () => {
     expect(cert.ca).toBe(true);
     expect(cert.commonNames[0]).toMatch(/^bunzzle-node-ca-[0-9a-f]{8}$/);
     expect(cert.notAfter - now).toBe(730 * DAY);
-    expect((await Bun.$`stat -f %Lp ${path}`.text()).trim()).toBe("600");
+    expect((await Bun.file(path).stat()).mode & 0o777).toBe(0o600);
     const file = await Bun.file(path).json();
     expect(file.cas[0].sealedKey).toBeString();
     expect(JSON.stringify(file)).not.toContain("PRIVATE KEY");
