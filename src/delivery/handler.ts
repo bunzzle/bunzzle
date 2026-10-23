@@ -13,7 +13,7 @@ import type { Destination } from "../dns/mx.ts";
 import { countEmail } from "../emails/search.ts";
 import { activeHold, countSender } from "../guards/guards.ts";
 import { applyInbound } from "../inbound/apply.ts";
-import { bucketOf, choose, countWarmup } from "../ips/warmup.ts";
+import { bucketOf, choose, countWarmup, type IpDown } from "../ips/warmup.ts";
 import { domainOf } from "../mime/address.ts";
 import { SUSPENDED_PREFIX, suspensionFor } from "../queue/control.ts";
 import { type Classification, classify } from "../replies/classify.ts";
@@ -48,8 +48,7 @@ export interface DeliveryHandlerOptions {
   suspendRetryMs?: number;
   relayRoutes?: () => { targets: string[]; blocked: boolean } | null;
   listed?: (ip: string) => boolean;
-  ipReady?: (ip: string) => boolean;
-  ipRetryMs?: number;
+  ipDown?: (ip: string) => IpDown | null;
   poolRules?: (job: {
     project: ProjectId;
     domain: string;
@@ -336,12 +335,10 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
             provider,
             pending.length,
             now,
-            (ip) =>
-              o.ipReady && !o.ipReady(ip)
-                ? now + (o.ipRetryMs ?? 10_000)
-                : o.shaper.pausedUntil(Shaper.key(ip, target)),
+            (ip) => o.shaper.pausedUntil(Shaper.key(ip, target)),
             o.listed,
             rules && "pool" in rules ? rules.pool : senderPool,
+            o.ipDown,
           )
         : { source: fixedSource };
       if ("wait" in choice) {

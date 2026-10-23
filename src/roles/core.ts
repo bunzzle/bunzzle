@@ -228,8 +228,7 @@ export async function runCore(config: Config, log: Logger) {
         ? { targets: config.relay.for.targets, blocked: config.relay.for.blocked }
         : null,
     listed: (ip) => listed.has(ip),
-    ipReady: (ip) => fleet.ready(ip),
-    ipRetryMs: fleet.checkMs,
+    ipDown: (ip) => fleet.down(ip),
     poolRules: (job) =>
       choosePool(db, job, (pool) => config.sourceIps.some((x) => x.pool === pool)),
   });

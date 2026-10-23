@@ -1,5 +1,6 @@
 import type { Logger } from "../core/log.ts";
 import type { RpcClient } from "../ipc/rpc.ts";
+import type { IpDown } from "../ips/warmup.ts";
 import { b } from "../validate/schema.ts";
 import type { NodeLinks } from "./links.ts";
 
@@ -19,6 +20,7 @@ export interface NodeHealth {
 
 interface State {
   up: boolean;
+  downSince: number | null;
   lastSeen: number | null;
   failures: number;
   ips: string[];
@@ -37,13 +39,21 @@ export class DeliveryFleet {
   readonly #d: FleetDeps;
   readonly #now: () => number;
   readonly #state = new Map<string, State>();
+  readonly #unowned = new Map<string, number>();
   readonly checkMs: number;
 
   constructor(deps: FleetDeps) {
     this.#d = deps;
     this.#now = deps.now ?? Date.now;
     this.checkMs = deps.checkMs ?? CHECK_MS;
-    this.#state.set(LOCAL, { up: true, lastSeen: null, failures: 0, ips: [], error: null });
+    this.#state.set(LOCAL, {
+      up: true,
+      downSince: null,
+      lastSeen: null,
+      failures: 0,
+      ips: [],
+      error: null,
+    });
   }
 
   #names(): string[] {
@@ -57,7 +67,7 @@ export class DeliveryFleet {
   #stateOf(name: string): State {
     let s = this.#state.get(name);
     if (!s) {
-      s = { up: false, lastSeen: null, failures: 0, ips: [], error: null };
+      s = { up: false, downSince: this.#now(), lastSeen: null, failures: 0, ips: [], error: null };
       this.#state.set(name, s);
     }
     return s;
@@ -80,6 +90,7 @@ export class DeliveryFleet {
           if (!s.up) this.#d.log.info("delivery node up", { name });
           Object.assign(s, {
             up: true,
+            downSince: null,
             lastSeen: this.#now(),
             failures: 0,
             ips: ips.map((x) => x.ip),
@@ -98,6 +109,7 @@ export class DeliveryFleet {
     const s = this.#stateOf(name);
     if (!s.up) return;
     s.up = false;
+    s.downSince = this.#now();
     s.error = error;
     this.#d.log.warn("delivery node down", { name, error });
   }
@@ -118,9 +130,29 @@ export class DeliveryFleet {
       .filter((c) => c.nodes.length > 1);
   }
 
+  down(ip: string): IpDown | null {
+    const owners = this.#owners(ip);
+    if (owners.length === 1) {
+      this.#unowned.delete(ip);
+      const name = owners[0] as string;
+      const s = this.#stateOf(name);
+      if (s.up) return null;
+      return { reason: `node ${name} is down (${ip})`, since: s.downSince ?? this.#now() };
+    }
+    let since = this.#unowned.get(ip);
+    if (since === undefined) {
+      since = this.#now();
+      this.#unowned.set(ip, since);
+    }
+    return {
+      reason:
+        owners.length === 0 ? `no delivery role has ${ip}` : `${ip} is on ${owners.join(" and ")}`,
+      since,
+    };
+  }
+
   ready(ip: string): boolean {
-    const owner = this.ownerOf(ip);
-    return owner !== null && this.#stateOf(owner).up;
+    return this.down(ip) === null;
   }
 
   clientFor(source: string): { name: string; client: RpcClient } {

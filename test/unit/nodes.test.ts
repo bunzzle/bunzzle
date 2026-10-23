@@ -556,6 +556,8 @@ describe("delivery fleet", () => {
     expect(fleet.ready(LOCAL_IP)).toBe(true);
     const down = fleet.health().find((h) => h.name === "fleet-b");
     expect(down?.up).toBe(false);
+    expect(fleet.down(NODE_IP)?.reason).toBe(`node fleet-b is down (${NODE_IP})`);
+    expect(Date.now() - (fleet.down(NODE_IP)?.since ?? 0)).toBeLessThan(5_000);
     const checks = fleetChecks(fleet.health(), fleet.conflicts(), [LOCAL_IP, NODE_IP], Date.now());
     expect(checks.find((x) => x.item === "fleet-b health")?.status).toBe("fail");
 
@@ -587,6 +589,7 @@ describe("delivery fleet", () => {
     expect(fleet.ready(LOCAL_IP)).toBe(false);
     expect(fleet.ready(NODE_IP)).toBe(true);
     expect(fleet.conflicts()).toEqual([{ ip: LOCAL_IP, nodes: [LOCAL, "fleet-d"] }]);
+    expect(fleet.down(LOCAL_IP)?.reason).toBe(`${LOCAL_IP} is on local and fleet-d`);
     const checks = fleetChecks(fleet.health(), fleet.conflicts(), [LOCAL_IP, NODE_IP], Date.now());
     expect(checks.find((x) => x.item === `${LOCAL_IP} owner`)?.detail).toMatch(/local and fleet-d/);
   });
@@ -601,6 +604,7 @@ describe("delivery fleet", () => {
       `${LOCAL_IP} owner`,
     ]);
     expect(fleet.ready(LOCAL_IP)).toBe(false);
+    expect(fleet.down(LOCAL_IP)?.reason).toBe(`no delivery role has ${LOCAL_IP}`);
   });
 
   test("a removed node leaves the fleet", async () => {
