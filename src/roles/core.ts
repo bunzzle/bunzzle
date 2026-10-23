@@ -23,6 +23,7 @@ import { deliveryHandler } from "../delivery/handler.ts";
 import { cachingLookups } from "../delivery/lookups.ts";
 import { shredBodies } from "../delivery/queue.ts";
 import type { DeliveryTransport } from "../delivery/transport.ts";
+import { unprepared } from "../delivery/unprepared.ts";
 import { pruneDmarc } from "../dmarc/store.ts";
 import { isSlot } from "../domains/delegated.ts";
 import {
@@ -74,8 +75,10 @@ import {
   destinationWire,
   epochKeyFromWire,
   epochKeyWire,
+  openedWire,
   requestToWire,
   sockets,
+  toWire,
 } from "./wire.ts";
 
 const MIN = 60_000;
@@ -142,8 +145,27 @@ export async function runCore(config: Config, log: Logger) {
   const transport: DeliveryTransport = cachingLookups({
     lookup: (domain) =>
       delivery.call("lookup", { domain }, { result: destinationWire, timeoutMs: 2 * MIN }),
-    deliver: (req) => {
-      const { name, client } = fleet.clientFor(req.source ?? "");
+    deliver: async (asked) => {
+      const { name, client } = fleet.clientFor(asked.source ?? "");
+      let req = asked;
+      if (name !== LOCAL && asked.body) {
+        try {
+          const { body, ...rest } = asked;
+          const opened = await signer.call(
+            "open",
+            {
+              messageId: asked.messageId,
+              body: toWire(body),
+              lane: asked.lane ?? "transactional",
+              bounceDomain: asked.bounceDomain ?? null,
+            },
+            { result: openedWire, timeoutMs: 60_000 },
+          );
+          req = { ...rest, opened };
+        } catch (err) {
+          return unprepared(asked, err);
+        }
+      }
       const keys = takeSettled(name);
       sentTo.set(req.key, name);
       if (sentTo.size > MAX_SETTLED) sentTo.delete(sentTo.keys().next().value as string);

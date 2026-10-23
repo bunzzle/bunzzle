@@ -157,6 +157,11 @@ export const deliveryReportWire: b.Schema<DeliveryReport> = b.object({
     .optional(),
 });
 
+export const openedWire = b.object({
+  data: b.string().max(60 * 1024 * 1024),
+  bounceToken: b.string().max(200),
+});
+
 export const deliverRequestWire = b.object({
   key: b.string().min(1).max(200),
   recall: b.string().min(1).max(200).nullable(),
@@ -167,7 +172,8 @@ export const deliverRequestWire = b.object({
   recipients: b.array(b.string().max(320)).min(1).max(1000),
   smtpUtf8: b.boolean(),
   requireTls: b.boolean(),
-  body: sealedBodyWire,
+  body: sealedBodyWire.optional(),
+  opened: openedWire.optional(),
   connections: b.number().int().min(1).max(1000).optional(),
   settled: b.array(b.string().min(1).max(200)).max(5000).optional(),
   lane: b.enum(["transactional", "bulk"]).optional(),
@@ -176,10 +182,16 @@ export const deliverRequestWire = b.object({
   via: b.enum(["relay"]).optional(),
 });
 
-export const requestToWire = (r: DeliverRequest) => ({ ...r, body: toWire(r.body) });
-export const requestFromWire = (r: b.infer<typeof deliverRequestWire>): DeliverRequest => ({
+export const requestToWire = ({ body, opened, ...r }: DeliverRequest) => ({
   ...r,
-  body: fromWire(r.body),
+  ...(opened ? { opened } : body ? { body: toWire(body) } : {}),
+});
+export const requestFromWire = ({
+  body,
+  ...r
+}: b.infer<typeof deliverRequestWire>): DeliverRequest => ({
+  ...r,
+  ...(body ? { body: fromWire(body) } : {}),
 });
 
 export const MESSAGE_ID = /^[A-Za-z0-9._-]{1,64}$/;

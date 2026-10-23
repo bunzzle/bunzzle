@@ -1,7 +1,6 @@
 import type { SealedBody } from "../crypto/envelope.ts";
 import type { Destination } from "../dns/mx.ts";
 import {
-  allRecipients,
   type DeliveryOptions,
   type DeliveryReport,
   deliverTo,
@@ -9,6 +8,7 @@ import {
   relayDestination,
 } from "../smtp/deliver.ts";
 import type { StsPolicy } from "../smtp/mta-sts.ts";
+import { unprepared } from "./unprepared.ts";
 
 export interface DeliverRequest {
   key: string;
@@ -20,7 +20,8 @@ export interface DeliverRequest {
   recipients: string[];
   smtpUtf8: boolean;
   requireTls: boolean;
-  body: SealedBody;
+  body?: SealedBody | undefined;
+  opened?: OpenedBody | undefined;
   connections?: number | undefined;
   lane?: "transactional" | "bulk" | undefined;
   bounceDomain?: string | null | undefined;
@@ -45,26 +46,6 @@ export type OpenBody = (
   body: SealedBody,
   o: { lane: "transactional" | "bulk"; bounceDomain: string | null },
 ) => Promise<OpenedBody>;
-
-function unprepared(req: DeliverRequest, err: unknown): DeliveryReport {
-  const code = (err as { code?: unknown })?.code;
-  const message = (err as Error)?.message ?? String(err);
-  const gone = code === "epoch-gone" || code === "unreadable";
-  return {
-    domain: req.domain,
-    destination: req.destination,
-    provider: null,
-    policy: null,
-    sessions: [],
-    recipients: allRecipients(
-      req,
-      gone ? "bounced" : "deferred",
-      gone ? "5.6.6" : "4.3.5",
-      `could not prepare the message: ${message}`,
-      "connect",
-    ),
-  };
-}
 
 export interface RememberOptions {
   maxEntries?: number;
@@ -152,10 +133,13 @@ export function localTransport(opts: LocalOptions, open: OpenBody): DeliveryTran
         relayed && opts.relay ? await relayDestination(req.domain, opts.relay, o) : req.destination;
       let opened: OpenedBody;
       try {
-        opened = await open(req.messageId, req.body, {
-          lane: req.lane ?? "transactional",
-          bounceDomain: req.bounceDomain ?? null,
-        });
+        if (req.opened) opened = req.opened;
+        else if (req.body) {
+          opened = await open(req.messageId, req.body, {
+            lane: req.lane ?? "transactional",
+            bounceDomain: req.bounceDomain ?? null,
+          });
+        } else throw new Error("the request has no body");
       } catch (err) {
         return unprepared(req, err);
       }
