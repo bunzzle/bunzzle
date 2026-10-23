@@ -1,10 +1,16 @@
-import type { Socket, UnixSocketListener } from "bun";
+import type { Socket, SocketListener, UnixSocketListener } from "bun";
 import { b } from "../validate/schema.ts";
+import { parseCertificate } from "../x509/cert.ts";
 
 const MAX_FRAME = 64 * 1024 * 1024;
 const NL = 0x0a;
 const enc = new TextEncoder();
 const dec = new TextDecoder();
+
+const TLS13_ONLY = 0x04000000 | 0x08000000 | 0x10000000;
+const SERVER_AUTH = "1.3.6.1.5.5.7.3.1";
+const CLIENT_AUTH = "1.3.6.1.5.5.7.3.2";
+const P256_SPKI = Uint8Array.fromHex("3059301306072a8648ce3d020106082a8648ce3d030107034200");
 
 export type RpcErrorCode = "unavailable" | "lost" | "timeout" | "invalid" | "failed";
 
@@ -110,20 +116,78 @@ class Framer {
   }
 }
 
+export interface LinkTls {
+  cert: string;
+  key: string;
+  ca: string;
+  pins: string[];
+  name?: string;
+}
+
+export interface TcpEndpoint {
+  hostname: string;
+  port: number;
+  tls: LinkTls;
+}
+
+export type Endpoint = string | TcpEndpoint;
+
+const label = (e: Endpoint) => (typeof e === "string" ? e : `${e.hostname}:${e.port}`);
+
+export function pinOf(spki: Uint8Array): string {
+  return `sha256/${new Bun.CryptoHasher("sha256").update(spki).digest("base64")}`;
+}
+
+function isP256(spki: Uint8Array): boolean {
+  return spki.length === P256_SPKI.length + 65 && P256_SPKI.every((byte, i) => spki[i] === byte);
+}
+
+export function peerRefusal(
+  socket: Socket<undefined>,
+  tls: LinkTls,
+  peer: "client" | "server",
+  authorizationError: Error | null,
+  now = Date.now(),
+): string | null {
+  const failed = authorizationError ?? socket.getAuthorizationError();
+  if (failed)
+    return `peer certificate refused: ${(failed as Error & { code?: string }).code ?? failed.message}`;
+  const raw = (socket.getPeerCertificate() as { raw?: Uint8Array } | null)?.raw;
+  if (!raw) return "peer sent no certificate";
+  let cert: ReturnType<typeof parseCertificate>;
+  try {
+    cert = parseCertificate(new Uint8Array(raw));
+  } catch {
+    return "peer certificate unreadable";
+  }
+  if (now < cert.notBefore || now > cert.notAfter) return "peer certificate outside its validity";
+  if (!isP256(cert.spki)) return "peer key is not ECDSA P-256";
+  const want = peer === "client" ? CLIENT_AUTH : SERVER_AUTH;
+  const other = peer === "client" ? SERVER_AUTH : CLIENT_AUTH;
+  const eku = cert.extKeyUsage ?? [];
+  if (!eku.includes(want) || eku.includes(other)) return `peer certificate is not for ${peer} use`;
+  if (!tls.pins.includes(pinOf(cert.spki))) return "peer key is not pinned";
+  return null;
+}
+
+function tlsOptions(tls: LinkTls) {
+  return { cert: tls.cert, key: tls.key, ca: tls.ca, secureOptions: TLS13_ONLY };
+}
+
 export interface RpcServer {
   stop(): void;
 }
 
 export interface ServeOptions {
   mode?: "600" | "660";
+  onRefused?(reason: string, remote: string): void;
 }
 
 export async function serveRpc(
-  path: string,
+  endpoint: Endpoint,
   methods: Methods,
   opts: ServeOptions = {},
 ): Promise<RpcServer> {
-  await Bun.$`rm -f ${path}`.quiet();
   const framers = new Map<Socket<undefined>, Framer>();
   const respond = async (framer: Framer, frame: unknown) => {
     const req = request.safeParse(frame);
@@ -161,28 +225,52 @@ export async function serveRpc(
       });
     }
   };
-  const listener: UnixSocketListener<undefined> = Bun.listen({
-    unix: path,
-    socket: {
-      open(s) {
-        const framer = new Framer(s, (frame) => void respond(framer, frame));
-        framers.set(s, framer);
-      },
-      data(s, chunk) {
-        framers.get(s)?.push(chunk);
-      },
-      drain(s) {
-        framers.get(s)?.flush();
-      },
-      close(s) {
-        framers.delete(s);
-      },
-      error(s) {
-        framers.delete(s);
-      },
+  const accept = (s: Socket<undefined>) => {
+    const framer = new Framer(s, (frame) => void respond(framer, frame));
+    framers.set(s, framer);
+  };
+  const handlers = {
+    data(s: Socket<undefined>, chunk: Uint8Array) {
+      framers.get(s)?.push(chunk);
     },
+    drain(s: Socket<undefined>) {
+      framers.get(s)?.flush();
+    },
+    close(s: Socket<undefined>) {
+      framers.delete(s);
+    },
+    error(s: Socket<undefined>) {
+      framers.delete(s);
+    },
+  };
+  if (typeof endpoint !== "string") {
+    const tls = endpoint.tls;
+    const listener: SocketListener<undefined> = Bun.listen({
+      hostname: endpoint.hostname,
+      port: endpoint.port,
+      tls: { ...tlsOptions(tls), requestCert: true, rejectUnauthorized: true },
+      socket: {
+        ...handlers,
+        handshake(s, _success, authorizationError) {
+          const refused = peerRefusal(s, tls, "client", authorizationError);
+          if (refused) {
+            opts.onRefused?.(refused, s.remoteAddress);
+            s.end();
+            return;
+          }
+          s.setKeepAlive(true, 15_000);
+          accept(s);
+        },
+      },
+    });
+    return { stop: () => listener.stop(true) };
+  }
+  await Bun.$`rm -f ${endpoint}`.quiet();
+  const listener: UnixSocketListener<undefined> = Bun.listen({
+    unix: endpoint,
+    socket: { ...handlers, open: accept },
   });
-  await Bun.$`chmod ${opts.mode ?? "660"} ${path}`.quiet();
+  await Bun.$`chmod ${opts.mode ?? "660"} ${endpoint}`.quiet();
   return { stop: () => listener.stop(true) };
 }
 
@@ -197,47 +285,124 @@ export interface CallOptions<R> {
   result?: b.Schema<R>;
 }
 
+const BACKOFF_MIN = 250;
+const BACKOFF_MAX = 30_000;
+
 export class RpcClient {
-  readonly #path: string;
+  readonly #endpoint: Endpoint;
+  #failures = 0;
+  #retryAt = 0;
   #socket: Socket<undefined> | null = null;
   #framer: Framer | null = null;
   #connecting: Promise<Framer> | null = null;
   #nextId = 1;
   readonly #pending = new Map<number, Pending>();
 
-  constructor(path: string) {
-    this.#path = path;
+  constructor(endpoint: Endpoint) {
+    this.#endpoint = endpoint;
   }
 
   get path(): string {
-    return this.#path;
+    return label(this.#endpoint);
   }
 
   async #connect(): Promise<Framer> {
     if (this.#framer) return this.#framer;
+    const wait = this.#retryAt - Date.now();
+    if (wait > 0) {
+      throw new RpcError(
+        "unavailable",
+        `${this.path}: waiting to reconnect`,
+        Math.ceil(wait / 1000),
+      );
+    }
     this.#connecting ??= (async () => {
       try {
-        let framer: Framer | null = null;
-        const socket = await Bun.connect({
-          unix: this.#path,
-          socket: {
-            data: (_s, chunk) => framer?.push(chunk),
-            drain: () => framer?.flush(),
-            close: (s) => this.#lost(s),
-            error: (s) => this.#lost(s),
-          },
-        });
-        framer = new Framer(socket, (frame) => this.#onFrame(frame));
-        this.#socket = socket;
-        this.#framer = framer;
+        const framer = await this.#open();
+        this.#failures = 0;
+        this.#retryAt = 0;
         return framer;
       } catch (err) {
-        throw new RpcError("unavailable", `${this.#path}: ${(err as Error).message}`);
+        if (typeof this.#endpoint !== "string") {
+          this.#failures++;
+          this.#retryAt =
+            Date.now() + Math.min(BACKOFF_MAX, BACKOFF_MIN * 2 ** (this.#failures - 1));
+        }
+        throw err instanceof RpcError
+          ? err
+          : new RpcError("unavailable", `${this.path}: ${(err as Error).message}`);
       } finally {
         this.#connecting = null;
       }
     })();
     return this.#connecting;
+  }
+
+  async #open(): Promise<Framer> {
+    let framer: Framer | null = null;
+    const handlers = {
+      data: (_s: Socket<undefined>, chunk: Uint8Array) => framer?.push(chunk),
+      drain: () => framer?.flush(),
+      close: (s: Socket<undefined>) => this.#lost(s),
+      error: (s: Socket<undefined>) => this.#lost(s),
+    };
+    const endpoint = this.#endpoint;
+    if (typeof endpoint === "string") {
+      const socket = await Bun.connect({ unix: endpoint, socket: handlers });
+      framer = new Framer(socket, (frame) => this.#onFrame(frame));
+      this.#socket = socket;
+      this.#framer = framer;
+      return framer;
+    }
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    promise.catch(() => {});
+    const timer = setTimeout(
+      () => reject(new RpcError("unavailable", `${this.path}: handshake timed out`)),
+      10_000,
+    );
+    let socket: Socket<undefined> | null = null;
+    try {
+      socket = await Bun.connect({
+        hostname: endpoint.hostname,
+        port: endpoint.port,
+        tls: {
+          ...tlsOptions(endpoint.tls),
+          rejectUnauthorized: true,
+          ...(endpoint.tls.name ? { serverName: endpoint.tls.name } : {}),
+        },
+        socket: {
+          ...handlers,
+          close: (s) => {
+            reject(new RpcError("unavailable", `${this.path}: closed during handshake`));
+            this.#lost(s);
+          },
+          error: (s, err) => {
+            reject(new RpcError("unavailable", `${this.path}: ${err.message}`));
+            this.#lost(s);
+          },
+          handshake: (s, _success, authorizationError) => {
+            const refused = peerRefusal(s, endpoint.tls, "server", authorizationError);
+            if (refused) {
+              reject(new RpcError("unavailable", `${this.path}: ${refused}`));
+              s.end();
+              return;
+            }
+            resolve();
+          },
+        },
+      });
+      await promise;
+    } catch (err) {
+      socket?.end();
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+    socket.setKeepAlive(true, 15_000);
+    framer = new Framer(socket, (frame) => this.#onFrame(frame));
+    this.#socket = socket;
+    this.#framer = framer;
+    return framer;
   }
 
   #lost(s: Socket<undefined>) {
@@ -246,7 +411,7 @@ export class RpcClient {
     this.#framer = null;
     for (const [id, p] of this.#pending) {
       clearTimeout(p.timer);
-      p.reject(new RpcError("lost", `connection to ${this.#path} lost`));
+      p.reject(new RpcError("lost", `connection to ${this.path} lost`));
       this.#pending.delete(id);
     }
   }

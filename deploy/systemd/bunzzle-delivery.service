@@ -12,6 +12,7 @@ Group=bunzzle-delivery
 EnvironmentFile=/etc/bunzzle/bunzzle.env
 Environment=BUNZZLE_RUN_DIR=/run/bunzzle
 Environment=BUNZZLE_ENV_FILE=/etc/bunzzle/bunzzle.env
+Environment=BUNZZLE_NODE_DIR=/etc/bunzzle/node
 ExecStart=/usr/local/bin/bunzzle role delivery
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always

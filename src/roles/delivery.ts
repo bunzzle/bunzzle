@@ -20,6 +20,7 @@ import { allRecipients } from "../smtp/deliver.ts";
 import { StsCache } from "../smtp/mta-sts.ts";
 import { SessionPool } from "../smtp/pool.ts";
 import { b } from "../validate/schema.ts";
+import { loadLinkTls } from "./node-link.ts";
 import { every, onStop, ready } from "./runtime.ts";
 import { deliverRequestWire, requestFromWire, sealedBodyWire, sockets, toWire } from "./wire.ts";
 
@@ -178,7 +179,7 @@ export async function runDelivery(config: Config, log: Logger) {
     ),
   );
 
-  const server = await serveRpc(sock.delivery, {
+  const methods = {
     lookup: method(b.object({ domain: b.string().min(1).max(255) }), ({ domain }) =>
       transport.lookup(domain),
     ),
@@ -378,7 +379,15 @@ export async function runDelivery(config: Config, log: Logger) {
         return { remembered: transport.remembered };
       },
     ),
-  });
+  };
+  const server = await serveRpc(sock.delivery, methods);
+  const link = config.deliveryListen
+    ? await serveRpc(
+        { ...config.deliveryListen, tls: await loadLinkTls(config.nodeDir) },
+        methods,
+        { onRefused: (reason, remote) => log.warn("node link refused", { reason, remote }) },
+      )
+    : null;
   await checkIps();
   const stopChecks = every(3_600_000, checkIps);
   void checkLists();
@@ -391,6 +400,7 @@ export async function runDelivery(config: Config, log: Logger) {
     stopExpire();
     stopSpans();
     await spans?.flush();
+    link?.stop();
     server.stop();
     await pool.closeAll();
   });
@@ -398,6 +408,9 @@ export async function runDelivery(config: Config, log: Logger) {
     ehlo: ehloName,
     sources: ips.length ? ips : ["default"],
     dnssec: dnssec.mode,
+    ...(config.deliveryListen
+      ? { link: `${config.deliveryListen.hostname}:${config.deliveryListen.port}` }
+      : {}),
   });
   ready();
 }

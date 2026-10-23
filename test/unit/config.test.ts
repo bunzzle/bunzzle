@@ -54,6 +54,8 @@ describe("loadConfig", () => {
       cloudflareUrl: "https://api.cloudflare.com/client/v4",
       route53: null,
       desec: null,
+      deliveryListen: null,
+      nodeDir: "./node",
       ns: null,
       postmaster: null,
     });
@@ -230,5 +232,32 @@ describe("ns", () => {
       /outside/,
     );
     expect(() => loadConfig({ ...ns, BUNZZLE_NS_LISTEN: "ns1.example.net" })).toThrow(/not an IP/);
+  });
+});
+
+describe("delivery node link", () => {
+  test("listens on an IP address and port", () => {
+    expect(loadConfig({ BUNZZLE_DELIVERY_LISTEN: "203.0.113.5:7465" }).deliveryListen).toEqual({
+      hostname: "203.0.113.5",
+      port: 7465,
+    });
+    expect(loadConfig({ BUNZZLE_DELIVERY_LISTEN: "[2001:db8::5]:7465" }).deliveryListen).toEqual({
+      hostname: "2001:db8::5",
+      port: 7465,
+    });
+    expect(loadConfig({ BUNZZLE_NODE_DIR: "/etc/bunzzle/node/" }).nodeDir).toBe(
+      "/etc/bunzzle/node",
+    );
+  });
+
+  test("rejects host names, missing ports and privileged ports", () => {
+    for (const value of [
+      "node.example.net:7465",
+      "203.0.113.5",
+      "203.0.113.5:443",
+      "2001:db8::5:7465",
+    ]) {
+      expect(() => loadConfig({ BUNZZLE_DELIVERY_LISTEN: value })).toThrow(/DELIVERY_LISTEN/);
+    }
   });
 });

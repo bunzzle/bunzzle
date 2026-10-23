@@ -69,6 +69,8 @@ const BY_ROLE: Record<Role, string[]> = {
     "BUNZZLE_RELAY_PASSWORD_FILE",
     "BUNZZLE_RELAY_FOR",
     "BUNZZLE_SPAMHAUS_KEY_FILE",
+    "BUNZZLE_DELIVERY_LISTEN",
+    "BUNZZLE_NODE_DIR",
   ],
   dns: [
     "BUNZZLE_DNS_SERVERS",
