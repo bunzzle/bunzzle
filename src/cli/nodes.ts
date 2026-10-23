@@ -3,12 +3,27 @@ import type { Config } from "../config.ts";
 import { pinOf } from "../ipc/rpc.ts";
 import { b } from "../validate/schema.ts";
 import { parseCertificate } from "../x509/cert.ts";
-import { certificateRequest, validName } from "../x509/issue.ts";
+import { certificateRequest, importP256, validName } from "../x509/issue.ts";
 import { call } from "./admin.ts";
 import { parseArgs, UsageError } from "./args.ts";
 
 const USAGE =
-  "usage: bunzzle nodes [list | request NAME | add NAME ADDRESS CSR_FILE | install BUNDLE_FILE | remove NAME]";
+  "usage: bunzzle nodes [list | request NAME | add NAME ADDRESS CSR_FILE | install BUNDLE_FILE | remove NAME | rotate-ca [start | promote | finish]]";
+
+interface Rotation {
+  cas: { name: string; state: string; expires_at: string }[];
+  pending: { step: string; nodes: string[] } | null;
+}
+
+function printRotation(r: Rotation) {
+  for (const ca of r.cas) {
+    console.log(`${ca.name.padEnd(24)} ${ca.state.padEnd(10)} until ${ca.expires_at.slice(0, 10)}`);
+  }
+  if (!r.pending) console.log("No CA rotation in progress.");
+  else if (r.pending.nodes.length === 0)
+    console.log(`Next step: ${r.pending.step}. All nodes are ready.`);
+  else console.log(`Next step: ${r.pending.step}. Waiting for: ${r.pending.nodes.join(", ")}`);
+}
 
 const bundle = b.object({
   name: b.string(),
@@ -81,23 +96,8 @@ async function install(argv: string[], config: Config) {
   if (!(await keyFile.exists())) {
     throw new UsageError(`${dir}/key.pem is missing: run bunzzle nodes request first`);
   }
-  const key = await crypto.subtle.importKey(
-    "pkcs8",
-    fromPem(await keyFile.text())[0] as Uint8Array<ArrayBuffer>,
-    { name: "ECDSA", namedCurve: "P-256" },
-    true,
-    ["sign"],
-  );
-  const jwk = await crypto.subtle.exportKey("jwk", key);
-  delete jwk.d;
-  const pub = await crypto.subtle.importKey(
-    "jwk",
-    { ...jwk, key_ops: ["verify"] },
-    { name: "ECDSA", namedCurve: "P-256" },
-    true,
-    ["verify"],
-  );
-  const spki = new Uint8Array(await crypto.subtle.exportKey("spki", pub));
+  const key = await importP256(fromPem(await keyFile.text())[0] as Uint8Array);
+  const spki = new Uint8Array(await crypto.subtle.exportKey("spki", key.publicKey));
   const cert = parseCertificate(fromPem(parsed.data.cert)[0] as Uint8Array);
   if (pinOf(cert.spki) !== pinOf(spki)) {
     throw new UsageError(`${file} was not issued for the key in ${dir}/key.pem`);
@@ -132,6 +132,21 @@ export async function nodesCommand(argv: string[], config: Config) {
       return add(rest, config);
     case "install":
       return install(rest, config);
+    case "rotate-ca": {
+      const [step, ...extra] = rest;
+      if (
+        extra.length > 0 ||
+        (step !== undefined && !["start", "promote", "finish"].includes(step))
+      ) {
+        throw new UsageError(USAGE);
+      }
+      printRotation(
+        step === undefined
+          ? await call<Rotation>(config, "nodeCaRotation", {})
+          : await call<Rotation>(config, "rotateNodeCa", { step }),
+      );
+      return;
+    }
     case "remove": {
       const [name, ...extra] = rest;
       if (!name || extra.length > 0) throw new UsageError(USAGE);

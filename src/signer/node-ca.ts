@@ -25,6 +25,7 @@ const schema = b.object({
       cert: b.string().min(1),
       sealedKey: b.string().min(1).optional(),
       storeKey: b.string().min(1).optional(),
+      state: b.enum(["active", "next", "retiring"]).optional(),
     }),
   ),
 });
@@ -32,12 +33,17 @@ const schema = b.object({
 type CaFile = b.infer<typeof schema>;
 type CaEntry = CaFile["cas"][number];
 
+export type CaState = "active" | "next" | "retiring";
+
 interface Ca {
   name: string;
   der: Uint8Array;
   notAfter: number;
+  state: CaState;
   sign: SignRaw;
 }
+
+export class NodeCaError extends Error {}
 
 const context = (name: string) => `bunzzle node ca v1:${name}`;
 
@@ -113,9 +119,10 @@ export class NodeCa {
   async #load(e: CaEntry): Promise<Ca> {
     const der = Uint8Array.fromBase64(e.cert);
     const { notAfter } = parseCertificate(der);
+    const state = e.state ?? "active";
     if (e.storeKey) {
       if (!this.#store) throw new MasterKeyError(`node CA ${e.name} is in the key store`);
-      return { name: e.name, der, notAfter, sign: this.#store.signerP256(e.storeKey) };
+      return { name: e.name, der, notAfter, state, sign: this.#store.signerP256(e.storeKey) };
     }
     if (!e.sealedKey) throw new MasterKeyError(`node CA ${e.name} has no key`);
     const pkcs8 = await this.#master.open(Uint8Array.fromBase64(e.sealedKey), context(e.name));
@@ -127,7 +134,7 @@ export class NodeCa {
       ["sign"],
     );
     pkcs8.fill(0);
-    return { name: e.name, der, notAfter, sign: signWith(key) };
+    return { name: e.name, der, notAfter, state, sign: signWith(key) };
   }
 
   async #add(entry: CaEntry): Promise<void> {
@@ -137,9 +144,22 @@ export class NodeCa {
     this.#cas.push(ca);
   }
 
+  async #save(cas: Ca[]): Promise<void> {
+    const states = new Map(cas.map((c) => [c.name, c.state]));
+    const file = {
+      ...this.#file,
+      cas: this.#file.cas
+        .filter((e) => states.has(e.name))
+        .map((e) => ({ ...e, state: states.get(e.name) })),
+    };
+    await writePrivateJson(this.#path, file);
+    this.#file = file;
+    this.#cas = cas;
+  }
+
   #current(): Ca {
-    const ca = this.#cas.at(-1);
-    if (!ca) throw new MasterKeyError("no node CA");
+    const ca = this.#cas.find((c) => c.state === "active");
+    if (!ca) throw new NodeCaError("no active node CA");
     return ca;
   }
 
@@ -147,8 +167,32 @@ export class NodeCa {
     return this.#cas.map((ca) => pem("CERTIFICATE", ca.der)).join("");
   }
 
-  expiries(): { name: string; notAfter: number }[] {
-    return this.#cas.map(({ name, notAfter }) => ({ name, notAfter }));
+  states(): { name: string; state: CaState; notAfter: number }[] {
+    return this.#cas.map(({ name, state, notAfter }) => ({ name, state, notAfter }));
+  }
+
+  async rotateStart(now: number): Promise<void> {
+    if (this.#cas.some((c) => c.state !== "active")) {
+      throw new NodeCaError("a CA rotation is already in progress");
+    }
+    await this.#add({ ...(await this.#create(now)), state: "next" });
+  }
+
+  async promote(): Promise<void> {
+    if (!this.#cas.some((c) => c.state === "next")) throw new NodeCaError("no next CA to promote");
+    await this.#save(
+      this.#cas.map((c) => ({
+        ...c,
+        state: c.state === "next" ? "active" : c.state === "active" ? "retiring" : c.state,
+      })),
+    );
+  }
+
+  async dropRetiring(): Promise<string[]> {
+    const gone = this.#cas.filter((c) => c.state === "retiring").map((c) => c.name);
+    if (gone.length === 0) throw new NodeCaError("no retiring CA to drop");
+    await this.#save(this.#cas.filter((c) => c.state !== "retiring"));
+    return gone;
   }
 
   async issue(

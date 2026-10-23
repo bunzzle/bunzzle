@@ -42,6 +42,26 @@ export function isP256(spki: Uint8Array): boolean {
   return spki.length === P256_SPKI.length + 65 && P256_SPKI.every((byte, i) => spki[i] === byte);
 }
 
+export async function importP256(pkcs8: Uint8Array): Promise<CryptoKeyPair> {
+  const alg = { name: "ECDSA", namedCurve: "P-256" };
+  const privateKey = await crypto.subtle.importKey(
+    "pkcs8",
+    pkcs8 as Uint8Array<ArrayBuffer>,
+    alg,
+    true,
+    ["sign"],
+  );
+  const { d: _, ...jwk } = await crypto.subtle.exportKey("jwk", privateKey);
+  const publicKey = await crypto.subtle.importKey(
+    "jwk",
+    { ...jwk, key_ops: ["verify"] },
+    alg,
+    true,
+    ["verify"],
+  );
+  return { privateKey, publicKey };
+}
+
 export function validName(name: string): boolean {
   return NAME.test(name);
 }

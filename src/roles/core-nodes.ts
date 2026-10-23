@@ -12,6 +12,27 @@ import { validName } from "../x509/issue.ts";
 
 const NODE_DAYS = 30;
 const issued = b.object({ cert: b.string(), ca: b.string() });
+const caStates = b.array(
+  b.object({
+    name: b.string(),
+    state: b.enum(["active", "next", "retiring"]),
+    notAfter: b.number(),
+  }),
+);
+
+const same = (a: Uint8Array, c: Uint8Array) =>
+  a.length === c.length && a.every((x, i) => x === c[i]);
+
+function trustOf(certPem: string, caPem: string) {
+  const cert = parseCertificate(fromPem(certPem)[0] as Uint8Array);
+  const cas = fromPem(caPem).map((d) => parseCertificate(d));
+  const issuer = cas.find((c) => same(c.subject, cert.issuer));
+  return {
+    cert,
+    ca: issuer?.commonNames[0] ?? "",
+    trustedCas: cas.map((c) => c.commonNames[0] ?? ""),
+  };
+}
 
 export interface NodeDeps {
   db: Database;
@@ -26,7 +47,67 @@ export function nodeMethods(deps: NodeDeps): Methods {
   const { db, writer, log, signer, identity } = deps;
   const now = deps.now ?? Date.now;
 
+  const rotation = async () => {
+    const cas = await signer.call("nodeCaStates", {}, { result: caStates });
+    const next = cas.find((c) => c.state === "next");
+    const retiring = cas.find((c) => c.state === "retiring");
+    const nodes = listNodes(db);
+    const pending = next
+      ? {
+          step: "promote" as const,
+          nodes: nodes.filter((n) => !n.trustedCas.includes(next.name)).map((n) => n.name),
+        }
+      : retiring
+        ? {
+            step: "finish" as const,
+            nodes: nodes.filter((n) => n.ca === retiring.name).map((n) => n.name),
+          }
+        : null;
+    return {
+      cas: cas.map((c) => ({
+        name: c.name,
+        state: c.state,
+        expires_at: new Date(c.notAfter).toISOString(),
+      })),
+      pending,
+    };
+  };
+
   return {
+    nodeCaRotation: method(b.object({}), rotation),
+
+    rotateNodeCa: method(
+      b.object({ step: b.enum(["start", "promote", "finish"]) }),
+      async ({ step }) => {
+        const { pending } = await rotation();
+        if (step === "start" && pending) {
+          throw new RpcError(
+            "invalid",
+            `a CA rotation is in progress: next step is ${pending.step}`,
+          );
+        }
+        if (step !== "start") {
+          if (pending?.step !== step) {
+            throw new RpcError(
+              "invalid",
+              pending ? `the next step is ${pending.step}` : "no CA rotation in progress",
+            );
+          }
+          if (pending.nodes.length > 0) {
+            const why =
+              step === "promote"
+                ? "do not trust the new CA yet"
+                : "still have a certificate from the old CA";
+            throw new RpcError("invalid", `${pending.nodes.join(", ")} ${why}`);
+          }
+        }
+        await signer.call("rotateNodeCa", { step }, { result: caStates });
+        await identity.reissue();
+        log.info("node CA rotation step done", { step });
+        return rotation();
+      },
+    ),
+
     addNode: method(
       b.object({
         name: b.string().max(63),
@@ -45,7 +126,7 @@ export function nodeMethods(deps: NodeDeps): Methods {
           { csr, purpose: "server", days: NODE_DAYS },
           { result: issued },
         );
-        const parsed = parseCertificate(fromPem(cert)[0] as Uint8Array);
+        const { cert: parsed, ca: issuer, trustedCas } = trustOf(cert, ca);
         if (parsed.commonNames[0] !== name) {
           throw new RpcError("invalid", `the request is for ${parsed.commonNames[0]}, not ${name}`);
         }
@@ -54,6 +135,8 @@ export function nodeMethods(deps: NodeDeps): Methods {
           address,
           pin: pinOf(parsed.spki),
           notAfter: parsed.notAfter,
+          ca: issuer,
+          trustedCas,
           createdAt: now(),
         };
         if (!(await writer.run((d) => addNode(d, node)))) {

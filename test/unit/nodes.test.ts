@@ -18,27 +18,49 @@ import { parseCertificate } from "../../src/x509/cert.ts";
 import { parseCertificateRequest } from "../../src/x509/issue.ts";
 
 const dir = `${Bun.env["TMPDIR"] ?? "/tmp"}/bunzzle-nodes-${crypto.randomUUID()}`;
-const socket = `/tmp/bunzzle-${crypto.randomUUID().slice(0, 8)}.sock`;
 await Bun.$`mkdir -p ${dir}/keys`.quiet();
 const master = await masterKeyFrom(generateMasterKey());
-const ca = await NodeCa.open(`${dir}/keys/node-ca.json`, master, null, Date.now());
-const signerServer = await serveRpc(socket, {
-  issueNodeCertificate: method(
-    b.object({ csr: b.string(), purpose: b.enum(["client", "server"]), days: b.number() }),
-    async ({ csr, purpose, days }) => {
-      const r = await parseCertificateRequest(Uint8Array.fromBase64(csr));
-      return { cert: await ca.issue(r.name, r.spki, purpose, days, Date.now()), ca: ca.trusted() };
-    },
-  ),
-});
-const signer = new RpcClient(socket);
 const quiet = createLogger("error");
 const config = {} as Config;
+const cleanup: (() => void)[] = [];
+
+async function startSigner(ca: NodeCa) {
+  const socket = `/tmp/bunzzle-${crypto.randomUUID().slice(0, 8)}.sock`;
+  const server = await serveRpc(socket, {
+    issueNodeCertificate: method(
+      b.object({ csr: b.string(), purpose: b.enum(["client", "server"]), days: b.number() }),
+      async ({ csr, purpose, days }) => {
+        const r = await parseCertificateRequest(Uint8Array.fromBase64(csr));
+        return {
+          cert: await ca.issue(r.name, r.spki, purpose, days, Date.now()),
+          ca: ca.trusted(),
+        };
+      },
+    ),
+    nodeCa: method(b.object({}), () => ca.trusted()),
+    nodeCaStates: method(b.object({}), () => ca.states()),
+    rotateNodeCa: method(b.object({ step: b.string() }), async ({ step }) => {
+      if (step === "start") await ca.rotateStart(Date.now());
+      else if (step === "promote") await ca.promote();
+      else await ca.dropRetiring();
+      return ca.states();
+    }),
+  });
+  const client = new RpcClient(socket);
+  cleanup.push(() => {
+    client.close();
+    server.stop();
+    Bun.$`rm -f ${socket}`.quiet();
+  });
+  return client;
+}
+
+const ca = await NodeCa.open(`${dir}/keys/node-ca.json`, master, null, Date.now());
+const signer = await startSigner(ca);
 
 afterAll(async () => {
-  signer.close();
-  signerServer.stop();
-  await Bun.$`rm -rf ${dir} ${socket}`.quiet();
+  for (const c of cleanup) c();
+  await Bun.$`rm -rf ${dir}`.quiet();
 });
 
 const invoke = (methods: Methods, name: string, params: unknown) => {
@@ -47,14 +69,14 @@ const invoke = (methods: Methods, name: string, params: unknown) => {
   return m.handle(m.params.parse(params));
 };
 
-async function core() {
+async function core(client = signer) {
   const db = openDatabase({ path: ":memory:" });
   const identity = await CoreIdentity.load(
     `${dir}/core-${crypto.randomUUID()}`,
-    signer,
+    client,
     Date.now(),
   );
-  const methods = nodeMethods({ db, writer: new Writer(db), log: quiet, signer, identity });
+  const methods = nodeMethods({ db, writer: new Writer(db), log: quiet, signer: client, identity });
   return { db, identity, methods };
 }
 
@@ -194,6 +216,8 @@ describe("delivery nodes", () => {
       address: "127.0.0.1:7465",
       pin: "sha256/x",
       notAfter,
+      ca: "",
+      trustedCas: [],
       createdAt: 0,
     });
     expect(nodeChecks([], ca.trusted(), Date.now())).toEqual([]);
@@ -213,5 +237,78 @@ describe("delivery nodes", () => {
     expect(fresh[3]?.detail).toMatch(/^expired /);
     const late = nodeChecks([node("a", caEnd)], ca.trusted(), caEnd - 59 * DAY);
     expect(late[0]?.status).toBe("warn");
+  });
+
+  test("CA rotation: start, promote once nodes trust the new CA, finish once they hold its certificates", async () => {
+    await Bun.$`mkdir -p ${dir}/rot`.quiet();
+    const rotCa = await NodeCa.open(`${dir}/rot/node-ca.json`, master, null, Date.now());
+    const client = await startSigner(rotCa);
+    const { db, identity, methods } = await core(client);
+    const csr = await requestCsr(`${dir}/node-r`, "node-r");
+    await invoke(methods, "addNode", { name: "node-r", address: "127.0.0.1:7470", csr });
+    const [first] = rotCa.states();
+    const pin = identity.current().pin;
+    const step = (s: string) => invoke(methods, "rotateNodeCa", { step: s });
+    const refusal = (s: string) =>
+      Promise.resolve()
+        .then(() => step(s))
+        .then(
+          () => {
+            throw new Error("expected a refusal");
+          },
+          (e: RpcError) => e.message,
+        );
+    const issuerOf = () =>
+      fromPem(identity.current().ca)
+        .map((d) => parseCertificate(d))
+        .find((c) => {
+          const cert = parseCertificate(fromPem(identity.current().cert)[0] as Uint8Array);
+          return (
+            c.subject.every((x, i) => x === cert.issuer[i]) &&
+            c.subject.length === cert.issuer.length
+          );
+        })?.commonNames[0];
+
+    expect(listNodes(db)[0]?.trustedCas).toEqual([first?.name ?? ""]);
+    expect(await invoke(methods, "nodeCaRotation", {})).toMatchObject({ pending: null });
+    expect(await refusal("promote")).toMatch(/no CA rotation in progress/);
+
+    const started = (await step("start")) as { pending: { step: string; nodes: string[] } };
+    expect(started.pending).toEqual({ step: "promote", nodes: ["node-r"] });
+    const next = rotCa.states()[1]?.name ?? "";
+    expect(fromPem(identity.current().ca)).toHaveLength(2);
+    expect(issuerOf()).toBe(first?.name);
+    expect(identity.current().pin).toBe(pin);
+    expect(await refusal("start")).toMatch(/in progress: next step is promote/);
+    expect(await refusal("finish")).toMatch(/next step is promote/);
+    expect(await refusal("promote")).toMatch(/node-r do not trust the new CA yet/);
+
+    db.run("UPDATE nodes SET trusted_cas = ? WHERE name = 'node-r'", [
+      JSON.stringify([first?.name, next]),
+    ]);
+    const promoted = (await step("promote")) as { pending: { step: string; nodes: string[] } };
+    expect(promoted.pending).toEqual({ step: "finish", nodes: ["node-r"] });
+    expect(issuerOf()).toBe(next);
+    expect(identity.current().pin).toBe(pin);
+    expect(await refusal("finish")).toMatch(/node-r still have a certificate from the old CA/);
+
+    db.run("UPDATE nodes SET ca = ? WHERE name = 'node-r'", [next]);
+    const finished = (await step("finish")) as { cas: { name: string }[]; pending: null };
+    expect(finished.cas.map((c) => c.name)).toEqual([next]);
+    expect(finished.pending).toBeNull();
+    expect(fromPem(identity.current().ca)).toHaveLength(1);
+    expect(identity.current().pin).toBe(pin);
+  });
+
+  test("core picks up a CA change made while it was down", async () => {
+    await Bun.$`mkdir -p ${dir}/heal`.quiet();
+    const healCa = await NodeCa.open(`${dir}/heal/node-ca.json`, master, null, Date.now());
+    const client = await startSigner(healCa);
+    const at = `${dir}/core-heal`;
+    const before = await CoreIdentity.load(at, client, Date.now());
+    await healCa.rotateStart(Date.now());
+    const after = await CoreIdentity.load(at, client, Date.now());
+    expect(after.current().ca).toBe(healCa.trusted());
+    expect(after.current().pin).toBe(before.current().pin);
   });
 });

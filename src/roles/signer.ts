@@ -4,7 +4,7 @@ import type { Logger } from "../core/log.ts";
 import { masterKeyFrom } from "../crypto/master.ts";
 import { transitStore } from "../dkim/store.ts";
 import { method, RpcError, serveRpc } from "../ipc/rpc.ts";
-import { NodeCa } from "../signer/node-ca.ts";
+import { NodeCa, NodeCaError } from "../signer/node-ca.ts";
 import { loadRecipientKey } from "../signer/recipient-key.ts";
 import { dkimKeyFilesIn, Signer, SignerError } from "../signer/signer.ts";
 import { b } from "../validate/schema.ts";
@@ -49,6 +49,22 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
     domains: method(b.object({}), () => signer.domains()),
     recipientKey: method(b.object({}), () => recipientKey.toBase64()),
     nodeCa: method(b.object({}), () => nodeCa.trusted()),
+    nodeCaStates: method(b.object({}), () => nodeCa.states()),
+    rotateNodeCa: method(
+      b.object({ step: b.enum(["start", "promote", "finish"]) }),
+      async ({ step }) => {
+        try {
+          if (step === "start") await nodeCa.rotateStart(Date.now());
+          else if (step === "promote") await nodeCa.promote();
+          else await nodeCa.dropRetiring();
+        } catch (err) {
+          if (err instanceof NodeCaError) throw new RpcError("invalid", err.message);
+          throw err;
+        }
+        log.info("node CA rotation step", { step, cas: nodeCa.states() });
+        return nodeCa.states();
+      },
+    ),
     issueNodeCertificate: method(
       b.object({
         csr: b.string().max(4000),

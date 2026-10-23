@@ -57,7 +57,7 @@ Usage:
   bunzzle keys        create|list|revoke API keys; --admin for a key that manages projects (needs \`serve\` running)
   bunzzle projects    add|list|show|limits|suspend|resume|remove projects (needs \`serve\` running)
   bunzzle pools       list IP pools; own POOL PROJECT gives a pool to one project; share POOL; rules [add DOMAIN|PROVIDER POOL|relay | remove ID] (needs \`serve\` running)
-  bunzzle nodes       delivery nodes: request NAME (on the node); add NAME ADDRESS CSR_FILE, list, remove NAME (on core, needs \`serve\` running); install BUNDLE_FILE (on the node)
+  bunzzle nodes       delivery nodes: request NAME (on the node); add NAME ADDRESS CSR_FILE, list, remove NAME (on core, needs \`serve\` running); install BUNDLE_FILE (on the node); rotate-ca [start|promote|finish] (on core)
   bunzzle paths       sending speed per destination and why it changed (needs \`serve\` running)
   bunzzle webhooks    add|list|remove event webhooks; deliveries ID shows every attempt; resend ID DELIVERY or --from --to (needs \`serve\` running)
   bunzzle routes      add|list|remove|retry inbound routes: mail for an address posted to a URL (needs \`serve\` running)

@@ -3,7 +3,7 @@ import { writePrivateJson } from "../core/private-file.ts";
 import { pinOf, type RpcClient } from "../ipc/rpc.ts";
 import { b } from "../validate/schema.ts";
 import { parseCertificate } from "../x509/cert.ts";
-import { certificateRequest } from "../x509/issue.ts";
+import { certificateRequest, importP256 } from "../x509/issue.ts";
 
 const CORE_DAYS = 7;
 const issued = b.object({ cert: b.string(), ca: b.string() });
@@ -48,7 +48,12 @@ export class CoreIdentity {
       if (parsed.success) {
         const { cert, key, ca } = parsed.data;
         const current = identityOf(cert, key, ca);
-        if (current.notAfter > now) return new CoreIdentity(dir, signer, current);
+        if (current.notAfter > now) {
+          const id = new CoreIdentity(dir, signer, current);
+          const trusted = await signer.call("nodeCa", {}, { result: b.string() });
+          if (trusted !== ca) await id.reissue();
+          return id;
+        }
       }
     }
     const id = new CoreIdentity(dir, signer, await CoreIdentity.#issue(signer));
@@ -56,8 +61,8 @@ export class CoreIdentity {
     return id;
   }
 
-  static async #issue(signer: RpcClient): Promise<Identity> {
-    const key = await newKey();
+  static async #issue(signer: RpcClient, existing?: string): Promise<Identity> {
+    const key = existing ? await importP256(fromPem(existing)[0] as Uint8Array) : await newKey();
     const csr = await certificateRequest("core", key);
     const { cert, ca } = await signer.call(
       "issueNodeCertificate",
@@ -76,6 +81,12 @@ export class CoreIdentity {
   }
 
   current(): Identity {
+    return this.#current;
+  }
+
+  async reissue(): Promise<Identity> {
+    this.#current = await CoreIdentity.#issue(this.#signer, this.#current.key);
+    await this.#save();
     return this.#current;
   }
 

@@ -111,4 +111,38 @@ describe("node CA", () => {
     expect(await verifySignature(cert, first(ca.trusted()).spki)).toBe(true);
     await expect(NodeCa.open(path, master, null, now)).rejects.toThrow(/key store/);
   });
+
+  test("rotation: next CA is trusted first, then issues, then the old one is dropped", async () => {
+    const path = `${dir}/f/node-ca.json`;
+    await Bun.$`mkdir -p ${dir}/f`.quiet();
+    const ca = await NodeCa.open(path, master, null, now);
+    const [old] = ca.states();
+    const spki = await spkiOf(await p256());
+    const issuer = async () => first(await ca.issue("node-1", spki, "server", 30, now)).issuer;
+    const subjectOf = (name: string) =>
+      fromPem(ca.trusted())
+        .map((d) => parseCertificate(d))
+        .find((c) => c.commonNames[0] === name)?.subject ?? new Uint8Array();
+
+    await ca.rotateStart(now);
+    const [, next] = ca.states();
+    expect(ca.states().map((c) => c.state)).toEqual(["active", "next"]);
+    expect(fromPem(ca.trusted())).toHaveLength(2);
+    expect(await issuer()).toEqual(subjectOf(old?.name ?? ""));
+    await expect(ca.rotateStart(now)).rejects.toThrow(/already in progress/);
+
+    await ca.promote();
+    expect(ca.states().map((c) => c.state)).toEqual(["retiring", "active"]);
+    expect(await issuer()).toEqual(subjectOf(next?.name ?? ""));
+
+    const reopened = await NodeCa.open(path, master, null, now);
+    expect(reopened.states().map((c) => c.state)).toEqual(["retiring", "active"]);
+
+    expect(await reopened.dropRetiring()).toEqual([old?.name ?? ""]);
+    expect(reopened.states().map((c) => [c.name, c.state])).toEqual([[next?.name ?? "", "active"]]);
+    expect(fromPem(reopened.trusted())).toHaveLength(1);
+    await expect(reopened.promote()).rejects.toThrow(/no next CA/);
+    await expect(reopened.dropRetiring()).rejects.toThrow(/no retiring CA/);
+    expect((await NodeCa.open(path, master, null, now)).states()).toHaveLength(1);
+  });
 });
