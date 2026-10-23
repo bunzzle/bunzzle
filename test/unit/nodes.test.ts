@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { fromPem } from "../../src/asn1/der.ts";
 import { nodesCommand } from "../../src/cli/nodes.ts";
 import type { Config } from "../../src/config.ts";
 import { createLogger } from "../../src/core/log.ts";
@@ -8,10 +9,12 @@ import { generateMasterKey, masterKeyFrom } from "../../src/crypto/master.ts";
 import { type Methods, method, RpcClient, RpcError, serveRpc } from "../../src/ipc/rpc.ts";
 import { CoreIdentity } from "../../src/nodes/identity.ts";
 import { listNodes } from "../../src/nodes/registry.ts";
+import { nodeChecks } from "../../src/roles/core-doctor.ts";
 import { nodeMethods } from "../../src/roles/core-nodes.ts";
 import { loadLinkTls } from "../../src/roles/node-link.ts";
 import { NodeCa } from "../../src/signer/node-ca.ts";
 import { b } from "../../src/validate/schema.ts";
+import { parseCertificate } from "../../src/x509/cert.ts";
 import { parseCertificateRequest } from "../../src/x509/issue.ts";
 
 const dir = `${Bun.env["TMPDIR"] ?? "/tmp"}/bunzzle-nodes-${crypto.randomUUID()}`;
@@ -181,5 +184,34 @@ describe("delivery nodes", () => {
     await expect(
       Promise.resolve().then(() => invoke(methods, "removeNode", { name: "node-e" })),
     ).rejects.toBeInstanceOf(RpcError);
+  });
+
+  test("doctor warns 60 days before CA expiry and 3 days before a node certificate expires", () => {
+    const DAY = 86_400_000;
+    const caEnd = parseCertificate(fromPem(ca.trusted())[0] as Uint8Array).notAfter;
+    const node = (name: string, notAfter: number) => ({
+      name,
+      address: "127.0.0.1:7465",
+      pin: "sha256/x",
+      notAfter,
+      createdAt: 0,
+    });
+    expect(nodeChecks([], ca.trusted(), Date.now())).toEqual([]);
+    const at = caEnd - 61 * DAY;
+    const fresh = nodeChecks(
+      [node("a", at + 10 * DAY), node("b", at + 2 * DAY), node("c", at - DAY)],
+      ca.trusted(),
+      at,
+    );
+    expect(fresh.map((c) => [c.item.replace(/-[0-9a-f]{8}$/, ""), c.status])).toEqual([
+      ["CA bunzzle-node-ca", "ok"],
+      ["a certificate", "ok"],
+      ["b certificate", "warn"],
+      ["c certificate", "fail"],
+    ]);
+    expect(fresh[2]?.detail).toMatch(/in 2 days$/);
+    expect(fresh[3]?.detail).toMatch(/^expired /);
+    const late = nodeChecks([node("a", caEnd)], ca.trusted(), caEnd - 59 * DAY);
+    expect(late[0]?.status).toBe("warn");
   });
 });

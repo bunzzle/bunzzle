@@ -446,6 +446,7 @@ export async function runCore(config: Config, log: Logger) {
     dns,
     publicUrl: config.publicUrl,
   });
+  const identity = await CoreIdentity.load(`${config.dataDir}/node-link`, signer, Date.now());
   const doctor = doctorMethods({
     db,
     config,
@@ -453,8 +454,8 @@ export async function runCore(config: Config, log: Logger) {
     rotation: rotate,
     paths: () => shaper.views(),
     storage: () => storage.state(),
+    nodeCa: () => identity.current().ca,
   });
-  const identity = await CoreIdentity.load(`${config.dataDir}/node-link`, signer, Date.now());
   const all = {
     ...api.methods,
     ...nodeMethods({ db, writer, log, signer, identity }),

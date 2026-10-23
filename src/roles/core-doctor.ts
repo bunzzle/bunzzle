@@ -1,13 +1,16 @@
 import type { Database } from "bun:sqlite";
 import type { ProjectId } from "../accounts/projects.ts";
+import { fromPem } from "../asn1/der.ts";
 import type { Config } from "../config.ts";
 import type { StorageState } from "../core/storage.ts";
 import { allDomains, domainPool, findDomain, getDomain, listDomains } from "../domains/domains.ts";
 import { latestPostmaster } from "../guards/gmail.ts";
 import { listHolds } from "../guards/guards.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
+import { type DeliveryNode, listNodes } from "../nodes/registry.ts";
 import type { PathView } from "../shaping/shaper.ts";
 import { b } from "../validate/schema.ts";
+import { parseCertificate } from "../x509/cert.ts";
 import { resolveServer, scopeOf } from "./actor.ts";
 import type { rotation } from "./core-rotation.ts";
 import { project, tokenHash } from "./wire.ts";
@@ -28,8 +31,13 @@ export interface DoctorDeps {
   rotation: ReturnType<typeof rotation>;
   paths: () => PathView[];
   storage?: () => StorageState;
+  nodeCa?: () => string;
   now?: () => number;
 }
+
+const DAY = 86_400_000;
+const CA_WARN_DAYS = 60;
+const NODE_WARN_DAYS = 3;
 
 const dnssecInfo = b.object({ mode: b.enum(["resolver", "own", "off"]), detail: b.string() });
 
@@ -54,6 +62,28 @@ export const ipInfo = b.array(
       .optional(),
   }),
 );
+
+export function nodeChecks(nodes: DeliveryNode[], caPem: string, now: number): Check[] {
+  if (nodes.length === 0) return [];
+  const checks: Check[] = [];
+  const expiry = (item: string, notAfter: number, warnDays: number) => {
+    const days = Math.floor((notAfter - now) / DAY);
+    const when = new Date(notAfter).toISOString().slice(0, 10);
+    const expired = notAfter <= now;
+    checks.push({
+      area: "nodes",
+      item,
+      status: expired ? "fail" : days < warnDays ? "warn" : "ok",
+      detail: expired ? `expired ${when}` : `expires ${when}, in ${days} days`,
+    });
+  };
+  for (const der of fromPem(caPem)) {
+    const ca = parseCertificate(der);
+    expiry(`CA ${ca.commonNames[0] ?? ""}`, ca.notAfter, CA_WARN_DAYS);
+  }
+  for (const n of nodes) expiry(`${n.name} certificate`, n.notAfter, NODE_WARN_DAYS);
+  return checks;
+}
 
 export function doctorMethods(deps: DoctorDeps): Methods {
   const { db, config, delivery, rotation } = deps;
@@ -239,6 +269,8 @@ export function doctorMethods(deps: DoctorDeps): Methods {
         .get(now() - 86_400_000)?.n ?? 0;
     if (failed > 0)
       add("webhooks", "deliveries", "warn", `${failed} webhook deliveries gave up in the last day`);
+
+    if (scope === null) checks.push(...nodeChecks(listNodes(db), deps.nodeCa?.() ?? "", now()));
     return checks;
   };
 
