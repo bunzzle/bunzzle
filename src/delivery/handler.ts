@@ -49,6 +49,7 @@ export interface DeliveryHandlerOptions {
   relayRoutes?: () => { targets: string[]; blocked: boolean } | null;
   listed?: (ip: string) => boolean;
   ipDown?: (ip: string) => IpDown | null;
+  nodeOf?: (source: string) => string | null;
   poolRules?: (job: {
     project: ProjectId;
     domain: string;
@@ -371,7 +372,13 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
     }
     const ticket = admission;
     admission = { kind: "go", connections: 1, release: () => {} };
-    if (ctx && clock.now() - now >= RENEW_AFTER_MS && !(await ctx.renew())) {
+    const sendFrom = via ? fixedSource : source;
+    const node = simulated ? job.node : (o.nodeOf?.(sendFrom) ?? null);
+    if (
+      ctx &&
+      (node !== job.node || clock.now() - now >= RENEW_AFTER_MS) &&
+      !(await ctx.renew(node))
+    ) {
       ticket.release("neutral", "");
       return requeue("lease lost while waiting", 0);
     }
@@ -396,7 +403,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
             ...(destination.kind === "targets" ? { connections: ticket.connections } : {}),
             lane,
             bounceDomain: o.bounceDomainFor?.(domainOf(email.from)) ?? null,
-            source: via ? fixedSource : source,
+            source: sendFrom,
             ...(via ? { via } : {}),
           });
     } catch (err) {

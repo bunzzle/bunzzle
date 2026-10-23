@@ -38,6 +38,7 @@ export const API_METHODS = [
   "listWebhookDeliveries",
   "listWebhooks",
   "metrics",
+  "nodes",
   "paths",
   "queue",
   "releaseHold",

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { DEFAULT_PROJECT } from "../../src/accounts/projects.ts";
 import { manualClock } from "../../src/core/clock.ts";
-import { claim } from "../../src/core/jobs.ts";
+import { claim, expireLeases, renewLease, resendUnresolved } from "../../src/core/jobs.ts";
 import { createLogger } from "../../src/core/log.ts";
 import type { Outcome } from "../../src/core/outcome.ts";
 import { openDatabase } from "../../src/core/store/db.ts";
@@ -9,6 +9,9 @@ import { deliveryHandler } from "../../src/delivery/handler.ts";
 import { enqueueEmail } from "../../src/delivery/queue.ts";
 import type { DeliveryTransport } from "../../src/delivery/transport.ts";
 import { choose, type IpDown } from "../../src/ips/warmup.ts";
+import { collect } from "../../src/metrics/metrics.ts";
+import { DeliveryFleet } from "../../src/nodes/fleet.ts";
+import type { NodeLinks } from "../../src/nodes/links.ts";
 import { Shaper } from "../../src/shaping/shaper.ts";
 
 const A = "203.0.113.1";
@@ -19,7 +22,10 @@ const IPS = [
   { ip: B, pool: "main", established: true },
 ];
 
-function harness(down: (ip: string, now: number) => IpDown | null) {
+function harness(
+  down: (ip: string, now: number) => IpDown | null,
+  nodeOf?: (source: string) => string | null,
+) {
   const clock = manualClock();
   const db = openDatabase({ path: ":memory:" });
   const log = createLogger("error", {}, () => {});
@@ -48,7 +54,9 @@ function harness(down: (ip: string, now: number) => IpDown | null) {
     ips: IPS,
     relayRoutes: () => ({ targets: [], blocked: true }),
     ipDown: (ip) => down(ip, clock.now()),
+    ...(nodeOf ? { nodeOf } : {}),
   });
+  const renewed: (string | null | undefined)[] = [];
   let n = 0;
   const run = async (): Promise<Outcome | string> => {
     enqueueEmail(
@@ -65,9 +73,15 @@ function harness(down: (ip: string, now: number) => IpDown | null) {
       clock.now(),
     );
     const [job] = claim(db, clock.now(), 1, 60_000);
-    return handle(job as NonNullable<typeof job>).catch((e: Error) => e.message);
+    const claimed = job as NonNullable<typeof job>;
+    return handle(claimed, AbortSignal.timeout(60_000), {
+      renew: async (node) => {
+        renewed.push(node);
+        return renewLease(db, claimed, clock.now() + 60_000, clock.now(), node);
+      },
+    }).catch((e: Error) => e.message);
   };
-  return { run, sent, clock };
+  return { run, sent, clock, db, renewed };
 }
 
 const nodeDown =
@@ -131,4 +145,78 @@ test("a receiver block on every IP still allows the relay", async () => {
   const now = 1_000_000_000;
   const result = choose(db, IPS, "transactional", "company.example", null, 1, now, () => now + MIN);
   expect(result).toMatchObject({ wait: { blocked: true } });
+});
+
+test("the lease carries the node the attempt went to, and keeps it through lease expiry", async () => {
+  const h = harness(
+    () => null,
+    (ip) => (ip === A ? "node-a" : null),
+  );
+  expect(await h.run()).toBe("sent");
+  expect(h.sent[0]?.source).toBe(A);
+  const row = () =>
+    h.db.query<{ state: string; node: string | null }, []>("SELECT state, node FROM jobs").get();
+  expect(row()).toEqual({ state: "leased", node: "node-a" });
+  h.clock.advance(2 * MIN);
+  expect(expireLeases(h.db, h.clock.now(), MIN)).toBe(1);
+  expect(row()).toEqual({ state: "unknown", node: "node-a" });
+  h.clock.advance(2 * MIN);
+  expect(resendUnresolved(h.db, h.clock.now())).toBe(1);
+  const [again] = claim(h.db, h.clock.now(), 1, 60_000);
+  expect(again).toMatchObject({ node: "node-a", unresolvedAttempt: 1 });
+});
+
+test("a send through the local delivery role does not write the lease again", async () => {
+  const h = harness(
+    () => null,
+    () => null,
+  );
+  expect(await h.run()).toBe("sent");
+  expect(h.renewed).toEqual([]);
+  expect(h.db.query("SELECT node FROM jobs").get()).toEqual({ node: null });
+});
+
+test("node state, delivered count and jobs per node in metrics", async () => {
+  const reply = (ips: string[]) => ({
+    call: async () => ips.map((ip) => ({ ip })),
+    close() {},
+  });
+  const links = {
+    sync() {},
+    names: () => ["node-a"],
+    client: () => reply([B]),
+  } as unknown as NodeLinks;
+  const fleet = new DeliveryFleet({
+    local: reply([A]) as never,
+    links,
+    log: createLogger("error", {}, () => {}),
+  });
+  await fleet.check();
+  fleet.delivered("node-a", 3);
+  fleet.delivered("local", 1);
+  expect(fleet.nodeOf(B)).toBe("node-a");
+  expect(fleet.nodeOf(A)).toBeNull();
+
+  const h = harness(
+    () => null,
+    (ip) => fleet.nodeOf(ip),
+  );
+  await h.run();
+  await h.run();
+  const families = collect(h.db, null, [], 0, 0, undefined, null, null, fleet.health());
+  const of = (name: string) => families.find((f) => f.name === name)?.samples;
+  expect(of("bunzzle_node_up")).toEqual([
+    { labels: { node: "local" }, value: 1 },
+    { labels: { node: "node-a" }, value: 1 },
+  ]);
+  expect(of("bunzzle_node_delivered")).toEqual([
+    { labels: { node: "local" }, value: 1 },
+    { labels: { node: "node-a" }, value: 3 },
+  ]);
+  const leased = (node: string) =>
+    of("bunzzle_node_jobs")?.find(
+      (x) => x.labels["node"] === node && x.labels["state"] === "leased",
+    )?.value;
+  expect((leased("local") ?? 0) + (leased("node-a") ?? 0)).toBe(2);
+  expect(leased("node-a")).toBe(h.sent.filter((x) => x.source === B).length);
 });

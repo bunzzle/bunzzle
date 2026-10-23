@@ -266,6 +266,10 @@ export class Bunzzle {
     return this.#request("GET", `/ips`);
   }
 
+  listNodes() {
+    return this.#request("GET", `/nodes`);
+  }
+
   listHolds(options = {}) {
     return this.#request("GET", `/holds`, { query: { all: options.all } });
   }

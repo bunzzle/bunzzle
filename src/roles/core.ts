@@ -139,6 +139,10 @@ export async function runCore(config: Config, log: Logger) {
           result: deliveryReportWire,
           timeoutMs: 40 * MIN,
         })
+        .then((report) => {
+          fleet.delivered(name, report.recipients.filter((r) => r.status === "delivered").length);
+          return report;
+        })
         .catch((err) => {
           putBack(name, keys);
           if ((err as { code?: unknown })?.code === "unavailable") {
@@ -229,6 +233,7 @@ export async function runCore(config: Config, log: Logger) {
         : null,
     listed: (ip) => listed.has(ip),
     ipDown: (ip) => fleet.down(ip),
+    nodeOf: (source) => fleet.nodeOf(source),
     poolRules: (job) =>
       choosePool(db, job, (pool) => config.sourceIps.some((x) => x.pool === pool)),
   });
@@ -390,6 +395,7 @@ export async function runCore(config: Config, log: Logger) {
     storage: () => storage.state(),
     nsHealth: () => probe?.view() ?? null,
     nsDelegation: () => delegation?.view() ?? null,
+    nodes: () => fleet.health(),
     ...(config.ns && zone
       ? {
           nsCheck: async () => {
