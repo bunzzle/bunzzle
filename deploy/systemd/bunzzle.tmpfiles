@@ -1,5 +1,6 @@
 d /run/bunzzle      1770 root bunzzle -
 d /run/bunzzle/inbound 2750 bunzzle-core bunzzle-core-inbound -
 d /var/lib/bunzzle  0755 root root    -
+d /var/lib/bunzzle/node 0700 bunzzle-delivery bunzzle-delivery -
 d /etc/bunzzle      0755 root root    -
 d /var/lib/bunzzle/certs 2750 bunzzle-dns bunzzle-certs -

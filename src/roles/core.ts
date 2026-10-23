@@ -531,6 +531,11 @@ export async function runCore(config: Config, log: Logger) {
     nodeCa: () => identity.current().ca,
     corePin: () => identity.current().pin,
     fleet: () => ({ health: fleet.health(), conflicts: fleet.conflicts() }),
+    nodeClients: () =>
+      links.names().flatMap((name) => {
+        const client = links.client(name);
+        return client ? [client] : [];
+      }),
   });
   const all = {
     ...api.methods,

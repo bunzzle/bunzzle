@@ -9,6 +9,7 @@ import { checkReverse, type ReverseCheck } from "../dns/reverse.ts";
 import { ownValidation } from "../dnssec/resolver.ts";
 import { method, RpcClient, type RpcServer, serveRpc } from "../ipc/rpc.ts";
 import { blocklists, checkBlocklists, type Listing } from "../ips/blocklists.ts";
+import { onThisMachine } from "../ips/local.ts";
 import { parseMilterAddress, runMilter } from "../milter/client.ts";
 import { guardedPost } from "../net/post.ts";
 import { guardedRequest } from "../net/request.ts";
@@ -70,6 +71,20 @@ export async function runDelivery(config: Config, log: Logger) {
   if (config.dane !== "off" && !dane) log.warn("DANE is off", { reason: dnssec.detail });
   const ehloName = config.ehloName;
   const ips = config.sourceIps.map((s) => s.ip);
+  let owned = ips;
+  let elsewhere = "";
+  const checkOwned = async () => {
+    const here = await Promise.all(ips.map(onThisMachine));
+    owned = ips.filter((_, i) => here[i]);
+    const missing = ips.filter((_, i) => !here[i]).join(", ");
+    if (missing && missing !== elsewhere) {
+      log.info("source IPs that are not on this machine are left to other delivery roles", {
+        ips: missing,
+      });
+    }
+    elsewhere = missing;
+  };
+  await checkOwned();
   const otlp = config.otlp;
   const otlpHeaders = otlp?.headersFile
     ? parseHeaders(await Bun.file(otlp.headersFile).text())
@@ -96,7 +111,7 @@ export async function runDelivery(config: Config, log: Logger) {
   const spans = otlp ? new SpanExporter(ehloName ?? "bunzzle", postOtlp, log) : null;
   const reverse = new Map<string, ReverseCheck>();
   const checkIps = async () => {
-    for (const ip of ips) {
+    for (const ip of owned) {
       const r = await checkReverse(uncached, ip);
       const before = reverse.get(ip);
       reverse.set(ip, r);
@@ -113,7 +128,7 @@ export async function runDelivery(config: Config, log: Logger) {
   );
   const listings = new Map<string, Listing[]>();
   const checkLists = async () => {
-    for (const ip of ips) {
+    for (const ip of owned) {
       const found = await checkBlocklists(uncached, ip, lists);
       const before = new Set(
         (listings.get(ip) ?? []).filter((l) => l.status === "listed").map((l) => l.list),
@@ -295,7 +310,7 @@ export async function runDelivery(config: Config, log: Logger) {
     ),
     dnssec: method(b.object({}), () => dnssec),
     ips: method(b.object({}), () =>
-      ips.map((ip) => ({
+      owned.map((ip) => ({
         ip,
         ehlo: ehloFor(ip),
         ...(reverse.get(ip) ?? { ptr: null, forwardConfirmed: false, problem: "not checked yet" }),
@@ -400,11 +415,13 @@ export async function runDelivery(config: Config, log: Logger) {
   void checkLists();
   const stopLists = every(6 * 3_600_000, checkLists);
   const stopExpire = every(60_000, () => transport.forget([]));
+  const stopOwned = every(60_000, checkOwned);
   const stopSpans = spans ? every(5_000, () => spans.flush()) : () => {};
   onStop(log, async () => {
     stopChecks();
     stopLists();
     stopExpire();
+    stopOwned();
     stopSpans();
     await spans?.flush();
     link?.stop();

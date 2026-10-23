@@ -111,6 +111,15 @@ Pool rules pick the pool by recipient. `bunzzle pools rules add microsoft warm` 
 
 For each recipient domain, the first of these applies: a rule of the sending project, the pool of the API key or the sender's domain, a server rule, then the `main` or `bulk` pool. Inside each kind of rule, a rule for the exact recipient domain comes before a rule for its provider. A rule whose pool has no source IPs, or belongs to another project, is skipped with a warning in the log. The provider comes from the recipient domain's most preferred MX hosts, looked up at every delivery attempt (a cached answer lives for its TTL, at most an hour). When those hosts belong to no known provider, or to different ones, provider rules do not apply and the order above continues. A filtering service in front of a provider counts as an unknown provider, because it is the server that receives the mail; use a rule for the recipient domain in that case. When the MX lookup fails, the attempt waits and is retried. After an urgent MX change at a recipient domain (a failover or a move to another provider), mail for it can keep going out from the old pool for up to an hour, until the cached answer expires. Restarting Bunzzle (`sudo systemctl restart 'bunzzle-*'`, or `bunzzle serve`) clears the cache, so the next attempt looks up the new MX at once.
 
+## Delivery nodes
+
+Core sends each email to the delivery role that has its source IP. On core, `BUNZZLE_SOURCE_IPS` lists the IPs of every server, and each delivery role sends only from the listed IPs that are on its own machine. Setup steps are on the Delivery nodes page of the docs.
+
+| Variable | Default | |
+|---|---|---|
+| `BUNZZLE_DELIVERY_LISTEN` | | On a delivery node: `<ip>:<port>` (port 1024 to 65535) where the delivery role accepts core's connection, with mutual TLS. |
+| `BUNZZLE_NODE_DIR` | `./node` | On a delivery node: its key, certificate, CA bundle and core's pins. The systemd unit uses `/var/lib/bunzzle/node`. |
+
 ## Relay
 
 A relay takes all mail (for servers whose provider blocks outbound port 25), or only some of it while the rest goes straight to the recipients' mail servers. For mail sent through the relay, MTA-STS and DANE no longer apply to the first hop. TLS with a valid certificate is always required before the password is sent.
