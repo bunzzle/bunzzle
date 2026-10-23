@@ -7,11 +7,12 @@ import { delegationAt, measureNs } from "../dns/probe.ts";
 import { createResolver, dnsServers, type Resolver } from "../dns/resolver.ts";
 import { checkReverse, type ReverseCheck } from "../dns/reverse.ts";
 import { ownValidation } from "../dnssec/resolver.ts";
-import { method, RpcClient, serveRpc } from "../ipc/rpc.ts";
+import { method, RpcClient, type RpcServer, serveRpc } from "../ipc/rpc.ts";
 import { blocklists, checkBlocklists, type Listing } from "../ips/blocklists.ts";
 import { parseMilterAddress, runMilter } from "../milter/client.ts";
 import { guardedPost } from "../net/post.ts";
 import { guardedRequest } from "../net/request.ts";
+import { nodeLinkMethods } from "../nodes/node.ts";
 import { deliverySpans } from "../otel/delivery-spans.ts";
 import { MAX_QUEUE, type Post, SpanExporter } from "../otel/exporter.ts";
 import { parseHeaders, spanWire } from "../otel/otlp.ts";
@@ -381,13 +382,19 @@ export async function runDelivery(config: Config, log: Logger) {
     ),
   };
   const server = await serveRpc(sock.delivery, methods);
-  const link = config.deliveryListen
-    ? await serveRpc(
-        { ...config.deliveryListen, tls: await loadLinkTls(config.nodeDir) },
-        methods,
-        { onRefused: (reason, remote) => log.warn("node link refused", { reason, remote }) },
-      )
-    : null;
+  let link: RpcServer | null = null;
+  if (config.deliveryListen) {
+    const tls = await loadLinkTls(config.nodeDir);
+    const linkServer = await serveRpc(
+      { ...config.deliveryListen, tls },
+      {
+        ...methods,
+        ...nodeLinkMethods(config.nodeDir, tls, () => linkServer),
+      },
+      { onRefused: (reason, remote) => log.warn("node link refused", { reason, remote }) },
+    );
+    link = linkServer;
+  }
   await checkIps();
   const stopChecks = every(3_600_000, checkIps);
   void checkLists();

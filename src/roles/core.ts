@@ -43,6 +43,7 @@ import { pruneRouted } from "../inbound/routes.ts";
 import { RpcClient, serveRpc } from "../ipc/rpc.ts";
 import { rollover } from "../ips/warmup.ts";
 import { CoreIdentity } from "../nodes/identity.ts";
+import { NodeLinks } from "../nodes/links.ts";
 import type { Span } from "../otel/otlp.ts";
 import { expireSuspensions } from "../queue/control.ts";
 import { Scheduler } from "../scheduler/scheduler.ts";
@@ -447,6 +448,10 @@ export async function runCore(config: Config, log: Logger) {
     publicUrl: config.publicUrl,
   });
   const identity = await CoreIdentity.load(`${config.dataDir}/node-link`, signer, Date.now());
+  const links = new NodeLinks({ db, writer, log, signer, identity });
+  const linkTick = () => (links.coreRenewalDue() ? links.renewCore() : links.reconcileAll());
+  void linkTick();
+  const stopLinks = every(3_600_000, linkTick);
   const doctor = doctorMethods({
     db,
     config,
@@ -458,7 +463,7 @@ export async function runCore(config: Config, log: Logger) {
   });
   const all = {
     ...api.methods,
-    ...nodeMethods({ db, writer, log, signer, identity }),
+    ...nodeMethods({ db, writer, log, signer, identity, links }),
     ...feedback.methods,
     ...routes.methods,
     ...templateMethods({ db, writer }),
@@ -659,6 +664,8 @@ export async function runCore(config: Config, log: Logger) {
   await scheduler.start();
   onStop(log, async () => {
     await tel?.stop();
+    stopLinks();
+    links.closeAll();
     stopSettled();
     stopZone();
     stopProbe();

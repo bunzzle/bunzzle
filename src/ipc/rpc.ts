@@ -176,6 +176,7 @@ function tlsOptions(tls: LinkTls) {
 
 export interface RpcServer {
   stop(): void;
+  reload(tls: LinkTls): void;
 }
 
 export interface ServeOptions {
@@ -244,26 +245,47 @@ export async function serveRpc(
     },
   };
   if (typeof endpoint !== "string") {
-    const tls = endpoint.tls;
-    const listener: SocketListener<undefined> = Bun.listen({
-      hostname: endpoint.hostname,
-      port: endpoint.port,
-      tls: { ...tlsOptions(tls), requestCert: true, rejectUnauthorized: true },
-      socket: {
-        ...handlers,
-        handshake(s, _success, authorizationError) {
-          const refused = peerRefusal(s, tls, "client", authorizationError);
-          if (refused) {
-            opts.onRefused?.(refused, s.remoteAddress);
-            s.end();
-            return;
-          }
-          s.setKeepAlive(true, 15_000);
-          accept(s);
+    let tls = endpoint.tls;
+    const listen = (): SocketListener<undefined> =>
+      Bun.listen({
+        hostname: endpoint.hostname,
+        port: endpoint.port,
+        tls: { ...tlsOptions(tls), requestCert: true, rejectUnauthorized: true },
+        socket: {
+          ...handlers,
+          handshake(s, _success, authorizationError) {
+            const refused = peerRefusal(s, tls, "client", authorizationError);
+            if (refused) {
+              opts.onRefused?.(refused, s.remoteAddress);
+              s.end();
+              return;
+            }
+            s.setKeepAlive(true, 15_000);
+            accept(s);
+          },
         },
+      });
+    let listener = listen();
+    const previous: SocketListener<undefined>[] = [];
+    return {
+      stop: () => {
+        listener.stop(true);
+        for (const l of previous.splice(0)) l.stop(true);
       },
-    });
-    return { stop: () => listener.stop(true) };
+      reload: (next) => {
+        const before = tls;
+        listener.stop(false);
+        previous.push(listener);
+        tls = next;
+        try {
+          listener = listen();
+        } catch (err) {
+          tls = before;
+          listener = listen();
+          throw err;
+        }
+      },
+    };
   }
   await Bun.$`rm -f ${endpoint}`.quiet();
   const listener: UnixSocketListener<undefined> = Bun.listen({
@@ -271,7 +293,12 @@ export async function serveRpc(
     socket: { ...handlers, open: accept },
   });
   await Bun.$`chmod ${opts.mode ?? "660"} ${endpoint}`.quiet();
-  return { stop: () => listener.stop(true) };
+  return {
+    stop: () => listener.stop(true),
+    reload: () => {
+      throw new RpcError("invalid", `${endpoint} is not a TLS listener`);
+    },
+  };
 }
 
 interface Pending {
