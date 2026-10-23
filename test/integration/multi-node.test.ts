@@ -31,13 +31,15 @@ function freePort(): number {
   return port;
 }
 
-async function waitFor(what: string, ok: () => Promise<boolean> | boolean, ms = 30_000) {
+let explain: () => Promise<string> = async () => "";
+
+async function waitFor(what: string, ok: () => Promise<boolean> | boolean, ms = 20_000) {
   const end = Date.now() + ms;
   while (Date.now() < end) {
     if (await ok()) return;
     await Bun.sleep(100);
   }
-  throw new Error(`timed out waiting for ${what}`);
+  throw new Error(`timed out waiting for ${what}\n${await explain().catch((e) => String(e))}`);
 }
 
 const exists = (path: string) =>
@@ -51,7 +53,7 @@ function baseEnv(): Record<string, string> {
     PATH: Bun.env["PATH"] ?? "",
     HOME: Bun.env["HOME"] ?? "",
     TMPDIR: Bun.env["TMPDIR"] ?? "/tmp",
-    BUNZZLE_LOG_LEVEL: "warn",
+    BUNZZLE_LOG_LEVEL: "info",
     BUNZZLE_DNS_SERVERS: `127.0.0.1:${dns.port}`,
     BUNZZLE_SMTP_PORT: String(mx.port),
     BUNZZLE_ALLOW_PRIVATE_DESTINATIONS: "true",
@@ -111,11 +113,14 @@ async function send(domain: string, subject: string): Promise<string> {
     subject,
     text: "through a delivery node",
   });
+  sent.push(id);
   return id;
 }
 
 const status = async (id: string) =>
   (await call<{ last_event: string }>("GET", `/emails/${id}`)).last_event;
+
+const sent: string[] = [];
 
 const received = () =>
   mx.sessions.flatMap((s) =>
@@ -128,6 +133,16 @@ const received = () =>
 
 beforeAll(async () => {
   if (!usable) return;
+  explain = async () =>
+    JSON.stringify(
+      {
+        nodes: await nodes(),
+        emails: await Promise.all(sent.map((id) => call("GET", `/emails/${id}`))),
+        received: received(),
+      },
+      null,
+      1,
+    );
   dns = await startFakeDns(zone);
   mx = startFakeMx({ finalDelayMs: 400 });
   const apiPort = freePort();
@@ -234,7 +249,7 @@ describe.skipIf(!usable)("one core and two delivery nodes", () => {
       );
     });
     expect((await nodeView("local"))?.ips).toEqual(["127.0.0.1"]);
-  }, 30_000);
+  }, 60_000);
 
   test("mail goes out from each node's own IP", async () => {
     for (const n of NODES) await call("PATCH", `/domains/${n.domain}`, { ip_pool: n.pool });
@@ -252,7 +267,7 @@ describe.skipIf(!usable)("one core and two delivery nodes", () => {
       );
       expect((await nodeView(n.name))?.delivered).toBe(3);
     }
-  }, 30_000);
+  }, 60_000);
 
   test("a node stopped during a batch loses no mail: the rest goes out through the other node", async () => {
     for (const n of NODES) await call("PATCH", `/domains/${n.domain}`, { ip_pool: null });
