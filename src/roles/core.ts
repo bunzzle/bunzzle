@@ -42,6 +42,7 @@ import { reputationGuard } from "../guards/guards.ts";
 import { pruneRouted } from "../inbound/routes.ts";
 import { RpcClient, serveRpc } from "../ipc/rpc.ts";
 import { rollover } from "../ips/warmup.ts";
+import { DeliveryFleet, LOCAL } from "../nodes/fleet.ts";
 import { CoreIdentity } from "../nodes/identity.ts";
 import { NodeLinks } from "../nodes/links.ts";
 import type { Span } from "../otel/otlp.ts";
@@ -115,35 +116,59 @@ export async function runCore(config: Config, log: Logger) {
   const dns = new RpcClient(sock.dns);
   const ns = config.ns ? new RpcClient(sock.ns) : null;
 
-  let settled: string[] = [];
-  const takeSettled = () => settled.splice(0, 5000);
+  const identity = await CoreIdentity.load(`${config.dataDir}/node-link`, signer, Date.now());
+  const links = new NodeLinks({ db, writer, log, signer, identity });
+  const fleet = new DeliveryFleet({ local: delivery, links, log });
+  await fleet.check();
+
+  const settled = new Map<string, string[]>();
+  const sentTo = new Map<string, string>();
+  const takeSettled = (name: string) => settled.get(name)?.splice(0, 5000) ?? [];
+  const putBack = (name: string, keys: string[]) =>
+    settled.set(name, keys.concat(settled.get(name) ?? []));
   const transport: DeliveryTransport = cachingLookups({
     lookup: (domain) =>
       delivery.call("lookup", { domain }, { result: destinationWire, timeoutMs: 2 * MIN }),
     deliver: (req) => {
-      const keys = takeSettled();
-      return delivery
+      const { name, client } = fleet.clientFor(req.source ?? "");
+      const keys = takeSettled(name);
+      sentTo.set(req.key, name);
+      if (sentTo.size > MAX_SETTLED) sentTo.delete(sentTo.keys().next().value as string);
+      return client
         .call("deliver", requestToWire({ ...req, ...(keys.length ? { settled: keys } : {}) }), {
           result: deliveryReportWire,
           timeoutMs: 40 * MIN,
         })
         .catch((err) => {
-          settled = keys.concat(settled);
+          putBack(name, keys);
+          if ((err as { code?: unknown })?.code === "unavailable") {
+            fleet.markDown(name, (err as Error).message);
+          }
           throw err;
         });
     },
     forget: (keys) => {
-      settled.push(...keys);
-      if (settled.length > MAX_SETTLED) settled.splice(0, settled.length - MAX_SETTLED);
+      for (const key of keys) {
+        const name = sentTo.get(key) ?? LOCAL;
+        sentTo.delete(key);
+        const list = settled.get(name) ?? [];
+        list.push(key);
+        if (list.length > MAX_SETTLED) list.splice(0, list.length - MAX_SETTLED);
+        settled.set(name, list);
+      }
     },
   });
   const flushSettled = async () => {
-    const keys = takeSettled();
-    if (keys.length === 0) return;
-    try {
-      await delivery.call("forget", { keys }, { timeoutMs: 10_000 });
-    } catch {
-      settled = keys.concat(settled);
+    for (const name of [...settled.keys()]) {
+      const keys = takeSettled(name);
+      if (keys.length === 0) continue;
+      const client = fleet.client(name);
+      if (!client) continue;
+      try {
+        await client.call("forget", { keys }, { timeoutMs: 10_000 });
+      } catch {
+        putBack(name, keys);
+      }
     }
   };
   const restore = new Map(
@@ -203,6 +228,8 @@ export async function runCore(config: Config, log: Logger) {
         ? { targets: config.relay.for.targets, blocked: config.relay.for.blocked }
         : null,
     listed: (ip) => listed.has(ip),
+    ipReady: (ip) => fleet.ready(ip),
+    ipRetryMs: fleet.checkMs,
     poolRules: (job) =>
       choosePool(db, job, (pool) => config.sourceIps.some((x) => x.pool === pool)),
   });
@@ -447,11 +474,10 @@ export async function runCore(config: Config, log: Logger) {
     dns,
     publicUrl: config.publicUrl,
   });
-  const identity = await CoreIdentity.load(`${config.dataDir}/node-link`, signer, Date.now());
-  const links = new NodeLinks({ db, writer, log, signer, identity });
   const linkTick = () => (links.coreRenewalDue() ? links.renewCore() : links.reconcileAll());
   void linkTick();
   const stopLinks = every(3_600_000, linkTick);
+  const stopFleet = every(fleet.checkMs, () => fleet.check());
   const doctor = doctorMethods({
     db,
     config,
@@ -461,10 +487,11 @@ export async function runCore(config: Config, log: Logger) {
     storage: () => storage.state(),
     nodeCa: () => identity.current().ca,
     corePin: () => identity.current().pin,
+    fleet: () => ({ health: fleet.health(), conflicts: fleet.conflicts() }),
   });
   const all = {
     ...api.methods,
-    ...nodeMethods({ db, writer, log, signer, identity, links }),
+    ...nodeMethods({ db, writer, log, signer, identity, links, health: () => fleet.health() }),
     ...feedback.methods,
     ...routes.methods,
     ...templateMethods({ db, writer }),
@@ -666,6 +693,7 @@ export async function runCore(config: Config, log: Logger) {
   onStop(log, async () => {
     await tel?.stop();
     stopLinks();
+    stopFleet();
     links.closeAll();
     stopSettled();
     stopZone();

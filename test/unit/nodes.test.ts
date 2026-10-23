@@ -14,11 +14,12 @@ import {
   type RpcServer,
   serveRpc,
 } from "../../src/ipc/rpc.ts";
+import { DeliveryFleet, LOCAL } from "../../src/nodes/fleet.ts";
 import { CoreIdentity } from "../../src/nodes/identity.ts";
 import { NodeLinks } from "../../src/nodes/links.ts";
 import { nodeLinkMethods } from "../../src/nodes/node.ts";
 import { listNodes } from "../../src/nodes/registry.ts";
-import { nodeChecks } from "../../src/roles/core-doctor.ts";
+import { fleetChecks, nodeChecks } from "../../src/roles/core-doctor.ts";
 import { nodeMethods } from "../../src/roles/core-nodes.ts";
 import { loadLinkTls } from "../../src/roles/node-link.ts";
 import { NodeCa } from "../../src/signer/node-ca.ts";
@@ -336,7 +337,7 @@ describe("delivery nodes", () => {
 
 let nextPort = 21_000 + Math.floor(Math.random() * 15_000);
 
-async function startNode(c: Awaited<ReturnType<typeof core>>, name: string) {
+async function startNode(c: Awaited<ReturnType<typeof core>>, name: string, ips: string[] = []) {
   const nodeDir = `${dir}/${name}-${crypto.randomUUID().slice(0, 6)}`;
   const port = nextPort++;
   const csr = await requestCsr(nodeDir, name);
@@ -345,25 +346,39 @@ async function startNode(c: Awaited<ReturnType<typeof core>>, name: string) {
   await nodesCommand(["install", `${nodeDir}/bundle.json`, "--dir", nodeDir], config);
   const tls = await loadLinkTls(nodeDir);
   let release: (() => void) | null = null;
-  const server: RpcServer = await serveRpc(
-    { hostname: "127.0.0.1", port, tls },
-    {
-      ping: method(b.object({}), () => "pong"),
-      hang: method(
-        b.object({}),
-        () =>
-          new Promise((resolve) => {
-            release = () => resolve(null);
-          }),
-      ),
-      ...nodeLinkMethods(nodeDir, tls, () => server),
+  const serve = async (): Promise<RpcServer> => {
+    const s: RpcServer = await serveRpc(
+      { hostname: "127.0.0.1", port, tls },
+      {
+        ping: method(b.object({}), () => "pong"),
+        ips: method(b.object({}), () => ips.map((ip) => ({ ip }))),
+        hang: method(
+          b.object({}),
+          () =>
+            new Promise((resolve) => {
+              release = () => resolve(null);
+            }),
+        ),
+        ...nodeLinkMethods(nodeDir, tls, () => node.server),
+      },
+    );
+    return s;
+  };
+  const node = {
+    nodeDir,
+    tls,
+    ips,
+    server: null as unknown as RpcServer,
+    restart: async () => {
+      node.server = await serve();
     },
-  );
+  };
+  node.server = await serve();
   cleanup.push(() => {
     release?.();
-    server.stop();
+    node.server.stop();
   });
-  return { nodeDir, server, tls };
+  return node;
 }
 
 const pinsOn = async (nodeDir: string) =>
@@ -485,5 +500,117 @@ describe("node links", () => {
     const left = fromPem(await Bun.file(`${node.nodeDir}/ca.pem`).text());
     expect(left.map((d) => parseCertificate(d).commonNames[0])).toEqual([next]);
     expect(await ping(c, "link-h")).toBe("pong");
+  });
+});
+
+async function localDelivery(ips: string[]) {
+  const socket = `/tmp/bunzzle-${crypto.randomUUID().slice(0, 8)}.sock`;
+  const server = await serveRpc(socket, {
+    ips: method(b.object({}), () => ips.map((ip) => ({ ip }))),
+  });
+  const client = new RpcClient(socket);
+  cleanup.push(() => {
+    client.close();
+    server.stop();
+  });
+  return client;
+}
+
+describe("delivery fleet", () => {
+  const LOCAL_IP = "203.0.113.1";
+  const NODE_IP = "203.0.113.2";
+
+  test("each IP goes to the delivery role that reports it", async () => {
+    const c = await core();
+    await startNode(c, "fleet-a", [NODE_IP]);
+    const fleet = new DeliveryFleet({
+      local: await localDelivery([LOCAL_IP]),
+      links: c.links,
+      log: quiet,
+    });
+    await fleet.check();
+    expect(fleet.clientFor(NODE_IP).name).toBe("fleet-a");
+    expect(fleet.clientFor(LOCAL_IP).name).toBe(LOCAL);
+    expect(fleet.clientFor("default").name).toBe(LOCAL);
+    expect(fleet.ready(NODE_IP) && fleet.ready(LOCAL_IP)).toBe(true);
+    expect(await fleet.clientFor(NODE_IP).client.call("ping", {})).toBe("pong");
+  });
+
+  test("a node is down after 3 failed checks, its IPs pause, and it comes back", async () => {
+    const c = await core();
+    const node = await startNode(c, "fleet-b", [NODE_IP]);
+    const fleet = new DeliveryFleet({
+      local: await localDelivery([LOCAL_IP]),
+      links: c.links,
+      log: quiet,
+      checkMs: 1_000,
+    });
+    await fleet.check();
+    node.server.stop();
+    c.links.client("fleet-b")?.close();
+    await fleet.check();
+    await fleet.check();
+    expect(fleet.ready(NODE_IP)).toBe(true);
+    await fleet.check();
+    expect(fleet.ready(NODE_IP)).toBe(false);
+    expect(fleet.ready(LOCAL_IP)).toBe(true);
+    const down = fleet.health().find((h) => h.name === "fleet-b");
+    expect(down?.up).toBe(false);
+    const checks = fleetChecks(fleet.health(), fleet.conflicts(), [LOCAL_IP, NODE_IP], Date.now());
+    expect(checks.find((x) => x.item === "fleet-b health")?.status).toBe("fail");
+
+    await node.restart();
+    await Bun.sleep(1_100);
+    await fleet.check();
+    expect(fleet.ready(NODE_IP)).toBe(true);
+    expect(fleet.health().find((h) => h.name === "fleet-b")?.up).toBe(true);
+  });
+
+  test("a failed deliver marks the node down at once", async () => {
+    const c = await core();
+    await startNode(c, "fleet-c", [NODE_IP]);
+    const fleet = new DeliveryFleet({ local: await localDelivery([]), links: c.links, log: quiet });
+    await fleet.check();
+    fleet.markDown("fleet-c", "unavailable");
+    expect(fleet.ready(NODE_IP)).toBe(false);
+  });
+
+  test("an IP reported twice is paused and doctor names both", async () => {
+    const c = await core();
+    await startNode(c, "fleet-d", [NODE_IP, LOCAL_IP]);
+    const fleet = new DeliveryFleet({
+      local: await localDelivery([LOCAL_IP]),
+      links: c.links,
+      log: quiet,
+    });
+    await fleet.check();
+    expect(fleet.ready(LOCAL_IP)).toBe(false);
+    expect(fleet.ready(NODE_IP)).toBe(true);
+    expect(fleet.conflicts()).toEqual([{ ip: LOCAL_IP, nodes: [LOCAL, "fleet-d"] }]);
+    const checks = fleetChecks(fleet.health(), fleet.conflicts(), [LOCAL_IP, NODE_IP], Date.now());
+    expect(checks.find((x) => x.item === `${LOCAL_IP} owner`)?.detail).toMatch(/local and fleet-d/);
+  });
+
+  test("doctor fails a configured IP that no delivery role reports", async () => {
+    const c = await core();
+    await startNode(c, "fleet-e", [NODE_IP]);
+    const fleet = new DeliveryFleet({ local: await localDelivery([]), links: c.links, log: quiet });
+    await fleet.check();
+    const checks = fleetChecks(fleet.health(), fleet.conflicts(), [LOCAL_IP, NODE_IP], Date.now());
+    expect(checks.filter((x) => x.status === "fail").map((x) => x.item)).toEqual([
+      `${LOCAL_IP} owner`,
+    ]);
+    expect(fleet.ready(LOCAL_IP)).toBe(false);
+  });
+
+  test("a removed node leaves the fleet", async () => {
+    const c = await core();
+    await startNode(c, "fleet-f", [NODE_IP]);
+    const fleet = new DeliveryFleet({ local: await localDelivery([]), links: c.links, log: quiet });
+    await fleet.check();
+    await invoke(c.methods, "removeNode", { name: "fleet-f" });
+    await fleet.check();
+    expect(fleet.health().map((h) => h.name)).toEqual([LOCAL]);
+    expect(fleet.ready(NODE_IP)).toBe(false);
   });
 });

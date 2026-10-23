@@ -4,6 +4,7 @@ import { parseLinkAddress } from "../config.ts";
 import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
 import { type Methods, method, pinOf, type RpcClient, RpcError } from "../ipc/rpc.ts";
+import type { NodeHealth } from "../nodes/fleet.ts";
 import type { CoreIdentity } from "../nodes/identity.ts";
 import type { NodeLinks } from "../nodes/links.ts";
 import { addNode, getNode, listNodes, removeNode } from "../nodes/registry.ts";
@@ -44,6 +45,7 @@ export interface NodeDeps {
   signer: RpcClient;
   identity: CoreIdentity;
   links: NodeLinks;
+  health?: () => NodeHealth[];
   now?: () => number;
 }
 
@@ -161,15 +163,22 @@ export function nodeMethods(deps: NodeDeps): Methods {
       },
     ),
 
-    listNodes: method(b.object({}), () =>
-      listNodes(db).map((n) => ({
-        name: n.name,
-        address: n.address,
-        pin: n.pin,
-        certificate_expires_at: new Date(n.notAfter).toISOString(),
-        created_at: new Date(n.createdAt).toISOString(),
-      })),
-    ),
+    listNodes: method(b.object({}), () => {
+      const health = deps.health?.() ?? [];
+      return listNodes(db).map((n) => {
+        const h = health.find((x) => x.name === n.name);
+        return {
+          name: n.name,
+          address: n.address,
+          pin: n.pin,
+          up: h?.up ?? false,
+          last_seen_at: h?.lastSeen ? new Date(h.lastSeen).toISOString() : null,
+          ips: h?.ips ?? [],
+          certificate_expires_at: new Date(n.notAfter).toISOString(),
+          created_at: new Date(n.createdAt).toISOString(),
+        };
+      });
+    }),
 
     removeNode: method(b.object({ name: b.string().max(63) }), async ({ name }) => {
       if (!(await writer.run((d) => removeNode(d, name)))) {

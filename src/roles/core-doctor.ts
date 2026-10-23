@@ -7,6 +7,7 @@ import { allDomains, domainPool, findDomain, getDomain, listDomains } from "../d
 import { latestPostmaster } from "../guards/gmail.ts";
 import { listHolds } from "../guards/guards.ts";
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
+import { LOCAL, type NodeHealth } from "../nodes/fleet.ts";
 import { type DeliveryNode, listNodes } from "../nodes/registry.ts";
 import type { PathView } from "../shaping/shaper.ts";
 import { b } from "../validate/schema.ts";
@@ -33,6 +34,7 @@ export interface DoctorDeps {
   storage?: () => StorageState;
   nodeCa?: () => string;
   corePin?: () => string;
+  fleet?: () => { health: NodeHealth[]; conflicts: { ip: string; nodes: string[] }[] };
   now?: () => number;
 }
 
@@ -97,6 +99,47 @@ export function nodeChecks(
       });
     }
     expiry(`${n.name} certificate`, n.notAfter, NODE_WARN_DAYS);
+  }
+  return checks;
+}
+
+export function fleetChecks(
+  health: NodeHealth[],
+  conflicts: { ip: string; nodes: string[] }[],
+  configured: string[],
+  now: number,
+): Check[] {
+  const checks: Check[] = [];
+  const remote = health.filter((h) => h.name !== LOCAL);
+  for (const h of remote) {
+    const seen = h.lastSeen === null ? "never" : `${Math.round((now - h.lastSeen) / 1000)} s ago`;
+    checks.push({
+      area: "nodes",
+      item: `${h.name} health`,
+      status: h.up ? "ok" : "fail",
+      detail: h.up
+        ? `up, IPs: ${h.ips.join(", ") || "none"}`
+        : `down, last seen ${seen}${h.error ? `: ${h.error}` : ""}; its IPs are paused`,
+    });
+  }
+  for (const c of conflicts) {
+    checks.push({
+      area: "nodes",
+      item: `${c.ip} owner`,
+      status: "fail",
+      detail: `reported by ${c.nodes.join(" and ")}; the IP is paused until only one node has it`,
+    });
+  }
+  if (remote.length > 0 && health.every((h) => h.up)) {
+    for (const ip of configured) {
+      if (health.some((h) => h.ips.includes(ip))) continue;
+      checks.push({
+        area: "nodes",
+        item: `${ip} owner`,
+        status: "fail",
+        detail: "no delivery role has this IP in BUNZZLE_SOURCE_IPS; the IP is paused",
+      });
+    }
   }
   return checks;
 }
@@ -286,6 +329,11 @@ export function doctorMethods(deps: DoctorDeps): Methods {
     if (failed > 0)
       add("webhooks", "deliveries", "warn", `${failed} webhook deliveries gave up in the last day`);
 
+    const f = scope === null ? deps.fleet?.() : undefined;
+    if (f) {
+      const configured = config.sourceIps.map((x) => x.ip);
+      checks.push(...fleetChecks(f.health, f.conflicts, configured, now()));
+    }
     if (scope === null)
       checks.push(
         ...nodeChecks(listNodes(db), deps.nodeCa?.() ?? "", deps.corePin?.() ?? "", now()),

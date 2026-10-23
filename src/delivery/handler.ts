@@ -48,6 +48,8 @@ export interface DeliveryHandlerOptions {
   suspendRetryMs?: number;
   relayRoutes?: () => { targets: string[]; blocked: boolean } | null;
   listed?: (ip: string) => boolean;
+  ipReady?: (ip: string) => boolean;
+  ipRetryMs?: number;
   poolRules?: (job: {
     project: ProjectId;
     domain: string;
@@ -334,7 +336,10 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
             provider,
             pending.length,
             now,
-            (ip) => o.shaper.pausedUntil(Shaper.key(ip, target)),
+            (ip) =>
+              o.ipReady && !o.ipReady(ip)
+                ? now + (o.ipRetryMs ?? 10_000)
+                : o.shaper.pausedUntil(Shaper.key(ip, target)),
             o.listed,
             rules && "pool" in rules ? rules.pool : senderPool,
           )
