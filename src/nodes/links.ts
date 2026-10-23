@@ -126,6 +126,7 @@ export class NodeLinks {
         notAfter: st.notAfter,
         ca: st.issuer,
         trustedCas: st.cas,
+        corePins: st.corePins,
       }),
     );
   }

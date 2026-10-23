@@ -1,0 +1,1 @@
+ALTER TABLE nodes ADD COLUMN core_pins TEXT NOT NULL DEFAULT '[]';

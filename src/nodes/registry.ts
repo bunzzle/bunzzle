@@ -7,6 +7,7 @@ export interface DeliveryNode {
   notAfter: number;
   ca: string;
   trustedCas: string[];
+  corePins: string[];
   createdAt: number;
 }
 
@@ -17,6 +18,7 @@ interface Row {
   not_after: number;
   ca: string;
   trusted_cas: string;
+  core_pins: string;
   created_at: number;
 }
 
@@ -27,18 +29,27 @@ const fromRow = (r: Row): DeliveryNode => ({
   notAfter: r.not_after,
   ca: r.ca,
   trustedCas: JSON.parse(r.trusted_cas) as string[],
+  corePins: JSON.parse(r.core_pins) as string[],
   createdAt: r.created_at,
 });
 
 export function addNode(db: Database, n: DeliveryNode): boolean {
   return (
     db
-      .query<unknown, [string, string, string, number, string, string, number]>(
-        `INSERT INTO nodes (name, address, pin, not_after, ca, trusted_cas, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+      .query<unknown, [string, string, string, number, string, string, string, number]>(
+        `INSERT INTO nodes (name, address, pin, not_after, ca, trusted_cas, core_pins, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
       )
-      .run(n.name, n.address, n.pin, n.notAfter, n.ca, JSON.stringify(n.trustedCas), n.createdAt)
-      .changes > 0
+      .run(
+        n.name,
+        n.address,
+        n.pin,
+        n.notAfter,
+        n.ca,
+        JSON.stringify(n.trustedCas),
+        JSON.stringify(n.corePins),
+        n.createdAt,
+      ).changes > 0
   );
 }
 
@@ -58,13 +69,15 @@ export function removeNode(db: Database, name: string): boolean {
 export function updateNode(
   db: Database,
   name: string,
-  n: Pick<DeliveryNode, "pin" | "notAfter" | "ca" | "trustedCas">,
+  n: Pick<DeliveryNode, "pin" | "notAfter" | "ca" | "trustedCas" | "corePins">,
 ): boolean {
   return (
     db
-      .query<unknown, [string, number, string, string, string]>(
-        "UPDATE nodes SET pin = ?, not_after = ?, ca = ?, trusted_cas = ? WHERE name = ?",
+      .query<unknown, [string, number, string, string, string, string]>(
+        `UPDATE nodes SET pin = ?, not_after = ?, ca = ?, trusted_cas = ?, core_pins = ?
+         WHERE name = ?`,
       )
-      .run(n.pin, n.notAfter, n.ca, JSON.stringify(n.trustedCas), name).changes > 0
+      .run(n.pin, n.notAfter, n.ca, JSON.stringify(n.trustedCas), JSON.stringify(n.corePins), name)
+      .changes > 0
   );
 }
