@@ -1,6 +1,6 @@
 import { fromPem, pem } from "../asn1/der.ts";
+import { writePrivateJson } from "../core/private-file.ts";
 import { pinOf, type RpcClient } from "../ipc/rpc.ts";
-import { writePrivateJson } from "../signer/keystore.ts";
 import { b } from "../validate/schema.ts";
 import { parseCertificate } from "../x509/cert.ts";
 import { certificateRequest } from "../x509/issue.ts";

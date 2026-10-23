@@ -1,4 +1,5 @@
 import { pem } from "../asn1/der.ts";
+import { writePrivateJson } from "../core/private-file.ts";
 import { type MasterKey, MasterKeyError } from "../crypto/master.ts";
 import type { KeyStore } from "../dkim/store.ts";
 import { b } from "../validate/schema.ts";
@@ -10,7 +11,6 @@ import {
   type SignRaw,
   signWith,
 } from "../x509/issue.ts";
-import { writePrivateJson } from "./keystore.ts";
 
 const DAY = 86_400_000;
 const CA_DAYS = 730;

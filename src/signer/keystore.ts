@@ -1,3 +1,4 @@
+import { writePrivateJson } from "../core/private-file.ts";
 import { type EpochKeyPair, epochKeyPair, epochOf, newEpochSeed } from "../crypto/envelope.ts";
 import { type MasterKey, MasterKeyError } from "../crypto/master.ts";
 import { b } from "../validate/schema.ts";
@@ -11,12 +12,6 @@ const schema = b.object({
 type StoreFile = b.infer<typeof schema>;
 
 const context = (epoch: number) => `bunzzle epoch v1:${epoch}`;
-
-export async function writePrivateJson(path: string, data: unknown): Promise<void> {
-  const tmp = `${path}.${crypto.randomUUID()}.tmp`;
-  await Bun.write(tmp, `${JSON.stringify(data, null, 2)}\n`);
-  await Bun.$`chmod 600 ${tmp} && mv -f ${tmp} ${path}`.quiet();
-}
 
 export class Keystore {
   readonly #path: string;
