@@ -120,6 +120,8 @@ const schema = b.object({
   BUNZZLE_NS_ZONE: optional,
   BUNZZLE_NS_NAMES: optional,
   BUNZZLE_NS_LISTEN: optional,
+  BUNZZLE_DELIVERY_LISTEN: optional,
+  BUNZZLE_NODE_DIR: b.string().min(1).default("./node"),
   BUNZZLE_NS_PORT: b.coerce.number().int().min(0).max(65535).default(53),
   BUNZZLE_NS_RRL_V4_PREFIX: b.coerce.number().int().min(8).max(32).default(24),
   BUNZZLE_NS_RRL_V6_PREFIX: b.coerce.number().int().min(16).max(128).default(56),
@@ -233,6 +235,8 @@ export interface Config {
   route53: { accessKeyId: string; secretKeyFile: string; url: string } | null;
   desec: { tokenFile: string; url: string } | null;
   otlp: { endpoint: string; headersFile: string | null; metricsIntervalMs: number } | null;
+  deliveryListen: { hostname: string; port: number } | null;
+  nodeDir: string;
   ns: {
     zone: string;
     names: string[];
@@ -322,6 +326,19 @@ function nsConfig(c: {
     slip: c.BUNZZLE_NS_RRL_SLIP,
     ttl: c.BUNZZLE_NS_TTL,
   };
+}
+
+function linkAddress(value: string | null): { hostname: string; port: number } | null {
+  if (!value) return null;
+  const m = /^(?:\[([0-9A-Fa-f:.]+)\]|([0-9.]+)):(\d{1,5})$/.exec(value);
+  const hostname = m?.[1] ?? m?.[2] ?? "";
+  const port = Number(m?.[3]);
+  if (!m || !familyOf(hostname) || port < 1024 || port > 65535) {
+    throw new ConfigError(
+      "invalid configuration:\n  BUNZZLE_DELIVERY_LISTEN: use <ip>:<port> or [<ipv6>]:<port> with a port from 1024 to 65535",
+    );
+  }
+  return { hostname, port };
 }
 
 export function loadConfig(env: Record<string, string | undefined> = Bun.env): Config {
@@ -578,6 +595,8 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
             url: c.BUNZZLE_ROUTE53_API_URL.replace(/\/+$/, ""),
           }
         : null,
+    deliveryListen: linkAddress(c.BUNZZLE_DELIVERY_LISTEN),
+    nodeDir: c.BUNZZLE_NODE_DIR.replace(/\/+$/, ""),
     ns: nsConfig(c),
     postmaster:
       c.BUNZZLE_POSTMASTER_CLIENT_ID &&
