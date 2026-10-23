@@ -1,3 +1,4 @@
+import { writePrivateJson } from "../core/private-file.ts";
 import { type EpochKeyPair, epochKeyPair, epochOf, newEpochSeed } from "../crypto/envelope.ts";
 import { type MasterKey, MasterKeyError } from "../crypto/master.ts";
 import { b } from "../validate/schema.ts";
@@ -101,11 +102,7 @@ export class Keystore {
   }
 
   #persist(): Promise<void> {
-    const run = async () => {
-      const tmp = `${this.#path}.${crypto.randomUUID()}.tmp`;
-      await Bun.write(tmp, `${JSON.stringify(this.#file, null, 2)}\n`);
-      await Bun.$`chmod 600 ${tmp} && mv -f ${tmp} ${this.#path}`.quiet();
-    };
+    const run = () => writePrivateJson(this.#path, this.#file);
     this.#writing = this.#writing.then(run, run);
     return this.#writing;
   }

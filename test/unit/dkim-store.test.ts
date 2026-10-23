@@ -1,8 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { fromPem } from "../../src/asn1/der.ts";
 import { generateMasterKey, masterKeyFrom } from "../../src/crypto/master.ts";
 import { transitStore } from "../../src/dkim/store.ts";
 import { verifyDkim } from "../../src/dkim/verify.ts";
+import { NodeCa } from "../../src/signer/node-ca.ts";
 import { Signer } from "../../src/signer/signer.ts";
+import { parseCertificate } from "../../src/x509/cert.ts";
+import { verifySignature } from "../../src/x509/verify.ts";
 
 const dir = `${Bun.env["TMPDIR"] ?? "/tmp"}/bunzzle-store-${crypto.randomUUID()}`;
 const socket = `/tmp/bunzzle-${crypto.randomUUID().slice(0, 8)}.sock`;
@@ -23,18 +27,23 @@ const store = Bun.serve({
       if (!pairs.has(name)) {
         const rsa = body?.["type"] === "rsa-2048";
         const pair = (
-          rsa
-            ? await crypto.subtle.generateKey(
-                {
-                  name: "RSASSA-PKCS1-v1_5",
-                  modulusLength: 2048,
-                  publicExponent: new Uint8Array([1, 0, 1]),
-                  hash: "SHA-256",
-                },
-                true,
-                ["sign", "verify"],
-              )
-            : await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])
+          body?.["type"] === "ecdsa-p256"
+            ? await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+                "sign",
+                "verify",
+              ])
+            : rsa
+              ? await crypto.subtle.generateKey(
+                  {
+                    name: "RSASSA-PKCS1-v1_5",
+                    modulusLength: 2048,
+                    publicExponent: new Uint8Array([1, 0, 1]),
+                    hash: "SHA-256",
+                  },
+                  true,
+                  ["sign", "verify"],
+                )
+              : await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])
         ) as CryptoKeyPair;
         pairs.set(name, { type: body?.["type"] as string, pair });
       }
@@ -43,7 +52,7 @@ const store = Bun.serve({
     if (keyName) {
       const k = pairs.get(decodeURIComponent(keyName));
       if (!k) return Response.json({ errors: [] }, { status: 404 });
-      const rsa = k.type === "rsa-2048";
+      const rsa = k.type === "rsa-2048" || k.type === "ecdsa-p256";
       const pub = new Uint8Array(
         await crypto.subtle.exportKey(rsa ? "spki" : "raw", k.pair.publicKey),
       ).toBase64();
@@ -62,6 +71,19 @@ const store = Bun.serve({
       return Response.json({ errors: ["pss"] }, { status: 400 });
     }
     const input = Uint8Array.fromBase64(body?.["input"] as string);
+    if (k.type === "ecdsa-p256") {
+      if (body?.["marshaling_algorithm"] !== "jws") {
+        return Response.json({ errors: ["asn1"] }, { status: 400 });
+      }
+      const raw = new Uint8Array(
+        await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, k.pair.privateKey, input),
+      );
+      return Response.json({
+        data: {
+          signature: `vault:v1:${raw.toBase64({ alphabet: "base64url", omitPadding: true })}`,
+        },
+      });
+    }
     const sig = await crypto.subtle.sign(
       rsa ? "RSASSA-PKCS1-v1_5" : "Ed25519",
       k.pair.privateKey,
@@ -137,5 +159,19 @@ describe("DKIM keys in an external key store", () => {
     } finally {
       down = false;
     }
+  });
+
+  test("node CA key is created as P-256 in the store and signs certificates", async () => {
+    const path = `${dir}/node-ca.json`;
+    await Bun.$`mkdir -p ${dir}`.quiet();
+    const ca = await NodeCa.open(path, master, transitStore(socket), Date.now());
+    const file = await Bun.file(path).json();
+    expect(file.cas[0].sealedKey).toBeUndefined();
+    const created = requests.find(
+      (r) => r.method === "POST" && r.path.endsWith(`/keys/${file.cas[0].storeKey}`),
+    );
+    expect(created?.body).toEqual({ type: "ecdsa-p256", exportable: false });
+    const caCert = parseCertificate(fromPem(ca.trusted())[0] as Uint8Array);
+    expect(await verifySignature(caCert, caCert.spki)).toBe(true);
   });
 });

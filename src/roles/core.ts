@@ -42,6 +42,7 @@ import { reputationGuard } from "../guards/guards.ts";
 import { pruneRouted } from "../inbound/routes.ts";
 import { RpcClient, serveRpc } from "../ipc/rpc.ts";
 import { rollover } from "../ips/warmup.ts";
+import { CoreIdentity } from "../nodes/identity.ts";
 import type { Span } from "../otel/otlp.ts";
 import { expireSuspensions } from "../queue/control.ts";
 import { Scheduler } from "../scheduler/scheduler.ts";
@@ -55,6 +56,7 @@ import { coreMethods } from "./core-api.ts";
 import { doctorMethods, ipInfo } from "./core-doctor.ts";
 import { feedbackMethods } from "./core-feedback.ts";
 import { hookMethods } from "./core-hooks.ts";
+import { nodeMethods } from "./core-nodes.ts";
 import { delegationCheck, nsProbe } from "./core-ns.ts";
 import { projectMethods } from "./core-projects.ts";
 import { OVERLAP_DAYS, rotation } from "./core-rotation.ts";
@@ -444,6 +446,7 @@ export async function runCore(config: Config, log: Logger) {
     dns,
     publicUrl: config.publicUrl,
   });
+  const identity = await CoreIdentity.load(`${config.dataDir}/node-link`, signer, Date.now());
   const doctor = doctorMethods({
     db,
     config,
@@ -451,9 +454,11 @@ export async function runCore(config: Config, log: Logger) {
     rotation: rotate,
     paths: () => shaper.views(),
     storage: () => storage.state(),
+    nodeCa: () => identity.current().ca,
   });
   const all = {
     ...api.methods,
+    ...nodeMethods({ db, writer, log, signer, identity }),
     ...feedback.methods,
     ...routes.methods,
     ...templateMethods({ db, writer }),
