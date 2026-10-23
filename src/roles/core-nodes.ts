@@ -20,6 +20,8 @@ const caStates = b.array(
   }),
 );
 
+const droppedCas = b.array(b.object({ name: b.string(), storeKey: b.string().nullable() }));
+
 const same = (a: Uint8Array, c: Uint8Array) =>
   a.length === c.length && a.every((x, i) => x === c[i]);
 
@@ -101,10 +103,17 @@ export function nodeMethods(deps: NodeDeps): Methods {
             throw new RpcError("invalid", `${pending.nodes.join(", ")} ${why}`);
           }
         }
-        await signer.call("rotateNodeCa", { step }, { result: caStates });
+        const { dropped } = await signer.call(
+          "rotateNodeCa",
+          { step },
+          { result: b.object({ cas: caStates, dropped: droppedCas }) },
+        );
         await identity.reissue();
         log.info("node CA rotation step done", { step });
-        return rotation();
+        return {
+          ...(await rotation()),
+          dropped: dropped.map((d) => ({ name: d.name, store_key: d.storeKey })),
+        };
       },
     ),
 

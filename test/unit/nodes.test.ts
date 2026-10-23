@@ -42,8 +42,8 @@ async function startSigner(ca: NodeCa) {
     rotateNodeCa: method(b.object({ step: b.string() }), async ({ step }) => {
       if (step === "start") await ca.rotateStart(Date.now());
       else if (step === "promote") await ca.promote();
-      else await ca.dropRetiring();
-      return ca.states();
+      else return { cas: ca.states(), dropped: await ca.dropRetiring() };
+      return { cas: ca.states(), dropped: [] };
     }),
   });
   const client = new RpcClient(socket);
@@ -293,9 +293,14 @@ describe("delivery nodes", () => {
     expect(await refusal("finish")).toMatch(/node-r still have a certificate from the old CA/);
 
     db.run("UPDATE nodes SET ca = ? WHERE name = 'node-r'", [next]);
-    const finished = (await step("finish")) as { cas: { name: string }[]; pending: null };
+    const finished = (await step("finish")) as {
+      cas: { name: string }[];
+      pending: null;
+      dropped: unknown;
+    };
     expect(finished.cas.map((c) => c.name)).toEqual([next]);
     expect(finished.pending).toBeNull();
+    expect(finished.dropped).toEqual([{ name: first?.name ?? "", store_key: null }]);
     expect(fromPem(identity.current().ca)).toHaveLength(1);
     expect(identity.current().pin).toBe(pin);
   });

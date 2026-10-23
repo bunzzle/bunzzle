@@ -188,8 +188,10 @@ export class NodeCa {
     );
   }
 
-  async dropRetiring(): Promise<string[]> {
-    const gone = this.#cas.filter((c) => c.state === "retiring").map((c) => c.name);
+  async dropRetiring(): Promise<{ name: string; storeKey: string | null }[]> {
+    const gone = this.#file.cas
+      .filter((e) => this.#cas.some((c) => c.name === e.name && c.state === "retiring"))
+      .map((e) => ({ name: e.name, storeKey: e.storeKey ?? null }));
     if (gone.length === 0) throw new NodeCaError("no retiring CA to drop");
     await this.#save(this.#cas.filter((c) => c.state !== "retiring"));
     return gone;

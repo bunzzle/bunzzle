@@ -110,6 +110,11 @@ describe("node CA", () => {
     const cert = first(await reopened.issue("core", await spkiOf(await p256()), "client", 7, now));
     expect(await verifySignature(cert, first(ca.trusted()).spki)).toBe(true);
     await expect(NodeCa.open(path, master, null, now)).rejects.toThrow(/key store/);
+    await reopened.rotateStart(now);
+    await reopened.promote();
+    expect(await reopened.dropRetiring()).toEqual([
+      { name: store.names[0] ?? "", storeKey: store.names[0] ?? "" },
+    ]);
   });
 
   test("rotation: next CA is trusted first, then issues, then the old one is dropped", async () => {
@@ -138,7 +143,7 @@ describe("node CA", () => {
     const reopened = await NodeCa.open(path, master, null, now);
     expect(reopened.states().map((c) => c.state)).toEqual(["retiring", "active"]);
 
-    expect(await reopened.dropRetiring()).toEqual([old?.name ?? ""]);
+    expect(await reopened.dropRetiring()).toEqual([{ name: old?.name ?? "", storeKey: null }]);
     expect(reopened.states().map((c) => [c.name, c.state])).toEqual([[next?.name ?? "", "active"]]);
     expect(fromPem(reopened.trusted())).toHaveLength(1);
     await expect(reopened.promote()).rejects.toThrow(/no next CA/);

@@ -13,6 +13,7 @@ const USAGE =
 interface Rotation {
   cas: { name: string; state: string; expires_at: string }[];
   pending: { step: string; nodes: string[] } | null;
+  dropped?: { name: string; store_key: string | null }[];
 }
 
 function printRotation(r: Rotation) {
@@ -23,6 +24,14 @@ function printRotation(r: Rotation) {
   else if (r.pending.nodes.length === 0)
     console.log(`Next step: ${r.pending.step}. All nodes are ready.`);
   else console.log(`Next step: ${r.pending.step}. Waiting for: ${r.pending.nodes.join(", ")}`);
+  for (const d of r.dropped ?? []) {
+    console.log(`Dropped ${d.name}.`);
+    if (d.store_key) {
+      console.log(
+        `Its key ${d.store_key} is still in the external key store. Bunzzle no longer uses it: delete it in the key store.`,
+      );
+    }
+  }
 }
 
 const bundle = b.object({

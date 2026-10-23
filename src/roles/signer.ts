@@ -53,16 +53,17 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
     rotateNodeCa: method(
       b.object({ step: b.enum(["start", "promote", "finish"]) }),
       async ({ step }) => {
+        let dropped: { name: string; storeKey: string | null }[] = [];
         try {
           if (step === "start") await nodeCa.rotateStart(Date.now());
           else if (step === "promote") await nodeCa.promote();
-          else await nodeCa.dropRetiring();
+          else dropped = await nodeCa.dropRetiring();
         } catch (err) {
           if (err instanceof NodeCaError) throw new RpcError("invalid", err.message);
           throw err;
         }
         log.info("node CA rotation step", { step, cas: nodeCa.states() });
-        return nodeCa.states();
+        return { cas: nodeCa.states(), dropped };
       },
     ),
     issueNodeCertificate: method(
