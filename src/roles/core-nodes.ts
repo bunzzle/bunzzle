@@ -5,6 +5,7 @@ import type { Logger } from "../core/log.ts";
 import type { Writer } from "../core/store/writer.ts";
 import { type Methods, method, pinOf, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import type { CoreIdentity } from "../nodes/identity.ts";
+import type { NodeLinks } from "../nodes/links.ts";
 import { addNode, getNode, listNodes, removeNode } from "../nodes/registry.ts";
 import { b } from "../validate/schema.ts";
 import { parseCertificate } from "../x509/cert.ts";
@@ -42,11 +43,12 @@ export interface NodeDeps {
   log: Logger;
   signer: RpcClient;
   identity: CoreIdentity;
+  links: NodeLinks;
   now?: () => number;
 }
 
 export function nodeMethods(deps: NodeDeps): Methods {
-  const { db, writer, log, signer, identity } = deps;
+  const { db, writer, log, signer, identity, links } = deps;
   const now = deps.now ?? Date.now;
 
   const rotation = async () => {
@@ -109,6 +111,7 @@ export function nodeMethods(deps: NodeDeps): Methods {
           { result: b.object({ cas: caStates, dropped: droppedCas }) },
         );
         await identity.reissue();
+        await links.identityChanged();
         log.info("node CA rotation step done", { step });
         return {
           ...(await rotation()),
@@ -151,6 +154,7 @@ export function nodeMethods(deps: NodeDeps): Methods {
         if (!(await writer.run((d) => addNode(d, node)))) {
           throw new RpcError("invalid", `there is already a node ${name} or one at ${address}`);
         }
+        links.sync();
         log.info("delivery node added", { name, address });
         return { name, cert, ca, corePins: [identity.current().pin] };
       },
@@ -170,6 +174,7 @@ export function nodeMethods(deps: NodeDeps): Methods {
       if (!(await writer.run((d) => removeNode(d, name)))) {
         throw new RpcError("not-found", `no node ${name}`);
       }
+      links.close(name);
       log.info("delivery node removed", { name });
       return { name, removed: true };
     }),

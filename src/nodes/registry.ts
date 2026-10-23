@@ -54,3 +54,17 @@ export function getNode(db: Database, name: string): DeliveryNode | null {
 export function removeNode(db: Database, name: string): boolean {
   return db.query<unknown, [string]>("DELETE FROM nodes WHERE name = ?").run(name).changes > 0;
 }
+
+export function updateNode(
+  db: Database,
+  name: string,
+  n: Pick<DeliveryNode, "pin" | "notAfter" | "ca" | "trustedCas">,
+): boolean {
+  return (
+    db
+      .query<unknown, [string, number, string, string, string]>(
+        "UPDATE nodes SET pin = ?, not_after = ?, ca = ?, trusted_cas = ? WHERE name = ?",
+      )
+      .run(n.pin, n.notAfter, n.ca, JSON.stringify(n.trustedCas), name).changes > 0
+  );
+}

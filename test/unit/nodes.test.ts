@@ -6,8 +6,17 @@ import { createLogger } from "../../src/core/log.ts";
 import { openDatabase } from "../../src/core/store/db.ts";
 import { Writer } from "../../src/core/store/writer.ts";
 import { generateMasterKey, masterKeyFrom } from "../../src/crypto/master.ts";
-import { type Methods, method, RpcClient, RpcError, serveRpc } from "../../src/ipc/rpc.ts";
+import {
+  type Methods,
+  method,
+  RpcClient,
+  RpcError,
+  type RpcServer,
+  serveRpc,
+} from "../../src/ipc/rpc.ts";
 import { CoreIdentity } from "../../src/nodes/identity.ts";
+import { NodeLinks } from "../../src/nodes/links.ts";
+import { nodeLinkMethods } from "../../src/nodes/node.ts";
 import { listNodes } from "../../src/nodes/registry.ts";
 import { nodeChecks } from "../../src/roles/core-doctor.ts";
 import { nodeMethods } from "../../src/roles/core-nodes.ts";
@@ -69,15 +78,19 @@ const invoke = (methods: Methods, name: string, params: unknown) => {
   return m.handle(m.params.parse(params));
 };
 
-async function core(client = signer) {
+async function core(client = signer, clock = { now: Date.now() }) {
   const db = openDatabase({ path: ":memory:" });
+  const writer = new Writer(db);
   const identity = await CoreIdentity.load(
     `${dir}/core-${crypto.randomUUID()}`,
     client,
     Date.now(),
   );
-  const methods = nodeMethods({ db, writer: new Writer(db), log: quiet, signer: client, identity });
-  return { db, identity, methods };
+  const now = () => clock.now;
+  const links = new NodeLinks({ db, writer, log: quiet, signer: client, identity, now });
+  cleanup.push(() => links.closeAll());
+  const methods = nodeMethods({ db, writer, log: quiet, signer: client, identity, links, now });
+  return { db, identity, methods, links };
 }
 
 async function requestCsr(nodeDir: string, name: string) {
@@ -140,7 +153,8 @@ describe("delivery nodes", () => {
     expect(first.current().notAfter - Date.now()).toBeGreaterThan(6.9 * 86_400_000);
     expect((await Bun.file(`${at}/core.json`).stat()).mode & 0o777).toBe(0o600);
     const expired = await CoreIdentity.load(at, signer, Date.now() + 8 * 86_400_000);
-    expect(expired.current().pin).not.toBe(first.current().pin);
+    expect(expired.current().pin).toBe(first.current().pin);
+    expect(expired.current().cert).not.toBe(first.current().cert);
   });
 
   test("renew hands over the next identity before switching", async () => {
@@ -315,5 +329,150 @@ describe("delivery nodes", () => {
     const after = await CoreIdentity.load(at, client, Date.now());
     expect(after.current().ca).toBe(healCa.trusted());
     expect(after.current().pin).toBe(before.current().pin);
+  });
+});
+
+let nextPort = 21_000 + Math.floor(Math.random() * 15_000);
+
+async function startNode(c: Awaited<ReturnType<typeof core>>, name: string) {
+  const nodeDir = `${dir}/${name}-${crypto.randomUUID().slice(0, 6)}`;
+  const port = nextPort++;
+  const csr = await requestCsr(nodeDir, name);
+  const bundle = await invoke(c.methods, "addNode", { name, address: `127.0.0.1:${port}`, csr });
+  await Bun.write(`${nodeDir}/bundle.json`, JSON.stringify(bundle));
+  await nodesCommand(["install", `${nodeDir}/bundle.json`, "--dir", nodeDir], config);
+  const tls = await loadLinkTls(nodeDir);
+  let release: (() => void) | null = null;
+  const server: RpcServer = await serveRpc(
+    { hostname: "127.0.0.1", port, tls },
+    {
+      ping: method(b.object({}), () => "pong"),
+      hang: method(
+        b.object({}),
+        () =>
+          new Promise((resolve) => {
+            release = () => resolve(null);
+          }),
+      ),
+      ...nodeLinkMethods(nodeDir, tls, () => server),
+    },
+  );
+  cleanup.push(() => {
+    release?.();
+    server.stop();
+  });
+  return { nodeDir, server, tls };
+}
+
+const pinsOn = async (nodeDir: string) =>
+  (await Bun.file(`${nodeDir}/peer.pin`).text()).trim().split("\n");
+const ping = (c: Awaited<ReturnType<typeof core>>, name: string) =>
+  c.links.client(name)?.call("ping", {}, { timeoutMs: 5_000 });
+
+describe("node links", () => {
+  test("a healthy node needs no changes and its state is saved", async () => {
+    const c = await core();
+    const node = await startNode(c, "link-a");
+    const st = await c.links.reconcile("link-a");
+    expect(st.corePins).toEqual([c.identity.current().pin]);
+    expect(st.issuer).toBe(ca.states()[0]?.name ?? "");
+    expect(await ping(c, "link-a")).toBe("pong");
+    expect(await pinsOn(node.nodeDir)).toEqual([c.identity.current().pin]);
+    expect(listNodes(c.db)[0]?.trustedCas).toEqual(st.cas);
+  });
+
+  test("a node certificate with less than 10 days left is renewed with a key made on the node", async () => {
+    const clock = { now: Date.now() };
+    const c = await core(signer, clock);
+    const node = await startNode(c, "link-b");
+    const before = listNodes(c.db)[0];
+    const keyBefore = await Bun.file(`${node.nodeDir}/key.pem`).text();
+    clock.now += 21 * 86_400_000;
+    const st = await c.links.reconcile("link-b");
+    expect(st.pin).not.toBe(before?.pin);
+    expect(listNodes(c.db)[0]?.pin).toBe(st.pin);
+    expect(await Bun.file(`${node.nodeDir}/key.pem`).text()).not.toBe(keyBefore);
+    expect((await Bun.file(`${node.nodeDir}/key.pem`).stat()).mode & 0o777).toBe(0o600);
+    expect((await loadLinkTls(node.nodeDir)).cert).toBe(node.tls.cert);
+    expect(await ping(c, "link-b")).toBe("pong");
+  });
+
+  test("core renewal hands the new pin to every node before switching", async () => {
+    const c = await core();
+    const a = await startNode(c, "link-c");
+    const d = await startNode(c, "link-d");
+    await c.links.reconcileAll();
+    const old = c.identity.current().pin;
+    expect(await c.links.renewCore()).toBe(true);
+    const fresh = c.identity.current().pin;
+    expect(fresh).not.toBe(old);
+    expect(await pinsOn(a.nodeDir)).toEqual([fresh]);
+    expect(await pinsOn(d.nodeDir)).toEqual([fresh]);
+    expect(await ping(c, "link-c")).toBe("pong");
+    expect(await ping(c, "link-d")).toBe("pong");
+  });
+
+  test("core renewal waits while a node is unreachable and the certificate has time left", async () => {
+    const c = await core();
+    await startNode(c, "link-e");
+    const down = await startNode(c, "link-f");
+    await c.links.reconcileAll();
+    down.server.stop();
+    const old = c.identity.current().pin;
+    expect(await c.links.renewCore()).toBe(false);
+    expect(c.identity.current().pin).toBe(old);
+    expect(await ping(c, "link-e")).toBe("pong");
+  });
+
+  test("core renewal goes ahead without an unreachable node when 2 days are left", async () => {
+    const clock = { now: Date.now() };
+    const c = await core(signer, clock);
+    const up = await startNode(c, "link-i");
+    const down = await startNode(c, "link-j");
+    await c.links.reconcileAll();
+    down.server.stop();
+    const old = c.identity.current().pin;
+    clock.now = c.identity.current().notAfter - 86_400_000;
+    expect(await c.links.renewCore()).toBe(true);
+    expect(c.identity.current().pin).not.toBe(old);
+    expect(await pinsOn(up.nodeDir)).toEqual([c.identity.current().pin]);
+    expect(await pinsOn(down.nodeDir)).toEqual([old]);
+  });
+
+  test("remove closes the link at once", async () => {
+    const c = await core();
+    await startNode(c, "link-g");
+    const client = c.links.client("link-g");
+    expect(await ping(c, "link-g")).toBe("pong");
+    const hanging = client?.call("hang", {}, { timeoutMs: 30_000 }).catch((e: RpcError) => e.code);
+    await Bun.sleep(50);
+    await invoke(c.methods, "removeNode", { name: "link-g" });
+    expect(await hanging).toBe("lost");
+    expect(c.links.names()).toEqual([]);
+  });
+
+  test("CA rotation runs over the link: trust, promote with node renewal, finish", async () => {
+    await Bun.$`mkdir -p ${dir}/rot-link`.quiet();
+    const rotCa = await NodeCa.open(`${dir}/rot-link/node-ca.json`, master, null, Date.now());
+    const c = await core(await startSigner(rotCa));
+    const node = await startNode(c, "link-h");
+    const step = (s: string) =>
+      invoke(c.methods, "rotateNodeCa", { step: s }) as Promise<{
+        pending: { step: string; nodes: string[] } | null;
+      }>;
+
+    expect((await step("start")).pending).toEqual({ step: "promote", nodes: [] });
+    expect(fromPem(await Bun.file(`${node.nodeDir}/ca.pem`).text())).toHaveLength(2);
+    expect(await ping(c, "link-h")).toBe("pong");
+
+    expect((await step("promote")).pending).toEqual({ step: "finish", nodes: [] });
+    const next = rotCa.states().find((s) => s.state === "active")?.name;
+    expect(listNodes(c.db)[0]?.ca).toBe(next);
+    expect(await ping(c, "link-h")).toBe("pong");
+
+    expect((await step("finish")).pending).toBeNull();
+    const left = fromPem(await Bun.file(`${node.nodeDir}/ca.pem`).text());
+    expect(left.map((d) => parseCertificate(d).commonNames[0])).toEqual([next]);
+    expect(await ping(c, "link-h")).toBe("pong");
   });
 });

@@ -47,13 +47,10 @@ export class CoreIdentity {
       const parsed = saved.safeParse(await file.json());
       if (parsed.success) {
         const { cert, key, ca } = parsed.data;
-        const current = identityOf(cert, key, ca);
-        if (current.notAfter > now) {
-          const id = new CoreIdentity(dir, signer, current);
-          const trusted = await signer.call("nodeCa", {}, { result: b.string() });
-          if (trusted !== ca) await id.reissue();
-          return id;
-        }
+        const id = new CoreIdentity(dir, signer, identityOf(cert, key, ca));
+        const trusted = await signer.call("nodeCa", {}, { result: b.string() });
+        if (trusted !== ca || id.current().notAfter <= now) await id.reissue();
+        return id;
       }
     }
     const id = new CoreIdentity(dir, signer, await CoreIdentity.#issue(signer));
