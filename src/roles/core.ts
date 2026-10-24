@@ -155,8 +155,9 @@ export async function runCore(config: Config, log: Logger) {
     links,
     log,
     onUp: (name) => {
-      void writer
-        .run((d) => wakeWaitingOn(d, name, Date.now()))
+      void (name === LOCAL ? Promise.resolve() : links.reconcile(name))
+        .catch((err) => log.warn("node link check failed", { name, error: (err as Error).message }))
+        .then(() => writer.run((d) => wakeWaitingOn(d, name, Date.now())))
         .then((woken) => {
           if (woken > 0)
             log.info("mail waiting on a delivery node is due again", { name, jobs: woken });
