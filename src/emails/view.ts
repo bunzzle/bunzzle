@@ -139,7 +139,9 @@ export function emailView(db: Database, project: ProjectId, id: string, now: num
         results: recipientEvents
           .filter(
             (r) =>
-              r.occurred_at === e.occurred_at &&
+              (typeof d["attempt"] === "number" && typeof r.data?.["attempt"] === "number"
+                ? r.data["attempt"] === d["attempt"]
+                : r.occurred_at === e.occurred_at) &&
               String(r.data?.["address"] ?? "").endsWith(`@${target}`),
           )
           .map((r) => ({

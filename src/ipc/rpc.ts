@@ -25,18 +25,28 @@ export class RpcError extends Error {
   }
 }
 
-export interface Method {
-  params: b.Schema;
-  handle(params: unknown): unknown;
+export interface CallContext {
+  progress(value: unknown): void;
 }
 
-export function method<P, R>(params: b.Schema<P>, handle: (params: P) => Promise<R> | R): Method {
-  return { params, handle: handle as (params: unknown) => unknown };
+export interface Method {
+  params: b.Schema;
+  handle(params: unknown, ctx?: CallContext): unknown;
+}
+
+const quiet: CallContext = { progress: () => {} };
+
+export function method<P, R>(
+  params: b.Schema<P>,
+  handle: (params: P, ctx: CallContext) => Promise<R> | R,
+): Method {
+  return { params, handle: (p, ctx = quiet) => handle(p as P, ctx) };
 }
 
 export type Methods = Record<string, Method>;
 
 const request = b.object({ id: b.number().int(), method: b.string(), params: b.unknown() });
+const progress = b.object({ id: b.number().int(), progress: b.unknown() });
 const response = b.union([
   b.object({ id: b.number().int(), result: b.unknown() }),
   b.object({
@@ -215,9 +225,18 @@ export async function serveRpc(
       });
       return;
     }
+    let done = false;
+    const ctx: CallContext = {
+      progress: (value) => {
+        if (!done) framer.send({ id, progress: value ?? null });
+      },
+    };
     try {
-      framer.send({ id, result: (await m.handle(params.data)) ?? null });
+      const result = await m.handle(params.data, ctx);
+      done = true;
+      framer.send({ id, result: result ?? null });
     } catch (err) {
+      done = true;
       const code = err instanceof RpcError ? err.code : "failed";
       const retryAfter = err instanceof RpcError ? err.retryAfter : undefined;
       framer.send({
@@ -308,12 +327,15 @@ export async function serveRpc(
 interface Pending {
   resolve(value: unknown): void;
   reject(err: RpcError): void;
+  progress?: ((value: unknown) => void) | undefined;
   timer: ReturnType<typeof setTimeout>;
 }
 
-export interface CallOptions<R> {
+export interface CallOptions<R, P = unknown> {
   timeoutMs?: number;
   result?: b.Schema<R>;
+  progress?: b.Schema<P>;
+  onProgress?: (value: P) => void;
 }
 
 const BACKOFF_MIN = 250;
@@ -448,6 +470,11 @@ export class RpcClient {
   }
 
   #onFrame(frame: unknown) {
+    const step = progress.safeParse(frame);
+    if (step.success) {
+      this.#pending.get(step.data.id)?.progress?.(step.data.progress);
+      return;
+    }
     const res = response.safeParse(frame);
     if (!res.success) return;
     const p = this.#pending.get(res.data.id);
@@ -460,7 +487,11 @@ export class RpcClient {
     } else p.resolve(res.data.result);
   }
 
-  async call<R = unknown>(method: string, params: unknown, opts: CallOptions<R> = {}): Promise<R> {
+  async call<R = unknown, P = unknown>(
+    method: string,
+    params: unknown,
+    opts: CallOptions<R, P> = {},
+  ): Promise<R> {
     const framer = await this.#connect();
     const id = this.#nextId++;
     const timeoutMs = opts.timeoutMs ?? 30_000;
@@ -469,7 +500,16 @@ export class RpcClient {
         this.#pending.delete(id);
         reject(new RpcError("timeout", `${method} timed out after ${timeoutMs} ms`));
       }, timeoutMs);
-      this.#pending.set(id, { resolve, reject, timer });
+      const onProgress = opts.onProgress;
+      const schema = opts.progress;
+      const progress = onProgress
+        ? (value: unknown) => {
+            if (!schema) return onProgress(value as P);
+            const checked = schema.safeParse(value);
+            if (checked.success) onProgress(checked.data);
+          }
+        : undefined;
+      this.#pending.set(id, { resolve, reject, progress, timer });
       framer.send({ id, method, params });
     });
     if (!opts.result) return raw as R;

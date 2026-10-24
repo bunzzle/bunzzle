@@ -102,6 +102,96 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
   const suspendRetryMs = o.suspendRetryMs ?? 5 * 60_000;
   const busyRetryMs = o.busyRetryMs ?? 60_000;
 
+  const writeRecipients = (db: Database, job: ClaimedJob, updates: Update[], now: number) => {
+    const event = (kind: string, data: Record<string, unknown>) =>
+      appendEvent(db, { messageId: job.messageId, kind, source: SOURCE, at: now, data });
+    const write = db.query<
+      unknown,
+      [
+        RecipientState,
+        number,
+        number | null,
+        string | null,
+        string,
+        string | null,
+        string | null,
+        number,
+        number,
+        string,
+        string,
+      ]
+    >(
+      `UPDATE recipients SET status = ?, attempts = attempts + ?, code = ?, enhanced = ?,
+         reply = ?, class = ?, scope = ?, suppress = ?, updated_at = ?
+       WHERE job_id = ? AND address = ?`,
+    );
+    for (const u of updates) {
+      write.run(
+        u.status,
+        u.attempted ? 1 : 0,
+        u.result?.code ?? null,
+        u.result?.enhanced ?? null,
+        u.reply,
+        u.verdict?.class ?? null,
+        u.verdict?.scope ?? null,
+        u.verdict?.suppress ? 1 : 0,
+        now,
+        job.id,
+        u.address,
+      );
+      if (!u.attempted) continue;
+      const metric =
+        u.status === "delivered"
+          ? "delivered"
+          : u.status === "bounced"
+            ? "bounced"
+            : u.status === "deferred"
+              ? "deferred"
+              : u.status === "failed"
+                ? "failed"
+                : null;
+      if (metric) countEmail(db, job.messageId, metric, 1, now);
+      event("recipient", {
+        attempt: job.attempt,
+        address: u.address,
+        status: u.status,
+        phase: u.result?.phase ?? null,
+        code: u.result?.code ?? null,
+        enhanced: u.result?.enhanced ?? null,
+        reply: u.reply,
+        class: u.verdict?.class ?? null,
+        scope: u.verdict?.scope ?? null,
+        action: u.verdict?.action ?? null,
+        rule: u.verdict?.rule ?? null,
+      });
+      if (u.verdict?.suppress) {
+        const s = suppressionForClass(u.verdict.class);
+        const project = s ? projectOfMessage(db, job.messageId) : null;
+        if (s && project) {
+          suppress(
+            db,
+            project,
+            {
+              address: u.address,
+              scope: s.scope,
+              reason: s.reason,
+              detail: u.reply,
+              messageId: job.messageId,
+              ttlMs: s.ttlMs,
+            },
+            now,
+          );
+          event("address_suppressed", {
+            address: u.address,
+            reason: s.reason,
+            scope: s.scope,
+            class: u.verdict.class,
+          });
+        }
+      }
+    }
+  };
+
   const record =
     (
       job: ClaimedJob,
@@ -110,92 +200,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       deadClass?: string,
     ): Apply =>
     (db, settled, now) => {
-      const event = (kind: string, data: Record<string, unknown>) =>
-        appendEvent(db, { messageId: job.messageId, kind, source: SOURCE, at: now, data });
-      const write = db.query<
-        unknown,
-        [
-          RecipientState,
-          number,
-          number | null,
-          string | null,
-          string,
-          string | null,
-          string | null,
-          number,
-          number,
-          string,
-          string,
-        ]
-      >(
-        `UPDATE recipients SET status = ?, attempts = attempts + ?, code = ?, enhanced = ?,
-           reply = ?, class = ?, scope = ?, suppress = ?, updated_at = ?
-         WHERE job_id = ? AND address = ?`,
-      );
-      for (const u of updates) {
-        write.run(
-          u.status,
-          u.attempted ? 1 : 0,
-          u.result?.code ?? null,
-          u.result?.enhanced ?? null,
-          u.reply,
-          u.verdict?.class ?? null,
-          u.verdict?.scope ?? null,
-          u.verdict?.suppress ? 1 : 0,
-          now,
-          job.id,
-          u.address,
-        );
-        if (!u.attempted) continue;
-        const metric =
-          u.status === "delivered"
-            ? "delivered"
-            : u.status === "bounced"
-              ? "bounced"
-              : u.status === "deferred"
-                ? "deferred"
-                : u.status === "failed"
-                  ? "failed"
-                  : null;
-        if (metric) countEmail(db, job.messageId, metric, 1, now);
-        event("recipient", {
-          address: u.address,
-          status: u.status,
-          phase: u.result?.phase ?? null,
-          code: u.result?.code ?? null,
-          enhanced: u.result?.enhanced ?? null,
-          reply: u.reply,
-          class: u.verdict?.class ?? null,
-          scope: u.verdict?.scope ?? null,
-          action: u.verdict?.action ?? null,
-          rule: u.verdict?.rule ?? null,
-        });
-        if (u.verdict?.suppress) {
-          const s = suppressionForClass(u.verdict.class);
-          const project = s ? projectOfMessage(db, job.messageId) : null;
-          if (s && project) {
-            suppress(
-              db,
-              project,
-              {
-                address: u.address,
-                scope: s.scope,
-                reason: s.reason,
-                detail: u.reply,
-                messageId: job.messageId,
-                ttlMs: s.ttlMs,
-              },
-              now,
-            );
-            event("address_suppressed", {
-              address: u.address,
-              reason: s.reason,
-              scope: s.scope,
-              class: u.verdict.class,
-            });
-          }
-        }
-      }
+      writeRecipients(db, job, updates, now);
       effects(db, now);
       if (settled === "dead") {
         const expired = job.expiresAt !== null && now >= job.expiresAt;
@@ -385,48 +390,15 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
 
     const attemptKey = `${job.id}#${job.attempt}`;
     const recallKey = job.unresolvedAttempt !== null ? `${job.id}#${job.unresolvedAttempt}` : null;
-    let report: DeliveryReport;
-    try {
-      report = simulated
-        ? simulate(job.target, pending, job.attempt)
-        : await o.transport.deliver({
-            key: attemptKey,
-            recall: recallKey,
-            messageId: job.messageId,
-            domain: job.target,
-            destination,
-            from: email.from,
-            recipients: pending,
-            smtpUtf8: email.smtpUtf8,
-            requireTls: email.requireTls,
-            body,
-            ...(destination.kind === "targets" ? { connections: ticket.connections } : {}),
-            lane,
-            bounceDomain: o.bounceDomainFor?.(domainOf(email.from)) ?? null,
-            source: sendFrom,
-            ...(via ? { via } : {}),
-          });
-    } catch (err) {
-      ticket.release("neutral", "delivery role unreachable");
-      const code = (err as { code?: unknown })?.code;
-      if (code === "unavailable" || code === "invalid") {
-        return {
-          ...requeue(`delivery unavailable: ${(err as Error).message}`, busyRetryMs),
-          path: pathKey,
-        };
-      }
-      throw err;
-    }
-
-    const atDot = report.recipients.filter((r) => r.phase === "dot").length;
-    const updates: Update[] = report.recipients.map((r) => {
+    const asked = new Set(pending);
+    const toUpdate = (r: RecipientResult, shared: boolean): Update => {
       const verdict = classify({
         phase: r.phase,
         code: r.code,
         enhanced: r.enhanced,
         text: r.reply,
         provider,
-        shared: r.phase === "dot" && atDot > 1,
+        shared,
       });
       return {
         address: r.address,
@@ -436,7 +408,79 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         verdict,
         reply: r.reply,
       };
-    });
+    };
+    const saved = new Map<string, Update>();
+    const taken = new Set<string>();
+    let saving = Promise.resolve();
+    const save = ctx?.record;
+    const onOutcomes = save
+      ? (results: RecipientResult[]) => {
+          const shared = results.filter((r) => r.phase === "dot").length > 1;
+          const fresh = results
+            .filter((r) => asked.has(r.address) && !taken.has(r.address))
+            .map((r) => toUpdate(r, r.phase === "dot" && shared));
+          if (fresh.length === 0) return;
+          for (const u of fresh) taken.add(u.address);
+          saving = saving
+            .then(() => save((d, at) => writeRecipients(d, job, fresh, at)))
+            .then((ok) => {
+              if (ok) for (const u of fresh) saved.set(u.address, u);
+            });
+        }
+      : undefined;
+    let report: DeliveryReport;
+    try {
+      report = simulated
+        ? simulate(job.target, pending, job.attempt)
+        : await o.transport.deliver(
+            {
+              key: attemptKey,
+              recall: recallKey,
+              messageId: job.messageId,
+              domain: job.target,
+              destination,
+              from: email.from,
+              recipients: pending,
+              smtpUtf8: email.smtpUtf8,
+              requireTls: email.requireTls,
+              body,
+              ...(destination.kind === "targets" ? { connections: ticket.connections } : {}),
+              lane,
+              bounceDomain: o.bounceDomainFor?.(domainOf(email.from)) ?? null,
+              source: sendFrom,
+              ...(via ? { via } : {}),
+            },
+            onOutcomes,
+          );
+    } catch (err) {
+      await saving;
+      const code = (err as { code?: unknown })?.code;
+      if (saved.size === 0 && (code === "unavailable" || code === "invalid")) {
+        ticket.release("neutral", "delivery role unreachable");
+        return {
+          ...requeue(`delivery unavailable: ${(err as Error).message}`, busyRetryMs),
+          path: pathKey,
+        };
+      }
+      if (saved.size < pending.length) {
+        ticket.release("neutral", "delivery role unreachable");
+        throw err;
+      }
+      report = {
+        domain: job.target,
+        destination,
+        provider: null,
+        policy: null,
+        sessions: [],
+        recipients: pending.map((a) => saved.get(a)?.result as RecipientResult),
+      };
+    }
+    await saving;
+
+    const atDot = report.recipients.filter((r) => r.phase === "dot").length;
+    const updates: Update[] = report.recipients
+      .filter((r) => asked.has(r.address))
+      .map((r) => saved.get(r.address) ?? toUpdate(r, r.phase === "dot" && atDot > 1));
 
     const verdicts = updates.flatMap((u) => (u.verdict ? [u.verdict] : []));
     const pauseBy = updates.find((u) => u.verdict?.action === "pause-path");
@@ -504,6 +548,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         event("reconciled", { attempt: job.unresolvedAttempt, resent: false });
       }
       event("attempt", {
+        attempt: job.attempt,
         target: job.target,
         lane,
         path: pathKey,
@@ -540,7 +585,11 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       }
     }
 
-    const apply = record(job, updates, effects);
+    const apply = record(
+      job,
+      updates.filter((u) => !saved.has(u.address)),
+      effects,
+    );
     const committed = () =>
       o.transport.forget?.(recallKey ? [attemptKey, recallKey] : [attemptKey]);
     const summary = (status: RecipientState) =>

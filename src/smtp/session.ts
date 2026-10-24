@@ -85,7 +85,10 @@ export interface RecipientResult {
   reply: string;
 }
 
+export type OnOutcomes = (results: RecipientResult[]) => void;
+
 export interface SessionInput {
+  onOutcomes?: OnOutcomes | undefined;
   host: string;
   address: string;
   port: number;
@@ -494,6 +497,7 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
         });
       }
       result.phase = "done";
+      input.onOutcomes?.(accepted.map((a) => results.get(a) as RecipientResult));
     }
 
     if (

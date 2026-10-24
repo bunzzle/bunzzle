@@ -14,7 +14,10 @@ const TABLES = [
 ];
 
 const REVIEWED: Record<string, { count: number; why: string }> = {
-  "src/core/jobs.ts jobs": { count: 15, why: "queue engine: claims, settles and sweeps by job id" },
+  "src/core/jobs.ts jobs": {
+    count: 16,
+    why: "queue engine: claims, settles, checks leases and sweeps by job id",
+  },
   "src/core/jobs.ts messages": { count: 1, why: "claim loads the messages of jobs it leased" },
   "src/delivery/queue.ts jobs": {
     count: 7,

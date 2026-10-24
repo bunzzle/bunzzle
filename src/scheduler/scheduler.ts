@@ -6,6 +6,7 @@ import {
   claim,
   expireHeldJobs,
   expireLeases,
+  holdsLease,
   nextWakeAt,
   recoverAfterCrash,
   renewLease,
@@ -20,6 +21,7 @@ import type { Writer } from "../core/store/writer.ts";
 
 export interface JobContext {
   renew(node?: string | null): Promise<boolean>;
+  record?(write: (db: Database, now: number) => void): Promise<boolean>;
 }
 
 export type JobHandler = (
@@ -177,6 +179,14 @@ export class Scheduler {
             writer
               .run((db) => renewLease(db, job, clock.now() + leaseMs, clock.now(), node), {
                 quiet: true,
+              })
+              .catch(() => false),
+          record: (write) =>
+            writer
+              .run((db) => {
+                if (!holdsLease(db, job)) return false;
+                write(db, clock.now());
+                return true;
               })
               .catch(() => false),
         });

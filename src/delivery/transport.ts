@@ -8,6 +8,7 @@ import {
   relayDestination,
 } from "../smtp/deliver.ts";
 import type { StsPolicy } from "../smtp/mta-sts.ts";
+import type { OnOutcomes } from "../smtp/session.ts";
 import { unprepared } from "./unprepared.ts";
 
 export interface DeliverRequest {
@@ -32,7 +33,7 @@ export interface DeliverRequest {
 
 export interface DeliveryTransport {
   lookup(domain: string): Promise<Destination>;
-  deliver(req: DeliverRequest): Promise<DeliveryReport>;
+  deliver(req: DeliverRequest, onOutcomes?: OnOutcomes): Promise<DeliveryReport>;
   forget?(keys: string[]): void;
 }
 
@@ -84,7 +85,7 @@ export function rememberingTransport(
     get remembered() {
       return memory.size;
     },
-    async deliver(req) {
+    async deliver(req, onOutcomes) {
       if (req.settled?.length) forget(req.settled);
       if (req.recall) {
         const prev = memory.get(req.recall);
@@ -96,7 +97,7 @@ export function rememberingTransport(
           }
         }
       }
-      const report = inner.deliver(req);
+      const report = inner.deliver(req, onOutcomes);
       remember(req.key, report);
       return report;
     },
@@ -120,7 +121,7 @@ export function localTransport(opts: LocalOptions, open: OpenBody): DeliveryTran
   return {
     lookup: (domain) =>
       findDestination(domain, opts.relayAll === false ? { ...opts, relay: null } : opts),
-    async deliver(req) {
+    async deliver(req, onOutcomes) {
       const source = forSource(opts, req.source);
       if (typeof source === "string") return unprepared(req, new Error(source));
       const routed = opts.relayAll === false;
@@ -154,6 +155,7 @@ export function localTransport(opts: LocalOptions, open: OpenBody): DeliveryTran
           data,
           smtpUtf8: req.smtpUtf8,
           requireTls: req.requireTls,
+          onOutcomes,
           ...(req.connections !== undefined ? { connections: req.connections } : {}),
           sts:
             destination.kind === "targets" && !relayed

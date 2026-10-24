@@ -76,6 +76,7 @@ import {
   epochKeyFromWire,
   epochKeyWire,
   openedWire,
+  outcomesWire,
   requestToWire,
   sockets,
   toWire,
@@ -145,7 +146,7 @@ export async function runCore(config: Config, log: Logger) {
   const transport: DeliveryTransport = cachingLookups({
     lookup: (domain) =>
       delivery.call("lookup", { domain }, { result: destinationWire, timeoutMs: 2 * MIN }),
-    deliver: async (asked) => {
+    deliver: async (asked, onOutcomes) => {
       const { name, client } = fleet.clientFor(asked.source ?? "");
       let req = asked;
       if (name !== LOCAL && asked.body) {
@@ -173,6 +174,8 @@ export async function runCore(config: Config, log: Logger) {
         .call("deliver", requestToWire({ ...req, ...(keys.length ? { settled: keys } : {}) }), {
           result: deliveryReportWire,
           timeoutMs: 40 * MIN,
+          progress: outcomesWire,
+          onProgress: (p) => onOutcomes?.(p.recipients),
         })
         .then((report) => {
           fleet.delivered(name, report.recipients.filter((r) => r.status === "delivered").length);

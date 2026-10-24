@@ -484,3 +484,46 @@ describe("connection reuse", () => {
     expect(mx.sessions).toHaveLength(2);
   });
 });
+
+describe("outcomes as they happen", () => {
+  test("accepted recipients are reported at the end of data, before the session returns", async () => {
+    const order: string[] = [];
+    const reported: string[][] = [];
+    const r = await session(
+      { rcpt: (a) => (a.startsWith("no") ? "550 5.1.1 no such user\r\n" : "250 Ok\r\n") },
+      {
+        recipients: ["b@example.test", "no@example.test", "c@example.test"],
+        onOutcomes: (results) => {
+          order.push("outcomes");
+          reported.push(results.map((x) => `${x.address} ${x.status}`));
+        },
+      },
+    );
+    order.push("returned");
+    expect(order).toEqual(["outcomes", "returned"]);
+    expect(reported).toEqual([["b@example.test delivered", "c@example.test delivered"]]);
+    expect(r.recipients.map((x) => x.status)).toEqual(["delivered", "bounced", "delivered"]);
+  });
+
+  test("nothing is reported without a reply to the end of data", async () => {
+    const reported: unknown[] = [];
+    const r = await session(
+      { finalDelayMs: 500 },
+      {
+        timeouts: { greeting: 1000, quit: 200, dataDone: 100 },
+        onOutcomes: (x) => reported.push(x),
+      },
+    );
+    expect(r.recipients[0]?.status).toBe("unknown");
+    expect(reported).toEqual([]);
+  });
+
+  test("nothing is reported when every recipient is refused", async () => {
+    const reported: unknown[] = [];
+    await session(
+      { rcpt: () => "550 5.1.1 no such user\r\n" },
+      { onOutcomes: (x) => reported.push(x) },
+    );
+    expect(reported).toEqual([]);
+  });
+});

@@ -404,6 +404,16 @@ function toDead(
   return "dead";
 }
 
+export function holdsLease(db: Database, job: Pick<ClaimedJob, "id" | "attempt">): boolean {
+  return (
+    db
+      .query<unknown, [string, number]>(
+        "SELECT 1 FROM jobs WHERE id = ? AND attempt = ? AND state = 'leased'",
+      )
+      .get(job.id, job.attempt) !== null
+  );
+}
+
 export function renewLease(
   db: Database,
   job: Pick<ClaimedJob, "id" | "attempt">,

@@ -2,6 +2,7 @@ import type { EpochPublicKey, SealedBody } from "../crypto/envelope.ts";
 import type { DeliverRequest } from "../delivery/transport.ts";
 import type { Destination } from "../dns/mx.ts";
 import type { DeliveryReport } from "../smtp/deliver.ts";
+import type { RecipientResult } from "../smtp/session.ts";
 import { b } from "../validate/schema.ts";
 
 export const ROLES = ["signer", "dns", "core", "delivery", "api", "inbound", "ns"] as const;
@@ -108,6 +109,10 @@ const recipient = b.object({
     .regex(/^[245]\.\d{1,3}\.\d{1,3}$/)
     .nullable(),
   reply: text,
+});
+
+export const outcomesWire: b.Schema<{ recipients: RecipientResult[] }> = b.object({
+  recipients: b.array(recipient).min(1).max(1000),
 });
 
 export const deliveryReportWire: b.Schema<DeliveryReport> = b.object({
