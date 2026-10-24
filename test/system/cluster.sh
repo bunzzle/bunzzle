@@ -23,6 +23,8 @@ finish() {
   if [ "$code" != 0 ]; then
     for h in $hosts; do
       echo "== $h"
+      docker exec "bz-$h" systemctl list-jobs --no-pager 2>/dev/null || true
+      docker exec "bz-$h" systemctl status 'bunzzle*' --no-pager 2>/dev/null | head -60 || true
       docker exec "bz-$h" journalctl -u 'bunzzle-*' --no-pager 2>/dev/null | tail -80 || true
       docker exec "bz-$h" nft list table inet bunzzle 2>/dev/null | grep counter || true
     done
@@ -35,7 +37,7 @@ finish() {
 trap finish EXIT
 
 step() { echo "- $*"; }
-on() { h="$1"; shift; docker exec "bz-$h" "$@"; }
+on() { h="$1"; shift; timeout 120 docker exec "bz-$h" "$@"; }
 
 docker build -q -t bunzzle-host:test test/system/cluster >/dev/null
 docker network create --internal --subnet 10.89.0.0/24 bz-admin >/dev/null
@@ -68,8 +70,8 @@ done
 step "core, node and egress booted with systemd"
 
 on core /src/deploy/install.sh /src/dist/bunzzle >/dev/null
-docker exec -e BUNZZLE_NODE=1 bz-node /src/deploy/install.sh /src/dist/bunzzle >/dev/null
-docker exec -e BUNZZLE_EGRESS=1 bz-egress /src/deploy/install.sh /src/dist/bunzzle >/dev/null
+timeout 120 docker exec -e BUNZZLE_NODE=1 bz-node /src/deploy/install.sh /src/dist/bunzzle >/dev/null
+timeout 120 docker exec -e BUNZZLE_EGRESS=1 bz-egress /src/deploy/install.sh /src/dist/bunzzle >/dev/null
 step "installed with install.sh"
 
 on core nft -f /etc/bunzzle/bunzzle.nft
