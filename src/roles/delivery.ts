@@ -13,6 +13,7 @@ import { onThisMachine } from "../ips/local.ts";
 import { parseMilterAddress, runMilter } from "../milter/client.ts";
 import { guardedPost } from "../net/post.ts";
 import { guardedRequest } from "../net/request.ts";
+import { DeliveryIdentity } from "../nodes/delivery-identity.ts";
 import { nodeLinkMethods } from "../nodes/node.ts";
 import { deliverySpans } from "../otel/delivery-spans.ts";
 import { MAX_QUEUE, type Post, SpanExporter } from "../otel/exporter.ts";
@@ -396,7 +397,8 @@ export async function runDelivery(config: Config, log: Logger) {
       },
     ),
   };
-  const server = await serveRpc(sock.delivery, methods);
+  const linkIdentity = new DeliveryIdentity();
+  const server = await serveRpc(sock.delivery, { ...methods, ...linkIdentity.methods() });
   let link: RpcServer | null = null;
   if (config.deliveryListen) {
     const tls = await loadLinkTls(config.nodeDir);

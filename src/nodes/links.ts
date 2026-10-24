@@ -21,6 +21,7 @@ const status = b.object({
   name: b.string(),
   cas: b.array(b.string()),
   corePins: b.array(b.string()),
+  deliveryPins: b.array(b.string()).default([]),
   pin: b.string(),
   issuer: b.string(),
   notAfter: b.number(),
@@ -49,6 +50,7 @@ export interface LinkDeps {
   log: Logger;
   signer: RpcClient;
   identity: CoreIdentity;
+  deliveryPins?: () => string[] | null;
   now?: () => number;
 }
 
@@ -169,6 +171,10 @@ export class NodeLinks {
     if (!sameSet(st.cas, cas)) st = await this.#call(link, "trustCas", { ca: trusted }, status);
     const pins = this.#corePins();
     if (!sameSet(st.corePins, pins)) st = await this.#call(link, "trustCorePins", { pins }, status);
+    const delivery = link.kind === "egress" ? (this.#d.deliveryPins?.() ?? null) : null;
+    if (delivery && !sameSet(st.deliveryPins, delivery)) {
+      st = await this.#call(link, "trustDeliveryPins", { pins: delivery }, status);
+    }
     const states = await this.#d.signer.call("nodeCaStates", {}, { result: caStates });
     const active = states.find((c) => c.state === "active")?.name;
     if (st.issuer !== active || st.notAfter - this.#now() < NODE_RENEW_MS) {
@@ -192,6 +198,15 @@ export class NodeLinks {
         }
       }),
     );
+  }
+
+  async pushDeliveryPins(pins: string[]): Promise<string[]> {
+    this.sync();
+    const egresses = [...this.#links.entries()].filter(([, l]) => l.kind === "egress");
+    const results = await Promise.allSettled(
+      egresses.map(([, l]) => this.#call(l, "trustDeliveryPins", { pins }, status)),
+    );
+    return egresses.filter((_, i) => results[i]?.status === "rejected").map(([n]) => n);
   }
 
   coreRenewalDue(): boolean {

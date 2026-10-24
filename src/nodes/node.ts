@@ -11,6 +11,7 @@ export interface NodeStatus {
   name: string;
   cas: string[];
   corePins: string[];
+  deliveryPins: string[];
   pin: string;
   issuer: string;
   notAfter: number;
@@ -32,21 +33,34 @@ async function writeAtomic(path: string, text: string, mode = "644") {
   await Bun.$`chmod ${mode} ${tmp} && mv -f ${tmp} ${path}`.quiet();
 }
 
-export function statusOf(tls: LinkTls): NodeStatus {
+export interface Peers {
+  core: string[];
+  delivery: string[];
+}
+
+export function statusOf(tls: LinkTls, peers: Peers): NodeStatus {
   const cert = certOf(tls.cert);
   const cas = casOf(tls.ca);
   return {
     name: cert.commonNames[0] ?? "",
     cas: cas.map((c) => c.commonNames[0] ?? ""),
-    corePins: [...tls.pins],
+    corePins: [...peers.core],
+    deliveryPins: [...peers.delivery],
     pin: pinOf(cert.spki),
     issuer: issuerOf(cert, cas)?.commonNames[0] ?? "",
     notAfter: cert.notAfter,
   };
 }
 
-export function nodeLinkMethods(dir: string, tls: LinkTls, server: () => RpcServer): Methods {
+export function nodeLinkMethods(
+  dir: string,
+  tls: LinkTls,
+  server: () => RpcServer,
+  peers: Peers = { core: [...tls.pins], delivery: [] },
+): Methods {
   let pending: CryptoKeyPair | null = null;
+  const accept = () => tls.pins.splice(0, tls.pins.length, ...peers.core, ...peers.delivery);
+  const status = () => statusOf(tls, peers);
 
   const reload = (next: LinkTls) => {
     server().reload(next);
@@ -54,17 +68,26 @@ export function nodeLinkMethods(dir: string, tls: LinkTls, server: () => RpcServ
   };
 
   return {
-    linkStatus: method(b.object({}), () => statusOf(tls)),
+    linkStatus: method(b.object({}), status),
 
     trustCorePins: method(
       b.object({ pins: b.array(b.string()).min(1).max(4) }),
       async ({ pins }) => {
         if (!pins.every((p) => PIN.test(p))) throw new RpcError("invalid", "bad pin");
         await writeAtomic(`${dir}/peer.pin`, `${pins.join("\n")}\n`);
-        tls.pins.splice(0, tls.pins.length, ...pins);
-        return statusOf(tls);
+        peers.core = [...pins];
+        accept();
+        return status();
       },
     ),
+
+    trustDeliveryPins: method(b.object({ pins: b.array(b.string()).max(2) }), async ({ pins }) => {
+      if (!pins.every((p) => PIN.test(p))) throw new RpcError("invalid", "bad pin");
+      await writeAtomic(`${dir}/delivery.pin`, pins.length ? `${pins.join("\n")}\n` : "");
+      peers.delivery = [...pins];
+      accept();
+      return status();
+    }),
 
     trustCas: method(b.object({ ca: b.string().max(20_000) }), async ({ ca }) => {
       const cas = casOf(ca);
@@ -76,7 +99,7 @@ export function nodeLinkMethods(dir: string, tls: LinkTls, server: () => RpcServ
       }
       await writeAtomic(`${dir}/ca.pem`, ca);
       reload({ ...tls, ca });
-      return statusOf(tls);
+      return status();
     }),
 
     renewRequest: method(b.object({}), async () => {
@@ -120,7 +143,7 @@ export function nodeLinkMethods(dir: string, tls: LinkTls, server: () => RpcServ
         }
         await Bun.$`mv -f ${dir}/key.pem.${id}.tmp ${dir}/key.pem && mv -f ${dir}/cert.pem.${id}.tmp ${dir}/cert.pem && mv -f ${dir}/ca.pem.${id}.tmp ${dir}/ca.pem`.quiet();
         pending = null;
-        return statusOf(tls);
+        return status();
       },
     ),
   };
