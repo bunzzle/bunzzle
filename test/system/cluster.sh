@@ -24,6 +24,8 @@ finish() {
     for h in $hosts; do
       echo "== $h"
       docker exec "bz-$h" systemctl list-jobs --no-pager 2>/dev/null || true
+      docker exec "bz-$h" systemctl show -p IPAddressDeny -p IPAddressAllow bunzzle-link.service 2>/dev/null || true
+      docker exec "bz-$h" journalctl -b --no-pager -o cat 2>/dev/null | grep -i -E "bpf|ip firewall|ipaddress" | head -10 || true
       docker exec "bz-$h" systemctl status 'bunzzle*' --no-pager 2>/dev/null | head -60 || true
       docker exec "bz-$h" journalctl -u 'bunzzle-*' --no-pager 2>/dev/null | tail -80 || true
       docker exec "bz-$h" nft list table inet bunzzle 2>/dev/null | grep counter || true
@@ -85,9 +87,10 @@ step "installed with install.sh"
 ask_link() {
   printf '{"host":"%s","port":%s}\n' "$1" "$2" | timeout 20 docker exec -i bz-core nc -U -w 2 /run/bunzzle/link.sock | head -1
 }
-case "$(ask_link 127.0.0.1 3000)" in
-  *error*) step "bunzzle-link may reach no address before a node is added" ;;
-  *) echo "cluster: bunzzle-link reached 127.0.0.1:3000 with no node added" >&2; exit 1 ;;
+reply="$(ask_link 127.0.0.1 3000)"
+case "$reply" in
+  *error*) step "bunzzle-link may reach no address before a node is added: $reply" ;;
+  *) echo "cluster: bunzzle-link with no node added answered: ${reply:-nothing}" >&2; exit 1 ;;
 esac
 
 on core nft -f /etc/bunzzle/bunzzle.nft
