@@ -335,22 +335,9 @@ export function settle(
       }
       let delay = outcome.delayMs ?? retryDelay(retry, job.attempt, opts.random);
       if (job.expiresAt !== null) delay = Math.min(delay, job.expiresAt - now);
-      const row = db
-        .query<{ notices: number }, [string, number]>(
-          `SELECT notices FROM jobs WHERE id = ? AND attempt = ?
-             AND state IN ('leased', 'unknown')`,
-        )
-        .get(job.id, job.attempt);
-      if (!row) return "stale";
-      let notices = row.notices;
-      const due: number[] = [];
-      while (
-        notices < retry.noticesMs.length &&
-        now - job.createdAt >= (retry.noticesMs[notices] as number)
-      ) {
-        due.push(retry.noticesMs[notices] as number);
-        notices++;
-      }
+      const notified = dueNotices(db, job, now, retry);
+      if (!notified) return "stale";
+      const { notices, due } = notified;
       db.query<unknown, [number, string, number, string | null, number, string, number]>(
         `UPDATE jobs SET state = 'ready', run_after = ?, last_error = ?, notices = ?,
            path = coalesce(?, path), lease_until = NULL, check_after = NULL,
@@ -361,14 +348,40 @@ export function settle(
       return finish("retry");
     }
     case "requeue": {
+      let delay = Math.max(0, outcome.delayMs);
+      let due: number[] = [];
+      if (outcome.aged) {
+        const { retry } = opts;
+        const expired = job.expiresAt !== null && now >= job.expiresAt;
+        const tooOld = now - job.createdAt >= retry.maxAgeMs;
+        if (expired || tooOld) {
+          const code = expired ? "expired" : "retries_exhausted";
+          const why = expired
+            ? `expired while waiting: ${outcome.reason}`
+            : `reached the maximum age while waiting: ${outcome.reason}`;
+          const dead = toDead(db, job, now, why, path, guard, () =>
+            event("dead", { code, reason: outcome.reason }),
+          );
+          return dead === "stale" ? dead : finish(dead);
+        }
+        delay = Math.min(delay, job.createdAt + retry.maxAgeMs - now);
+        if (job.expiresAt !== null) delay = Math.min(delay, job.expiresAt - now);
+        const notified = dueNotices(db, job, now, retry);
+        if (!notified) return "stale";
+        due = notified.due;
+        db.query<unknown, [number, string, number]>(
+          "UPDATE jobs SET notices = ? WHERE id = ? AND attempt = ?",
+        ).run(notified.notices, job.id, job.attempt);
+      }
       const r = db
         .query<unknown, [number, string | null, number, string, number]>(
           `UPDATE jobs SET state = 'ready', run_after = ?, attempt = attempt - 1,
              path = coalesce(?, path), lease_until = NULL, updated_at = ?
            WHERE id = ? AND attempt = ? AND state = 'leased'`,
         )
-        .run(now + Math.max(0, outcome.delayMs), path, now, job.id, job.attempt);
+        .run(now + delay, path, now, job.id, job.attempt);
       if (r.changes === 0) return "stale";
+      for (const after of due) event("delayed", { after_ms: after, reason: outcome.reason });
       return finish("requeued");
     }
     case "unknown": {
@@ -384,6 +397,31 @@ export function settle(
       return finish("unknown");
     }
   }
+}
+
+function dueNotices(
+  db: Database,
+  job: SettledJob,
+  now: number,
+  retry: RetryPolicy,
+): { notices: number; due: number[] } | null {
+  const row = db
+    .query<{ notices: number }, [string, number]>(
+      `SELECT notices FROM jobs WHERE id = ? AND attempt = ?
+         AND state IN ('leased', 'unknown')`,
+    )
+    .get(job.id, job.attempt);
+  if (!row) return null;
+  let notices = row.notices;
+  const due: number[] = [];
+  while (
+    notices < retry.noticesMs.length &&
+    now - job.createdAt >= (retry.noticesMs[notices] as number)
+  ) {
+    due.push(retry.noticesMs[notices] as number);
+    notices++;
+  }
+  return { notices, due };
 }
 
 function toDead(

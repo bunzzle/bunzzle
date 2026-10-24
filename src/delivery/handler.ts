@@ -284,10 +284,13 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       visible: boolean,
       path: string | null,
       nodes: string[] = [],
+      aged = false,
     ): Outcome => ({
       ...requeue(reason, delayMs),
+      ...(aged ? { aged } : {}),
       ...(path ? { path } : {}),
       apply: (d, settled, at) => {
+        if (settled === "dead") return record(job, [], none)(d, settled, at);
         if (settled !== "requeued") return;
         if (nodes.length > 0) waitOnNodes(d, job, nodes);
         if (!visible) return;
@@ -352,7 +355,14 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         : { source: fixedSource };
       if ("wait" in choice) {
         if (!(choice.wait.blocked && canFallback)) {
-          return waitFor(choice.wait.reason, choice.wait.delayMs, true, null, choice.wait.nodes);
+          return waitFor(
+            choice.wait.reason,
+            choice.wait.delayMs,
+            true,
+            null,
+            choice.wait.nodes,
+            choice.wait.aged,
+          );
         }
         via = RELAY;
       } else source = choice.source;
