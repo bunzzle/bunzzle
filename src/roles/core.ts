@@ -135,12 +135,19 @@ export async function runCore(config: Config, log: Logger) {
   });
   deliveryLink = new DeliveryLinkKeeper({ delivery, signer, links, log });
   const keeper = deliveryLink;
+  let deliveryLinkError: string | null = null;
   const keepDeliveryLink = () =>
     keeper
       .upkeep()
-      .catch((err) =>
-        log.warn("delivery link certificate check failed", { error: (err as Error).message }),
-      );
+      .then(() => {
+        deliveryLinkError = null;
+      })
+      .catch((err) => {
+        const error = (err as Error).message;
+        if (error !== deliveryLinkError)
+          log.warn("delivery link certificate check failed", { error });
+        deliveryLinkError = error;
+      });
   let wakeQueue = () => {};
   const fleet = new DeliveryFleet({
     local: delivery,
@@ -566,7 +573,7 @@ export async function runCore(config: Config, log: Logger) {
     await linkTick();
   });
   const stopLinks = every(3_600_000, linkTick);
-  const stopDeliveryLink = every(60_000, keepDeliveryLink);
+  const stopDeliveryLink = every(5_000, keepDeliveryLink);
   const stopFleet = every(fleet.checkMs, () => fleet.check());
   void usage.poll();
   const stopUsage = every(usage.pollMs, () => usage.poll());
