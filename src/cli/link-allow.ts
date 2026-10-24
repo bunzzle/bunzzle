@@ -22,8 +22,7 @@ export function parseAllowed(value: string): string[] {
   ].sort();
 }
 
-export async function linkUnitManaged(): Promise<boolean> {
-  if (process.getuid?.() !== 0) return false;
+export function linkUnitManaged(): Promise<boolean> {
   return Bun.file(`/etc/systemd/system/${UNIT}`).exists();
 }
 
@@ -57,6 +56,16 @@ export async function linkAllowCheck(
     status: "warn",
     detail: `may reach ${have.join(", ") || "no address"}, the nodes are at ${want.join(", ") || "no address"}: run sudo bunzzle nodes allow`,
   };
+}
+
+export async function allowLinksAfterChange(config: Config) {
+  try {
+    printAllowed(await allowLinks(config));
+  } catch (err) {
+    console.error(
+      `Could not set the addresses bunzzle-link may reach (${(err as Error).message.trim()}): run sudo bunzzle nodes allow`,
+    );
+  }
 }
 
 export function printAllowed(hosts: string[] | null) {
