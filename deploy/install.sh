@@ -95,13 +95,24 @@ chmod 0600 /etc/bunzzle/master.key
 
 systemctl daemon-reload
 systemctl enable bunzzle.target >/dev/null
-systemctl restart bunzzle.target
-sleep 3
-failed=""
-for role in signer dns core delivery api inbound; do
-  systemctl is-active --quiet "bunzzle-$role" || failed="$failed $role"
+not_running() {
+  failed=""
+  for role in signer dns core delivery api inbound; do
+    systemctl is-active --quiet "bunzzle-$role" || failed="$failed $role"
+  done
+  [ -n "$failed" ]
+}
+systemctl --no-block restart bunzzle.target
+i=0
+while not_running && [ "$i" -lt 60 ]; do
+  i=$((i + 1))
+  sleep 1
 done
+[ -n "$failed" ] || { sleep 3; not_running || true; }
 if [ -n "$failed" ]; then
+  for role in $failed; do
+    journalctl -u "bunzzle-$role" -n 5 --no-pager -o cat >&2 || true
+  done
   die "not running:$failed (see journalctl -u 'bunzzle-*')"
 fi
 echo "bunzzle $("$PREFIX/bunzzle" --version) is running: systemctl status 'bunzzle-*'"
