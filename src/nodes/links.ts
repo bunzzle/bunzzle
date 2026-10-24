@@ -40,6 +40,7 @@ const sameSet = (a: string[], c: string[]) =>
 
 interface Link {
   kind: NodeKind;
+  address: string;
   tls: LinkTls;
   client: RpcClient;
 }
@@ -76,7 +77,7 @@ export class NodeLinks {
       pins: [node.pin],
       name: node.name,
     };
-    return { kind: node.kind, tls, client: new RpcClient({ ...at, tls }) };
+    return { kind: node.kind, address: node.address, tls, client: new RpcClient({ ...at, tls }) };
   }
 
   sync(): void {
@@ -103,6 +104,12 @@ export class NodeLinks {
       .filter(([, l]) => kind === undefined || l.kind === kind)
       .map(([name]) => name)
       .sort();
+  }
+
+  egress(name: string): { name: string; address: string; pin: string } | null {
+    const link = this.#links.get(name);
+    if (!link || link.kind !== "egress") return null;
+    return { name, address: link.address, pin: link.tls.pins[0] ?? "" };
   }
 
   kindOf(name: string): NodeKind | null {

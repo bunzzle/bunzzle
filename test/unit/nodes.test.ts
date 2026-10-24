@@ -656,7 +656,7 @@ describe("delivery fleet", () => {
 });
 
 describe("egress", () => {
-  test("an egress is added, installed and reached over the node link, and stays out of the fleet", async () => {
+  test("an egress is added, installed and reached over the node link, and the fleet checks it", async () => {
     const c = await core();
     const nodeDir = `${dir}/edge-a`;
     const csr = await requestCsr(nodeDir, "edge-a");
@@ -675,7 +675,11 @@ describe("egress", () => {
     await Bun.write(`${nodeDir}/bundle.json`, JSON.stringify(result));
     await nodesCommand(["install", `${nodeDir}/bundle.json`, "--dir", nodeDir], config);
     const server = await runEgress(
-      { egressListen: { hostname: "127.0.0.1", port }, nodeDir } as Config,
+      {
+        egressListen: { hostname: "127.0.0.1", port },
+        nodeDir,
+        sourceIps: [],
+      } as unknown as Config,
       quiet,
     );
     cleanup.push(() => server.stop());
@@ -694,19 +698,29 @@ describe("egress", () => {
       log: quiet,
     });
     await fleet.check();
-    expect(fleet.health().map((h) => h.name)).toEqual([LOCAL]);
+    expect(fleet.health().map((h) => [h.name, h.kind, h.up])).toEqual([
+      [LOCAL, "delivery", true],
+      ["edge-a", "egress", true],
+    ]);
+    expect(fleet.clientFor("203.0.113.77").name).toBe(LOCAL);
   });
 
   test("an egress needs BUNZZLE_EGRESS_LISTEN", async () => {
-    const err = await runEgress({ egressListen: null, nodeDir: dir } as Config, quiet).catch(
-      (e: unknown) => e,
-    );
+    const err = await runEgress(
+      { egressListen: null, nodeDir: dir, sourceIps: [] } as unknown as Config,
+      quiet,
+    ).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ConfigError);
     expect((err as Error).message).toContain("BUNZZLE_EGRESS_LISTEN");
   });
 });
 
-async function startEgress(c: Awaited<ReturnType<typeof core>>, name: string, smtpPort = 25) {
+async function startEgress(
+  c: Awaited<ReturnType<typeof core>>,
+  name: string,
+  smtpPort = 25,
+  sources: string[] = [],
+) {
   const nodeDir = `${dir}/${name}-${crypto.randomUUID().slice(0, 6)}`;
   const port = nextPort++;
   const csr = await requestCsr(nodeDir, name);
@@ -720,7 +734,12 @@ async function startEgress(c: Awaited<ReturnType<typeof core>>, name: string, sm
   await nodesCommand(["install", `${nodeDir}/bundle.json`, "--dir", nodeDir], config);
   const run = () =>
     runEgress(
-      { egressListen: { hostname: "127.0.0.1", port }, nodeDir, smtpPort } as Config,
+      {
+        egressListen: { hostname: "127.0.0.1", port },
+        nodeDir,
+        smtpPort,
+        sourceIps: sources.map((ip) => ({ ip })),
+      } as unknown as Config,
       quiet,
     );
   const e = { server: await run(), port, restart: async () => (e.server = await run()) };
@@ -936,5 +955,50 @@ describe("sending through an egress", () => {
     setTimeout(() => t.e.server.stop(), 300);
     const r = await t.session({ timeouts: { greeting: 5000, quit: 200 } });
     expect(r.recipients.map((x) => x.status)).toEqual(["deferred"]);
+  });
+});
+
+describe("egresses in the fleet", () => {
+  const fleetFor = (c: Awaited<ReturnType<typeof core>>, up: string[] = []) =>
+    new DeliveryFleet({
+      local: { call: async () => [], close() {} } as never,
+      links: c.links,
+      log: quiet,
+      onUp: (name) => up.push(name),
+    });
+
+  test("an egress reports the IPs it can bind and core sends them through it", async () => {
+    const c = await core();
+    const e = await startEgress(c, "edge-f", 25, ["127.0.0.1", "203.0.113.200"]);
+    const fleet = fleetFor(c);
+    await fleet.check();
+    expect(fleet.health().find((h) => h.name === "edge-f")?.ips).toEqual(["127.0.0.1"]);
+    const pin = listNodes(c.db).find((n) => n.name === "edge-f")?.pin;
+    expect(fleet.clientFor("127.0.0.1")).toMatchObject({
+      name: LOCAL,
+      egress: { name: "edge-f", address: `127.0.0.1:${e.port}`, pin },
+    });
+    expect(fleet.nodeOf("127.0.0.1")).toBe("edge-f");
+    expect(fleet.down("127.0.0.1")).toBeNull();
+  });
+
+  test("a stopped egress makes its IPs wait with its name and wakes them when back", async () => {
+    const c = await core();
+    const e = await startEgress(c, "edge-w", 25, ["127.0.0.1"]);
+    const up: string[] = [];
+    const fleet = fleetFor(c, up);
+    await fleet.check();
+    const start = up.length;
+    e.server.stop();
+    for (let i = 0; i < 3; i++) await fleet.check();
+    expect(fleet.down("127.0.0.1")).toMatchObject({
+      reason: "egress edge-w is down (127.0.0.1)",
+      node: "edge-w",
+    });
+    await e.restart();
+    c.links.close("edge-w");
+    await fleet.check();
+    expect(fleet.down("127.0.0.1")).toBeNull();
+    expect(up.slice(start)).toEqual(["edge-w"]);
   });
 });
