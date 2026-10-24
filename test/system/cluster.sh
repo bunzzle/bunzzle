@@ -85,7 +85,7 @@ timeout 120 docker exec -e BUNZZLE_EGRESS=1 bz-egress /src/deploy/install.sh /sr
 step "installed with install.sh"
 
 ask_link() {
-  printf '{"host":"%s","port":%s}\n' "$1" "$2" | timeout 20 docker exec -i bz-core nc -U -w 2 /run/bunzzle/link.sock | head -1
+  { printf '{"host":"%s","port":%s}\n' "$1" "$2"; sleep 3; } | timeout 20 docker exec -i bz-core nc -U -w 4 /run/bunzzle/link.sock | head -1
 }
 reply="$(ask_link 127.0.0.1 3000)"
 case "$reply" in
