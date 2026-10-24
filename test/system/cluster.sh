@@ -30,11 +30,10 @@ finish() {
     done
   fi
   if [ "$code" != 0 ]; then
-    for props in "" "-p ProtectSystem=strict -p PrivateTmp=yes -p PrivateDevices=yes"; do
+    for props in "" "ProtectSystem=strict PrivateTmp=yes PrivateDevices=yes ProtectKernelTunables=yes ProcSubset=pid ProtectProc=invisible"; do
       echo "== credential probe $props"
-      docker exec bz-core systemd-run --wait --pipe -q -p User=bunzzle-signer \
-        -p LoadCredential=master.key:/etc/bunzzle/master.key $props \
-        sh -c 'id; echo $CREDENTIALS_DIRECTORY; ls -la $CREDENTIALS_DIRECTORY; wc -c < $CREDENTIALS_DIRECTORY/master.key; grep credentials /proc/self/mountinfo' 2>&1 || true
+      printf '[Service]\nType=oneshot\nUser=bunzzle-signer\nLoadCredential=master.key:/etc/bunzzle/master.key\nExecStart=/bin/sh -c "id; echo $CREDENTIALS_DIRECTORY; ls -la $CREDENTIALS_DIRECTORY; wc -c < $CREDENTIALS_DIRECTORY/master.key; grep credentials /proc/self/mountinfo"\n%s\n' \
+        "$(echo "$props" | tr ' ' '\n')" | docker exec -i bz-core sh -c 'cat > /etc/systemd/system/probe.service; systemctl daemon-reload; systemctl start probe.service; journalctl -u probe.service --no-pager -o cat; systemctl reset-failed probe.service' 2>&1 || true
     done
     docker exec bz-core sh -c 'ls -la /etc/bunzzle; systemd --version | head -1' 2>&1 || true
   fi
