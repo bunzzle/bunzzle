@@ -5,6 +5,7 @@ import { type LinkTls, pinOf, RpcClient, type RpcError } from "../../src/ipc/rpc
 import { runSession } from "../../src/smtp/session.ts";
 import { parseCertificate } from "../../src/x509/cert.ts";
 import { type FakeMx, startFakeMx, TEST_CA } from "../support/fake-mx.ts";
+import { freePort } from "../support/ports.ts";
 
 const fixtures = `${import.meta.dir}/../fixtures/node`;
 const read = (name: string) => Bun.file(`${fixtures}/${name}`).text();
@@ -17,7 +18,6 @@ const MESSAGE = "From: a@bunzzle.com\r\nTo: b@example.test\r\nSubject: Hi\r\n\r\
 const ca = await read("ca.pem");
 const core = { cert: await read("core.pem"), key: await read("core.key") };
 const nodePin = await pinIn("node.pem");
-let nextPort = 30_000 + Math.floor(Math.random() * 10_000);
 const cleanup: (() => void)[] = [];
 
 afterEach(() => {
@@ -35,7 +35,7 @@ async function startEgress(mx: FakeMx) {
   await Bun.$`chmod 600 ${dir}/key.pem`.quiet();
   await Bun.write(`${dir}/ca.pem`, ca);
   await Bun.write(`${dir}/peer.pin`, `${await pinIn("core.pem")}\n`);
-  const port = nextPort++;
+  const port = freePort();
   const proc = Bun.spawn([process.execPath, main, "egress"], {
     env: {
       ...Bun.env,
