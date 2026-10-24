@@ -79,7 +79,10 @@ try {
       await Bun.sleep(200);
       status = (await api<{ last_event: string }>(`/emails/${id}`)).last_event;
     }
-    if (status !== "delivered") fail(`email ${id} in pool ${pool} is ${status} after 30 s`);
+    if (status !== "delivered") {
+      const email = await api(`/emails/${id}`);
+      fail(`email in pool ${pool} is ${status} after 30 s: ${JSON.stringify(email)}`);
+    }
 
     const session = mx.sessions.find((s) =>
       s.messages.some((m) => m.includes(`Subject: ${subject}`)),
