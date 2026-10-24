@@ -52,6 +52,7 @@ export interface LinkDeps {
   signer: RpcClient;
   identity: CoreIdentity;
   deliveryPins?: () => string[] | null;
+  via?: string;
   now?: () => number;
 }
 
@@ -77,7 +78,12 @@ export class NodeLinks {
       pins: [node.pin],
       name: node.name,
     };
-    return { kind: node.kind, address: node.address, tls, client: new RpcClient({ ...at, tls }) };
+    return {
+      kind: node.kind,
+      address: node.address,
+      tls,
+      client: new RpcClient({ ...at, tls, ...(this.#d.via ? { via: this.#d.via } : {}) }),
+    };
   }
 
   sync(): void {

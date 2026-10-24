@@ -1,0 +1,55 @@
+[Unit]
+Description=Bunzzle link: carries core's encrypted node links over TCP, no keys, database or email
+Documentation=https://github.com/bunzzle/bunzzle/blob/main/docs/install.md
+PartOf=bunzzle.target
+StartLimitIntervalSec=0
+After=network-online.target
+
+[Service]
+Type=exec
+User=bunzzle-link
+Group=bunzzle-link
+EnvironmentFile=/etc/bunzzle/bunzzle.env
+Environment=BUNZZLE_RUN_DIR=/run/bunzzle
+Environment=BUNZZLE_ENV_FILE=/etc/bunzzle/bunzzle.env
+ExecStart=/usr/local/bin/bunzzle role link
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=1
+RestartSteps=5
+RestartMaxDelaySec=5
+TimeoutStartSec=30
+TimeoutStopSec=15
+ReadWritePaths=/run/bunzzle
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+ExecStartPost=/bin/sh -c 'until [ -S /run/bunzzle/link.sock ]; do sleep 0.1; done'
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+DevicePolicy=closed
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+KeyringMode=private
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @debug @obsolete @cpu-emulation @clock @module @raw-io @reboot @swap
+SystemCallErrorNumber=EPERM
+UMask=0077
+
+[Install]
+WantedBy=bunzzle.target

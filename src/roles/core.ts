@@ -132,6 +132,7 @@ export async function runCore(config: Config, log: Logger) {
     signer,
     identity,
     deliveryPins: () => deliveryLink?.pins() ?? null,
+    via: sock.link,
   });
   deliveryLink = new DeliveryLinkKeeper({ delivery, signer, links, log });
   const keeper = deliveryLink;

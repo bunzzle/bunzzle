@@ -68,11 +68,22 @@ services:
       <<: *socket
       test: ["CMD", "/bin/sh", "-c", "test -S /run/bunzzle/dns.sock"]
 
+  link:
+    <<: *role
+    command: ["role", "link"]
+    user: "10019:10019"
+    group_add: ["10010"]
+    volumes:
+      - run:/run/bunzzle
+    healthcheck:
+      <<: *socket
+      test: ["CMD", "/bin/sh", "-c", "test -S /run/bunzzle/link.sock"]
+
   core:
     <<: *role
     command: ["role", "core"]
     user: "10012:10012"
-    group_add: ["10010", "10011", "10013", "10016"]
+    group_add: ["10010", "10011", "10013", "10016", "10019"]
     network_mode: none
     environment:
       BUNZZLE_RUN_DIR: /run/bunzzle
@@ -86,6 +97,7 @@ services:
     depends_on:
       signer: { condition: service_healthy }
       dns: { condition: service_healthy }
+      link: { condition: service_healthy }
 
   delivery:
     <<: *role

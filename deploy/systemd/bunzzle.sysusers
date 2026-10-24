@@ -8,15 +8,18 @@ u bunzzle-api      - "Bunzzle API"      - -
 u bunzzle-inbound  - "Bunzzle inbound"  - -
 u bunzzle-dns      - "Bunzzle DNS"      - -
 u bunzzle-egress   - "Bunzzle egress"   - -
+u bunzzle-link     - "Bunzzle link"     - -
 m bunzzle-signer   bunzzle
 m bunzzle-core     bunzzle
 m bunzzle-delivery bunzzle
 m bunzzle-api      bunzzle
 m bunzzle-inbound  bunzzle
 m bunzzle-dns      bunzzle
+m bunzzle-link     bunzzle
 m bunzzle-core     bunzzle-signer
 m bunzzle-core     bunzzle-delivery
 m bunzzle-core     bunzzle-dns
+m bunzzle-core     bunzzle-link
 m bunzzle-delivery bunzzle-signer
 m bunzzle-api      bunzzle-core
 m bunzzle-inbound  bunzzle-core-inbound

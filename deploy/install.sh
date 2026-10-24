@@ -54,7 +54,7 @@ if [ -n "${BUNZZLE_EGRESS:-}" ]; then
 elif [ -n "${BUNZZLE_NODE:-}" ]; then
   units="bunzzle-delivery.service"
 else
-  units="bunzzle.target bunzzle-signer.service bunzzle-dns.service bunzzle-core.service bunzzle-delivery.service bunzzle-api.service bunzzle-inbound.service"
+  units="bunzzle.target bunzzle-signer.service bunzzle-dns.service bunzzle-link.service bunzzle-core.service bunzzle-delivery.service bunzzle-api.service bunzzle-inbound.service"
 fi
 for unit in $units; do
   install -m 0644 "$SRC/systemd/$unit" "/etc/systemd/system/$unit"
@@ -97,7 +97,7 @@ systemctl daemon-reload
 systemctl enable bunzzle.target >/dev/null
 not_running() {
   failed=""
-  for role in signer dns core delivery api inbound; do
+  for role in signer dns link core delivery api inbound; do
     systemctl is-active --quiet "bunzzle-$role" || failed="$failed $role"
   done
   [ -n "$failed" ]
