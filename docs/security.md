@@ -17,7 +17,7 @@ How Bunzzle limits what an attacker gets. To report a vulnerability, see [SECURI
 - Roles exchange small JSON messages over Unix sockets; every message is validated on arrival.
 - The roles that read outside input hold nothing worth stealing (at most the inbound TLS key) and can't open the database.
 - Only `core` opens the database, and `core` has no network. To reach stored data, an attacker has to break two roles.
-- `core` reaches delivery nodes and egresses through `link`, which only passes bytes: TLS runs between core and the node, so `link` never sees a key or a message. With the firewall rules, `link` can connect only to the addresses in the `node_links` and `egress_links` sets.
+- `core` reaches delivery nodes and egresses through `link`, which only passes bytes: TLS runs between core and the node, so `link` never sees a key or a message. With the systemd units, `link` can connect only to the IPs of the delivery nodes and egresses: `bunzzle nodes add` and `nodes remove` set them on its unit (`IPAddressAllow`), and `bunzzle doctor` warns when they differ from the node list. The firewall rules also limit the ports.
 - A broken `delivery` or `core` can still ask the signer for signatures, but can never read a key. Key rotation and the volume guards limit the rest.
 
 With the systemd units or the compose file, each role is a separate user in its own sandbox (see [install.md](install.md)). With `bunzzle serve` (one container, or a laptop) the roles are separate processes of one user: the boundaries in the code still hold, but the OS doesn't enforce them.

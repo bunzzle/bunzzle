@@ -3,6 +3,7 @@ import { RpcClient, RpcError } from "../ipc/rpc.ts";
 import { adminSocket } from "../roles/admin-socket.ts";
 import type { NsCheckView } from "../roles/core-ns.ts";
 import { parseArgs, UsageError } from "./args.ts";
+import { linkAllowCheck } from "./link-allow.ts";
 
 interface DomainRecordView {
   record: string;
@@ -474,6 +475,14 @@ interface DoctorView {
 export async function doctorCommand(argv: string[], config: Config): Promise<number> {
   if (argv.length > 0) throw new UsageError("usage: bunzzle doctor");
   const v = await call<DoctorView>(config, "doctor", {});
+  const allow = await linkAllowCheck(config).catch((err: Error) => ({
+    status: "warn" as const,
+    detail: `could not read the allowed addresses: ${err.message}`,
+  }));
+  if (allow) {
+    v.checks.push({ area: "nodes", item: "bunzzle-link addresses", ...allow });
+    v.summary[allow.status]++;
+  }
   let area = "";
   for (const c of v.checks) {
     if (c.area !== area) {

@@ -22,6 +22,7 @@ TimeoutStartSec=30
 TimeoutStopSec=15
 ReadWritePaths=/run/bunzzle
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
 CapabilityBoundingSet=
 ExecStartPost=/bin/sh -c 'until [ -S /run/bunzzle/link.sock ]; do sleep 0.1; done'
 NoNewPrivileges=yes
