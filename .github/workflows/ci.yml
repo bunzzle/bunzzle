@@ -90,6 +90,14 @@ jobs:
           sudo -E env "PATH=$PATH" BUNZZLE_E2E_CLI=/usr/local/bin/bunzzle bun test/system/e2e.ts
       - name: Sandbox exposure
         run: for r in signer dns core delivery api inbound; do systemd-analyze security "bunzzle-$r.service" --no-pager | tail -1; done
+      - name: Install reports roles that do not start
+        run: |
+          echo 'BUNZZLE_SOURCE_IPS=not-an-ip' | sudo tee -a /etc/bunzzle/bunzzle.env >/dev/null
+          if out="$(sudo timeout 150 ./deploy/install.sh dist/bunzzle 2>&1)"; then echo "$out"; exit 1; fi
+          echo "$out"
+          echo "$out" | grep -q "not running: signer dns core delivery api inbound"
+          sudo sed -i '$d' /etc/bunzzle/bunzzle.env
+          sudo systemctl restart bunzzle.target
       - name: Firewall rules load
         run: |
           command -v nft >/dev/null || sudo apt-get install -qq -y nftables
