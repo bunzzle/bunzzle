@@ -5,7 +5,10 @@ export interface MasterKeySource {
   masterKeyFile: string | null;
 }
 
-export async function readMasterKeyText(src: MasterKeySource): Promise<string | null> {
+export async function readMasterKeyText(
+  src: MasterKeySource,
+  credentialsDir = Bun.env["CREDENTIALS_DIRECTORY"],
+): Promise<string | null> {
   if (src.masterKey && src.masterKeyFile) {
     throw new MasterKeyError("set BUNZZLE_MASTER_KEY or BUNZZLE_MASTER_KEY_FILE, not both");
   }
@@ -13,7 +16,18 @@ export async function readMasterKeyText(src: MasterKeySource): Promise<string | 
   if (!src.masterKeyFile) return null;
   const f = Bun.file(src.masterKeyFile);
   if (!(await f.exists())) {
-    throw new MasterKeyError(`master key file not found: ${src.masterKeyFile}`);
+    const passed =
+      !credentialsDir ||
+      !src.masterKeyFile.startsWith(`${credentialsDir}/`) ||
+      (await Bun.file(credentialsDir)
+        .stat()
+        .then(() => true)
+        .catch(() => false));
+    throw new MasterKeyError(
+      passed
+        ? `master key file not found: ${src.masterKeyFile}`
+        : `master key file not found: ${src.masterKeyFile}. systemd passed no credentials to this service, which happens when systemd runs in a container: see "Systemd in a container" on https://bunzzle.com/docs/install/`,
+    );
   }
   return (await f.text()).trim();
 }
