@@ -97,6 +97,7 @@ jobs:
           sudo nft add element inet bunzzle core4 '{ 203.0.113.5 }'
           sudo nft add element inet bunzzle link_ports '{ 7465 }'
           sudo nft add element inet bunzzle node_links4 '{ 198.51.100.7 . 7465 }'
+          sudo nft add element inet bunzzle egress_links4 '{ 198.51.100.8 . 7466 }'
           sudo nft delete table inet bunzzle
       - name: Install a delivery node
         run: |
@@ -105,6 +106,14 @@ jobs:
           sudo -u bunzzle-delivery /usr/local/bin/bunzzle nodes request ci-node
           test "$(sudo stat -c %U:%a /var/lib/bunzzle/node/key.pem)" = bunzzle-delivery:600
           systemctl show -p ReadWritePaths --value bunzzle-delivery | grep -q /var/lib/bunzzle/node
+      - name: Install an egress
+        run: |
+          sudo BUNZZLE_EGRESS=1 ./deploy/install.sh dist/bunzzle
+          test -L /etc/systemd/system/multi-user.target.wants/bunzzle-egress.service
+          sudo -u bunzzle-egress /usr/local/bin/bunzzle nodes request ci-edge --egress
+          test "$(sudo stat -c %U:%a /var/lib/bunzzle/egress/key.pem)" = bunzzle-egress:600
+          systemctl show -p ReadWritePaths --value bunzzle-egress | grep -q /var/lib/bunzzle/egress
+          systemd-analyze security bunzzle-egress.service --no-pager | tail -1
       - name: Journal
         if: failure()
         run: sudo journalctl -u 'bunzzle-*' --no-pager | tail -200

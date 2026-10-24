@@ -108,7 +108,7 @@ export class NodeLinks {
 
   egress(name: string): { name: string; address: string; pin: string } | null {
     const link = this.#links.get(name);
-    if (!link || link.kind !== "egress") return null;
+    if (link?.kind !== "egress") return null;
     return { name, address: link.address, pin: link.tls.pins[0] ?? "" };
   }
 
