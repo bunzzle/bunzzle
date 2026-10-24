@@ -74,6 +74,7 @@ docker exec -i bz-core sh -c 'cat > /etc/systemd/system/bunzzle-signer.service.d
 [Service]
 LoadCredential=
 RuntimeDirectory=bunzzle-signer-key
+RuntimeDirectoryMode=0700
 ExecStartPre=+/usr/bin/install -o bunzzle-signer -m 0400 /etc/bunzzle/master.key /run/bunzzle-signer-key/master.key
 Environment=BUNZZLE_MASTER_KEY_FILE=/run/bunzzle-signer-key/master.key
 UNIT

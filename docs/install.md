@@ -69,6 +69,26 @@ Environment=BUNZZLE_INBOUND_TLS_KEY_FILE=%d/inbound.key
 
 The certificate is read at start, so restart the role after renewal, for example with certbot's `--deploy-hook "systemctl restart bunzzle-inbound"`. Senders that don't use TLS are still accepted.
 
+### Systemd in a container
+
+When systemd runs inside a container (seen with Docker), it may pass no `LoadCredential=` files to a service. The signer then stops with `systemd passed no credentials to this service`, and `install.sh` reports the roles as not running. Give the signer the master key through a runtime directory instead:
+
+```sh
+sudo mkdir -p /etc/systemd/system/bunzzle-signer.service.d
+sudo tee /etc/systemd/system/bunzzle-signer.service.d/container.conf >/dev/null <<'EOF'
+[Service]
+LoadCredential=
+RuntimeDirectory=bunzzle-signer-key
+RuntimeDirectoryMode=0700
+ExecStartPre=+/usr/bin/install -o bunzzle-signer -m 0400 /etc/bunzzle/master.key /run/bunzzle-signer-key/master.key
+Environment=BUNZZLE_MASTER_KEY_FILE=/run/bunzzle-signer-key/master.key
+EOF
+sudo systemctl daemon-reload
+sudo systemctl restart bunzzle.target
+```
+
+The key stays readable only by the signer, in memory under `/run`, and is removed when the signer stops.
+
 ### What the sandbox does
 
 | Role | User | Network | Can write |
