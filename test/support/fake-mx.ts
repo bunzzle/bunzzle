@@ -59,7 +59,7 @@ function multiline(code: number, lines: string[]): string {
   return lines.map((l, i) => `${code}${i === lines.length - 1 ? " " : "-"}${l}\r\n`).join("");
 }
 
-export function startFakeMx(scenario: MxScenario = {}, port = 0): FakeMx {
+export function startFakeMx(scenario: MxScenario = {}, port = 0, hostname = "127.0.0.1"): FakeMx {
   const sessions: MxSession[] = [];
   const states = new Map<Socket<undefined>, State>();
   const extensions = scenario.extensions ?? DEFAULT_EXTENSIONS;
@@ -206,7 +206,7 @@ export function startFakeMx(scenario: MxScenario = {}, port = 0): FakeMx {
   const { open: _open, ...tlsHandlers } = handlers;
 
   const server: TCPSocketListener<undefined> = Bun.listen({
-    hostname: "127.0.0.1",
+    hostname,
     port,
     socket: handlers,
   });
