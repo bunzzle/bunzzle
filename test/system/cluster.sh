@@ -29,14 +29,6 @@ finish() {
       docker exec "bz-$h" nft list table inet bunzzle 2>/dev/null | grep counter || true
     done
   fi
-  if [ "$code" != 0 ]; then
-    for props in "" "ProtectSystem=strict PrivateTmp=yes PrivateDevices=yes ProtectKernelTunables=yes ProcSubset=pid ProtectProc=invisible"; do
-      echo "== credential probe $props"
-      printf '[Service]\nType=oneshot\nUser=bunzzle-signer\nLoadCredential=master.key:/etc/bunzzle/master.key\nExecStart=/bin/sh -c "id; echo $CREDENTIALS_DIRECTORY; ls -la $CREDENTIALS_DIRECTORY; wc -c < $CREDENTIALS_DIRECTORY/master.key; grep credentials /proc/self/mountinfo"\n%s\n' \
-        "$(echo "$props" | tr ' ' '\n')" | docker exec -i bz-core sh -c 'cat > /etc/systemd/system/probe.service; systemctl daemon-reload; systemctl start probe.service; journalctl -u probe.service --no-pager -o cat; systemctl reset-failed probe.service' 2>&1 || true
-    done
-    docker exec bz-core sh -c 'ls -la /etc/bunzzle; systemd --version | head -1' 2>&1 || true
-  fi
   docker rm -f bz-core bz-node bz-egress bz-world >/dev/null 2>&1 || true
   for n in admin link-node link-egress internet; do docker network rm "bz-$n" >/dev/null 2>&1 || true; done
   rm -rf "$tmp"
@@ -77,6 +69,14 @@ for h in $hosts; do
 done
 step "core, node and egress booted with systemd"
 
+on core mkdir -p /etc/systemd/system/bunzzle-signer.service.d
+docker exec -i bz-core sh -c 'cat > /etc/systemd/system/bunzzle-signer.service.d/container.conf' <<'UNIT'
+[Service]
+LoadCredential=
+RuntimeDirectory=bunzzle-signer-key
+ExecStartPre=+/usr/bin/install -o bunzzle-signer -m 0400 /etc/bunzzle/master.key /run/bunzzle-signer-key/master.key
+Environment=BUNZZLE_MASTER_KEY_FILE=/run/bunzzle-signer-key/master.key
+UNIT
 on core /src/deploy/install.sh /src/dist/bunzzle >/dev/null
 timeout 120 docker exec -e BUNZZLE_NODE=1 bz-node /src/deploy/install.sh /src/dist/bunzzle >/dev/null
 timeout 120 docker exec -e BUNZZLE_EGRESS=1 bz-egress /src/deploy/install.sh /src/dist/bunzzle >/dev/null
