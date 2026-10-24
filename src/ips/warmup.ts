@@ -174,7 +174,7 @@ export interface Choice {
 }
 
 export interface Wait {
-  wait: { delayMs: number; reason: string; blocked?: boolean; nodes?: string[] };
+  wait: { delayMs: number; reason: string; blocked?: boolean; nodes?: string[]; aged?: boolean };
 }
 
 export interface IpDown {
@@ -203,7 +203,11 @@ export function choose(
   const pool = (name: string) => ips.filter((x) => x.pool === name);
   if (assigned !== null && pool(assigned).length === 0) {
     return {
-      wait: { delayMs: 5 * 60_000, reason: `no source IP is in the pool ${assigned}` },
+      wait: {
+        delayMs: 5 * 60_000,
+        reason: `no source IP is configured in the pool ${assigned}`,
+        aged: true,
+      },
     };
   }
   const candidates =
@@ -256,7 +260,9 @@ export function choose(
       soonestPause === null ? backoff : Math.max(1_000, Math.min(backoff, soonestPause - now));
     const reasons = [...new Set(unavailable.map((u) => u.reason))];
     const nodes = [...new Set(unavailable.flatMap((u) => (u.node ? [u.node] : [])))];
-    return { wait: { delayMs, reason: reasons.join("; "), ...(nodes.length ? { nodes } : {}) } };
+    return {
+      wait: { delayMs, reason: reasons.join("; "), aged: true, ...(nodes.length ? { nodes } : {}) },
+    };
   }
   if (overBudget) {
     const tomorrow = (dayOf(now) + 1) * DAY_MS;

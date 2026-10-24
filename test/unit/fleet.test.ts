@@ -68,7 +68,7 @@ function harness(
   const renewed: (string | null | undefined)[] = [];
   let n = 0;
   let last: ClaimedJob | null = null;
-  const run = async (): Promise<Outcome | string> => {
+  const run = async (metadata?: Record<string, unknown>): Promise<Outcome | string> => {
     enqueueEmail(
       db,
       DEFAULT_PROJECT,
@@ -79,6 +79,7 @@ function harness(
         recipients: ["x@company.example"],
         smtpUtf8: false,
         requireTls: false,
+        ...(metadata ? { metadata } : {}),
       },
       clock.now(),
     );
@@ -148,7 +149,9 @@ test("a down IP next to a receiver-paused IP is a plain wait, not a block", () =
     null,
     (ip) => (ip === B ? { reason: `node node-a is down (${B})`, since: now - 5 * MIN } : null),
   );
-  expect(result).toEqual({ wait: { delayMs: 30_000, reason: `node node-a is down (${B})` } });
+  expect(result).toEqual({
+    wait: { delayMs: 30_000, reason: `node node-a is down (${B})`, aged: true },
+  });
 });
 
 test("a receiver block on every IP still allows the relay", async () => {
@@ -321,4 +324,92 @@ test("the fleet reports a node once when it comes back", async () => {
   await fleet.check();
   expect(up.slice(start)).toEqual(["node-a"]);
   expect(fleet.down(B)).toBeNull();
+});
+
+const DAY = 24 * 60 * MIN;
+const settleAs = (h: ReturnType<typeof harness>, outcome: Outcome, job: Partial<ClaimedJob>) =>
+  settle(h.db, { ...h.last(), ...job }, outcome, h.clock.now(), {
+    retry: defaultRetryPolicy,
+    reconcileMs: MIN,
+  });
+const events = (h: ReturnType<typeof harness>, kind: string) =>
+  h.db
+    .query<{ data: string }, [string]>("SELECT data FROM events WHERE kind = ? ORDER BY id")
+    .all(kind)
+    .map((e) => JSON.parse(e.data) as Record<string, unknown>);
+const recipientStatus = (h: ReturnType<typeof harness>) =>
+  h.db
+    .query<{ status: string }, [string]>("SELECT status FROM recipients WHERE job_id = ?")
+    .all(h.last().id)
+    .map((r) => r.status);
+
+test("a node wait past the maximum age fails the email", async () => {
+  const h = harness(onNode({ [A]: "node-a", [B]: "node-a" }, 0));
+  const outcome = (await h.run()) as Outcome;
+  expect(outcome).toMatchObject({ kind: "requeue", aged: true });
+  expect(settleAs(h, outcome, { createdAt: h.clock.now() - 5 * DAY })).toBe("dead");
+  expect(recipientStatus(h)).toEqual(["failed"]);
+  expect(events(h, "dead").at(-1)).toMatchObject({ code: "retries_exhausted" });
+});
+
+test("a node wait past the email's own expiry fails it as expired", async () => {
+  const h = harness(onNode({ [A]: "node-a", [B]: "node-a" }, 0));
+  const outcome = (await h.run()) as Outcome;
+  expect(settleAs(h, outcome, { expiresAt: h.clock.now() - 1 })).toBe("dead");
+  expect(recipientStatus(h)).toEqual(["failed"]);
+  expect(events(h, "dead").at(-1)).toMatchObject({ code: "expired" });
+});
+
+test("a node wait sends delay notices on the usual schedule", async () => {
+  const h = harness(onNode({ [A]: "node-a", [B]: "node-a" }, 0));
+  const outcome = (await h.run()) as Outcome;
+  expect(settleAs(h, outcome, { createdAt: h.clock.now() - 25 * 60 * MIN })).toBe("requeued");
+  expect(events(h, "delayed").map((e) => e["after_ms"])).toEqual([60 * MIN, DAY]);
+  const notices = h.db
+    .query<{ notices: number }, [string]>("SELECT notices FROM jobs WHERE id = ?")
+    .get(h.last().id);
+  expect(notices?.notices).toBe(2);
+});
+
+test("a node wait never runs past the age limit", async () => {
+  const h = harness(onNode({ [A]: "node-a", [B]: "node-a" }, 10 * MIN));
+  const outcome = (await h.run()) as Outcome;
+  const now = h.clock.now();
+  expect(settleAs(h, outcome, { createdAt: now - 5 * DAY + 30_000 })).toBe("requeued");
+  expect(row(h, h.last().id)?.run_after).toBe(now + 30_000);
+});
+
+test("other waits keep waiting past the age limit", async () => {
+  const h = harness(onNode({ [A]: "node-a", [B]: "node-a" }, 0));
+  await h.run();
+  const hold: Outcome = { kind: "requeue", reason: "bulk mail on hold: review", delayMs: MIN };
+  expect(settleAs(h, hold, { createdAt: h.clock.now() - 6 * DAY })).toBe("requeued");
+  expect(events(h, "delayed")).toEqual([]);
+});
+
+test("a wait for a pool with no source IP fails at the age limit and names the pool", async () => {
+  const h = harness(() => null);
+  const outcome = (await h.run({ pool: "acme" })) as Outcome;
+  expect(outcome).toMatchObject({
+    kind: "requeue",
+    aged: true,
+    reason: "no source IP is configured in the pool acme",
+  });
+  expect(settleAs(h, outcome, { createdAt: h.clock.now() - 5 * DAY })).toBe("dead");
+  expect(events(h, "dead").at(-1)).toMatchObject({
+    code: "retries_exhausted",
+    reason: "no source IP is configured in the pool acme",
+  });
+  const r = h.db
+    .query<{ status: string; reply: string }, [string]>(
+      "SELECT status, reply FROM recipients WHERE job_id = ?",
+    )
+    .get(h.last().id);
+  expect(r).toEqual({ status: "failed", reply: "no source IP is configured in the pool acme" });
+  const job = h.db
+    .query<{ last_error: string }, [string]>("SELECT last_error FROM jobs WHERE id = ?")
+    .get(h.last().id);
+  expect(job?.last_error).toBe(
+    "reached the maximum age while waiting: no source IP is configured in the pool acme",
+  );
 });
