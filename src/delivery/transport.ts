@@ -1,5 +1,6 @@
 import type { SealedBody } from "../crypto/envelope.ts";
 import type { Destination } from "../dns/mx.ts";
+import type { Via } from "../egress/tunnel.ts";
 import {
   type DeliveryOptions,
   type DeliveryReport,
@@ -28,7 +29,14 @@ export interface DeliverRequest {
   bounceDomain?: string | null | undefined;
   source?: string | undefined;
   via?: "relay" | undefined;
+  egress?: EgressTarget | undefined;
   settled?: string[] | undefined;
+}
+
+export interface EgressTarget {
+  name: string;
+  address: string;
+  pin: string;
 }
 
 export interface DeliveryTransport {
@@ -105,16 +113,26 @@ export function rememberingTransport(
 }
 
 export interface LocalOptions extends DeliveryOptions {
+  egressVia?: (egress: EgressTarget) => Via | string;
   sts?: (domain: string) => Promise<StsPolicy | null>;
   sources?: string[];
   ehloFor?: (source: string) => string;
   relayAll?: boolean;
 }
 
-function forSource(opts: LocalOptions, source: string | undefined): DeliveryOptions | string {
-  if (!source || source === "default") return opts;
+function forSource(
+  opts: LocalOptions,
+  source: string | undefined,
+  egress?: EgressTarget,
+): DeliveryOptions | string {
+  if (!source || source === "default") {
+    return egress ? `a send through ${egress.name} needs a source IP` : opts;
+  }
   if (!opts.sources?.includes(source)) return `source IP ${source} is not configured here`;
-  return { ...opts, localAddress: source, ehloName: opts.ehloFor?.(source) ?? opts.ehloName };
+  const base = { ...opts, localAddress: source, ehloName: opts.ehloFor?.(source) ?? opts.ehloName };
+  if (!egress) return base;
+  const via = opts.egressVia?.(egress) ?? "this delivery role cannot reach egresses";
+  return typeof via === "string" ? via : { ...base, via };
 }
 
 export function localTransport(opts: LocalOptions, open: OpenBody): DeliveryTransport {
@@ -122,7 +140,7 @@ export function localTransport(opts: LocalOptions, open: OpenBody): DeliveryTran
     lookup: (domain) =>
       findDestination(domain, opts.relayAll === false ? { ...opts, relay: null } : opts),
     async deliver(req, onOutcomes) {
-      const source = forSource(opts, req.source);
+      const source = forSource(opts, req.source, req.egress);
       if (typeof source === "string") return unprepared(req, new Error(source));
       const routed = opts.relayAll === false;
       if (routed && req.via === "relay" && !opts.relay) {

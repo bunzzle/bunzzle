@@ -6,6 +6,7 @@ import { createLogger } from "../../src/core/log.ts";
 import { openDatabase } from "../../src/core/store/db.ts";
 import { Writer } from "../../src/core/store/writer.ts";
 import { generateMasterKey, masterKeyFrom } from "../../src/crypto/master.ts";
+import { egressVia } from "../../src/egress/tunnel.ts";
 import {
   type Methods,
   method,
@@ -26,9 +27,12 @@ import { nodeMethods } from "../../src/roles/core-nodes.ts";
 import { runEgress } from "../../src/roles/egress.ts";
 import { loadLinkTls } from "../../src/roles/node-link.ts";
 import { NodeCa } from "../../src/signer/node-ca.ts";
+import { SessionPool } from "../../src/smtp/pool.ts";
+import { runSession, type SessionInput } from "../../src/smtp/session.ts";
 import { b } from "../../src/validate/schema.ts";
 import { parseCertificate } from "../../src/x509/cert.ts";
 import { parseCertificateRequest } from "../../src/x509/issue.ts";
+import { type FakeMx, type MxScenario, startFakeMx, TEST_CA } from "../support/fake-mx.ts";
 
 const dir = `${Bun.env["TMPDIR"] ?? "/tmp"}/bunzzle-nodes-${crypto.randomUUID()}`;
 await Bun.$`mkdir -p ${dir}/keys`.quiet();
@@ -702,7 +706,7 @@ describe("egress", () => {
   });
 });
 
-async function startEgress(c: Awaited<ReturnType<typeof core>>, name: string) {
+async function startEgress(c: Awaited<ReturnType<typeof core>>, name: string, smtpPort = 25) {
   const nodeDir = `${dir}/${name}-${crypto.randomUUID().slice(0, 6)}`;
   const port = nextPort++;
   const csr = await requestCsr(nodeDir, name);
@@ -715,7 +719,10 @@ async function startEgress(c: Awaited<ReturnType<typeof core>>, name: string) {
   await Bun.write(`${nodeDir}/bundle.json`, JSON.stringify(bundle));
   await nodesCommand(["install", `${nodeDir}/bundle.json`, "--dir", nodeDir], config);
   const run = () =>
-    runEgress({ egressListen: { hostname: "127.0.0.1", port }, nodeDir } as Config, quiet);
+    runEgress(
+      { egressListen: { hostname: "127.0.0.1", port }, nodeDir, smtpPort } as Config,
+      quiet,
+    );
   const e = { server: await run(), port, restart: async () => (e.server = await run()) };
   cleanup.push(() => e.server.stop());
   return e;
@@ -838,3 +845,96 @@ describe("delivery link certificate", () => {
 });
 
 const DAY_MS = 86_400_000;
+
+const MESSAGE = "From: a@bunzzle.com\r\nTo: b@example.test\r\nSubject: Hi\r\n\r\nHello\r\n";
+
+async function throughEgress(scenario: MxScenario = {}, mxPort?: number) {
+  const mx: FakeMx | null = mxPort === undefined ? startFakeMx(scenario) : null;
+  if (mx) cleanup.push(() => mx.stop());
+  const smtpPort = mx?.port ?? (mxPort as number);
+  const c = await core();
+  const e = await startEgress(c, "edge-s", smtpPort);
+  await c.deliveryLink.upkeep();
+  const me = c.deliveryIdentity.current();
+  const node = listNodes(c.db).find((n) => n.name === "edge-s");
+  if (!me || !node) throw new Error("egress not ready");
+  const tls = { cert: me.cert, key: me.key, ca: me.ca, pins: [node.pin], name: "edge-s" };
+  const via = egressVia("edge-s", { hostname: "127.0.0.1", port: e.port, tls }, dir);
+  const session = (o: Partial<SessionInput> = {}) =>
+    runSession({
+      host: "mx.example.test",
+      address: "127.0.0.1",
+      port: smtpPort,
+      localAddress: "127.0.0.1",
+      via,
+      ehloName: "out.bunzzle.test",
+      policy: { rule: "opportunistic", required: false },
+      from: "a@bunzzle.com",
+      recipients: ["b@example.test"],
+      data: MESSAGE,
+      smtpUtf8: false,
+      tlsCa: TEST_CA,
+      timeouts: { greeting: 2000, quit: 200 },
+      ...o,
+    });
+  return { c, e, mx, via, session };
+}
+
+describe("sending through an egress", () => {
+  test("STARTTLS runs end to end and the email is delivered", async () => {
+    const t = await throughEgress();
+    const r = await t.session();
+    expect(r.phase).toBe("done");
+    expect(r.recipients.map((x) => x.status)).toEqual(["delivered"]);
+    expect(r.tls.status).toBe("verified");
+    expect(t.mx?.sessions[0]?.tls).toBe(true);
+    expect(t.mx?.sessions[0]?.messages).toEqual([MESSAGE]);
+    expect(r.transcript?.[0]?.[2]).toMatch(
+      /^connected to 127\.0\.0\.1:\d+ from 127\.0\.0\.1 through edge-s$/,
+    );
+  });
+
+  test("a connection through an egress is reused", async () => {
+    const t = await throughEgress();
+    const pool = new SessionPool();
+    const first = await t.session({ pool });
+    const second = await t.session({ pool });
+    expect([first.reused ?? false, second.reused]).toEqual([false, true]);
+    expect(t.mx?.sessions.length).toBe(1);
+    await pool.closeAll();
+  });
+
+  test("the egress refuses any port but the SMTP port", async () => {
+    const t = await throughEgress();
+    const err = await t.via.open("127.0.0.1", 587, "127.0.0.1", 2000).catch((x: Error) => x);
+    expect((err as Error).message).toBe(`only port ${t.mx?.port} is allowed`);
+  });
+
+  test("a refused connection behind the egress is deferred like a local one", async () => {
+    const closed = startFakeMx();
+    const port = closed.port;
+    closed.stop();
+    const t = await throughEgress({}, port);
+    const r = await t.session();
+    expect(r.phase).toBe("connect");
+    expect(r.recipients.map((x) => x.status)).toEqual(["deferred"]);
+    expect(r.error).toContain("through edge-s");
+  });
+
+  test("an egress that stops after the end of data leaves the recipient unknown", async () => {
+    const t = await throughEgress({ finalDelayMs: 1500 });
+    setTimeout(() => t.e.server.stop(), 500);
+    const r = await t.session({ timeouts: { greeting: 2000, quit: 200, dataDone: 5000 } });
+    expect(r.recipients.map((x) => x.status)).toEqual(["unknown"]);
+    expect(r.phase).toBe("dot");
+  });
+
+  test("an egress that stops before the end of data leaves the recipient deferred", async () => {
+    const silent = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    cleanup.push(() => silent.stop(true));
+    const t = await throughEgress({}, silent.port);
+    setTimeout(() => t.e.server.stop(), 300);
+    const r = await t.session({ timeouts: { greeting: 5000, quit: 200 } });
+    expect(r.recipients.map((x) => x.status)).toEqual(["deferred"]);
+  });
+});

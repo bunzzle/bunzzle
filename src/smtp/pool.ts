@@ -51,6 +51,7 @@ export class SessionPool {
       input.address,
       input.port,
       input.localAddress ?? "",
+      input.via?.name ?? "",
       input.ehloName,
       input.policy.rule,
       input.policy.required ? "tls" : "",

@@ -2,6 +2,7 @@ import { type Family, familyOf } from "../dns/ip.ts";
 import { type Destination, lookupDestination } from "../dns/mx.ts";
 import type { Resolver } from "../dns/resolver.ts";
 import type { TlsaData } from "../dns/wire.ts";
+import type { Via } from "../egress/tunnel.ts";
 import { type Provider, providerOfTargets } from "../routing/providers.ts";
 import { mxAllowed, type StsPolicy } from "./mta-sts.ts";
 import type { SessionPool } from "./pool.ts";
@@ -33,6 +34,7 @@ export interface DeliveryOptions {
   resolver: Resolver;
   ehloName: string;
   localAddress?: string;
+  via?: Via | undefined;
   port?: number;
   families?: Family[];
   allowPrivate?: boolean;
@@ -271,6 +273,7 @@ export async function deliverTo(
       data: input.data,
       smtpUtf8: input.smtpUtf8,
       ...(opts.localAddress ? { localAddress: opts.localAddress } : {}),
+      ...(opts.via ? { via: opts.via } : {}),
       ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
       ...(opts.tlsCa ? { tlsCa: opts.tlsCa } : {}),
       ...(targetPolicy.rule === "dane"
