@@ -11,7 +11,7 @@ sudo sh install.sh
 
 `install.sh` downloads the binary and the deploy files for your architecture, checks them against `SHA256SUMS`, and then:
 
-- creates six users (`bunzzle-signer`, `-core`, `-delivery`, `-dns`, `-api`, `-inbound`), one per role;
+- creates a user per role (`bunzzle-signer`, `-core`, `-delivery`, `-dns`, `-link`, `-api`, `-inbound`);
 - installs a hardened systemd unit per role and `bunzzle.target` to start and stop them together;
 - writes `/etc/bunzzle/bunzzle.env` (settings) and `/etc/bunzzle/master.key` (secret, root only) if they don't exist yet;
 - starts everything and fails loudly if any role isn't running.
@@ -75,11 +75,12 @@ The certificate is read at start, so restart the role after renewal, for example
 |---|---|---|---|
 | signer | bunzzle-signer | none | `/var/lib/bunzzle/keys` |
 | core | bunzzle-core | none | `/var/lib/bunzzle/data` |
+| link | bunzzle-link | outbound to delivery nodes and egresses (only those with the filter) | nothing |
 | delivery | bunzzle-delivery | outbound (25, 53, 443 with the filter) | nothing |
 | api | bunzzle-api | listen on its port | nothing |
 | inbound | bunzzle-inbound | listen on 25 | nothing |
 
-Sockets between roles are restricted by group: `api` and `inbound` can reach only `core`, `delivery` only `signer`, `core` reaches `signer` and `delivery`. `systemd-analyze security` rates signer and core 0.4 (SAFE), the others 1.3–1.4 (OK). The remaining points are the network access these roles need and Bun's JIT, which needs writable executable memory (so no `MemoryDenyWriteExecute`).
+Sockets between roles are restricted by group: `api` and `inbound` can reach only `core`, `delivery` only `signer`, `core` reaches `signer`, `delivery`, `dns` and `link`. `systemd-analyze security` rates signer and core 0.4 (SAFE), the others 1.3–1.4 (OK). The remaining points are the network access these roles need and Bun's JIT, which needs writable executable memory (so no `MemoryDenyWriteExecute`).
 
 ## Docker, one container
 
@@ -93,9 +94,9 @@ docker run -d --name bunzzle \
   ghcr.io/bunzzle/bunzzle:latest
 ```
 
-Create the key file first with `docker run --rm ghcr.io/bunzzle/bunzzle master-key > master.key` and make it readable by uid 10001. The six roles run as processes of one user (uid 10001) inside the container. For separate users, use compose.
+Create the key file first with `docker run --rm ghcr.io/bunzzle/bunzzle master-key > master.key` and make it readable by uid 10001. The roles run as processes of one user (uid 10001) inside the container. For separate users, use compose.
 
-## Docker compose, six containers
+## Docker compose
 
 `deploy/compose.yaml` runs each role in its own container with its own uid; `signer` and `core` have no network at all. In the `deploy` directory:
 
@@ -113,7 +114,7 @@ Settings go in `deploy/bunzzle.env`. `delivery` uses the host network, so mail l
 
 Run `install.sh` again (or pull the new image). The database migrates itself on start.
 
-To keep sending during an upgrade, restart the roles one at a time instead of the whole target: `sudo systemctl restart bunzzle-signer bunzzle-dns`, then `bunzzle-delivery`, `bunzzle-inbound`, `bunzzle-api` and `bunzzle-core` last, waiting for each to come back (`systemctl is-active`). Email that was being sent when a role stopped is checked and resent only if it did not go out; API calls during a restart get a 503 with `Retry-After: 1`.
+To keep sending during an upgrade, restart the roles one at a time instead of the whole target: `sudo systemctl restart bunzzle-signer bunzzle-dns bunzzle-link`, then `bunzzle-delivery`, `bunzzle-inbound`, `bunzzle-api` and `bunzzle-core` last, waiting for each to come back (`systemctl is-active`). Email that was being sent when a role stopped is checked and resent only if it did not go out; API calls during a restart get a 503 with `Retry-After: 1`.
 
 ## Backup and restore
 

@@ -5,6 +5,7 @@ import type { Role } from "./wire.ts";
 export const LIVE: Record<Role, (keyof Config)[]> = {
   signer: ["logLevel", "retentionDays"],
   dns: ["logLevel"],
+  link: ["logLevel"],
   core: [
     "logLevel",
     "retentionDays",

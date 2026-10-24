@@ -2,23 +2,25 @@
 
 How Bunzzle limits what an attacker gets. To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 
-## Six roles
+## Seven roles
 
 | Role | Holds | Talks to | Outside input |
 |---|---|---|---|
 | api | nothing secret | core | HTTP requests |
-| core | the database (bodies encrypted) | signer, delivery, dns | none |
+| core | the database (bodies encrypted) | signer, delivery, dns, link | none |
 | delivery | one email at a time while sending | signer | DNS answers, SMTP replies, HTTPS (webhooks, MTA-STS, an OpenTelemetry collector) |
 | dns | the DNS provider token, if one is set | the DNS provider's API | its API replies |
+| link | nothing secret | delivery nodes and egresses | encrypted bytes it passes on |
 | signer | DKIM keys, master key | nobody, or a key store agent on a Unix socket | none |
 | inbound | its TLS key, if STARTTLS is on | core | SMTP from the internet |
 
 - Roles exchange small JSON messages over Unix sockets; every message is validated on arrival.
 - The roles that read outside input hold nothing worth stealing (at most the inbound TLS key) and can't open the database.
 - Only `core` opens the database, and `core` has no network. To reach stored data, an attacker has to break two roles.
+- `core` reaches delivery nodes and egresses through `link`, which only passes bytes: TLS runs between core and the node, so `link` never sees a key or a message. With the firewall rules, `link` can connect only to the addresses in the `node_links` and `egress_links` sets.
 - A broken `delivery` or `core` can still ask the signer for signatures, but can never read a key. Key rotation and the volume guards limit the rest.
 
-With the systemd units or the six-container compose file, each role is a separate user in its own sandbox (see [install.md](install.md)). With `bunzzle serve` (one container, or a laptop) the roles are separate processes of one user: the boundaries in the code still hold, but the OS doesn't enforce them.
+With the systemd units or the compose file, each role is a separate user in its own sandbox (see [install.md](install.md)). With `bunzzle serve` (one container, or a laptop) the roles are separate processes of one user: the boundaries in the code still hold, but the OS doesn't enforce them.
 
 ## Data
 

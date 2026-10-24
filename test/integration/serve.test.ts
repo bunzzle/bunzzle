@@ -15,17 +15,18 @@ afterAll(async () => {
 });
 
 describe("bunzzle serve", () => {
-  test("runs six separate role processes", () => {
+  test("runs seven separate role processes", () => {
     expect([...served.pids.keys()].sort()).toEqual([
       "api",
       "core",
       "delivery",
       "dns",
       "inbound",
+      "link",
       "signer",
     ]);
     const pids = new Set(served.pids.values());
-    expect(pids.size).toBe(6);
+    expect(pids.size).toBe(7);
     expect(pids.has(served.proc.pid)).toBe(false);
     for (const pid of pids) expect(alive(pid)).toBe(true);
   });

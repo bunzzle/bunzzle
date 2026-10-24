@@ -3,7 +3,7 @@ Description=Bunzzle core: queue, scheduler and database, no network
 Documentation=https://github.com/bunzzle/bunzzle/blob/main/docs/install.md
 PartOf=bunzzle.target
 StartLimitIntervalSec=0
-After=bunzzle-signer.service bunzzle-dns.service
+After=bunzzle-signer.service bunzzle-dns.service bunzzle-link.service
 
 [Service]
 Type=exec

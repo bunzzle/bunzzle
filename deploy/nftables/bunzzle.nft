@@ -38,10 +38,11 @@ table inet bunzzle {
     type filter hook output priority filter; policy accept;
     ct state established,related accept
     oifname "lo" accept
-    meta skuid "bunzzle-core" ip daddr . tcp dport @node_links4 accept
-    meta skuid "bunzzle-core" ip6 daddr . tcp dport @node_links6 accept
-    meta skuid { "bunzzle-core", "bunzzle-delivery" } ip daddr . tcp dport @egress_links4 accept
-    meta skuid { "bunzzle-core", "bunzzle-delivery" } ip6 daddr . tcp dport @egress_links6 accept
+    meta skuid "bunzzle-link" ip daddr . tcp dport @node_links4 accept
+    meta skuid "bunzzle-link" ip6 daddr . tcp dport @node_links6 accept
+    meta skuid { "bunzzle-link", "bunzzle-delivery" } ip daddr . tcp dport @egress_links4 accept
+    meta skuid { "bunzzle-link", "bunzzle-delivery" } ip6 daddr . tcp dport @egress_links6 accept
+    meta skuid "bunzzle-link" counter drop
     meta skuid { "bunzzle-signer", "bunzzle-core", "bunzzle-api", "bunzzle-inbound" } counter drop
     meta skuid "bunzzle-delivery" udp dport 53 accept
     meta skuid "bunzzle-delivery" tcp dport { 25, 53, 443 } accept
