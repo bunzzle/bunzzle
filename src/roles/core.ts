@@ -187,8 +187,8 @@ export async function runCore(config: Config, log: Logger) {
     lookup: (domain) =>
       delivery.call("lookup", { domain }, { result: destinationWire, timeoutMs: 2 * MIN }),
     deliver: async (asked, onOutcomes) => {
-      const { name, client } = fleet.clientFor(asked.source ?? "");
-      let req = asked;
+      const { name, client, egress } = fleet.clientFor(asked.source ?? "");
+      let req = egress ? { ...asked, egress } : asked;
       if (name !== LOCAL && asked.body) {
         try {
           const { body, ...rest } = asked;
@@ -218,7 +218,10 @@ export async function runCore(config: Config, log: Logger) {
           onProgress: (p) => onOutcomes?.(p.recipients),
         })
         .then((report) => {
-          fleet.delivered(name, report.recipients.filter((r) => r.status === "delivered").length);
+          fleet.delivered(
+            egress?.name ?? name,
+            report.recipients.filter((r) => r.status === "delivered").length,
+          );
           return report;
         })
         .catch((err) => {

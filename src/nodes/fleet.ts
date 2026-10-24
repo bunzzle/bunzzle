@@ -3,6 +3,7 @@ import type { RpcClient } from "../ipc/rpc.ts";
 import type { IpDown } from "../ips/warmup.ts";
 import { b } from "../validate/schema.ts";
 import type { NodeLinks } from "./links.ts";
+import type { NodeKind } from "./registry.ts";
 
 export const LOCAL = "local";
 const CHECK_MS = 10_000;
@@ -12,6 +13,7 @@ const ipList = b.array(b.object({ ip: b.string() }));
 
 export interface NodeHealth {
   name: string;
+  kind: NodeKind;
   up: boolean;
   lastSeen: number | null;
   ips: string[];
@@ -61,7 +63,7 @@ export class DeliveryFleet {
   }
 
   #names(): string[] {
-    return [LOCAL, ...this.#d.links.names("delivery")];
+    return [LOCAL, ...this.#d.links.names("delivery"), ...this.#d.links.names("egress")];
   }
 
   client(name: string): RpcClient | null {
@@ -156,8 +158,9 @@ export class DeliveryFleet {
       const name = owners[0] as string;
       const s = this.#stateOf(name);
       if (s.up) return null;
+      const what = this.#d.links.kindOf(name) === "egress" ? "egress" : "node";
       return {
-        reason: `node ${name} is down (${ip})`,
+        reason: `${what} ${name} is down (${ip})`,
         since: s.downSince ?? this.#now(),
         node: name,
       };
@@ -183,10 +186,16 @@ export class DeliveryFleet {
     return owner === LOCAL ? null : owner;
   }
 
-  clientFor(source: string): { name: string; client: RpcClient } {
+  clientFor(source: string): {
+    name: string;
+    client: RpcClient;
+    egress: { name: string; address: string; pin: string } | null;
+  } {
     const owner = this.ownerOf(source);
+    const egress = owner ? this.#d.links.egress(owner) : null;
+    if (egress) return { name: LOCAL, client: this.#d.local, egress };
     const name = owner ?? LOCAL;
-    return { name, client: this.client(name) ?? this.#d.local };
+    return { name, client: this.client(name) ?? this.#d.local, egress: null };
   }
 
   health(): NodeHealth[] {
@@ -194,6 +203,7 @@ export class DeliveryFleet {
       const s = this.#stateOf(name);
       return {
         name,
+        kind: this.#d.links.kindOf(name) ?? ("delivery" as const),
         up: s.up,
         lastSeen: s.lastSeen,
         ips: [...s.ips],

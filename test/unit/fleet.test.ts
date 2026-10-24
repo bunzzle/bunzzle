@@ -197,7 +197,9 @@ test("node state, delivered count and jobs per node in metrics", async () => {
   });
   const links = {
     sync() {},
-    names: () => ["node-a"],
+    names: (kind?: string) => (kind === "egress" ? [] : ["node-a"]),
+    kindOf: () => "delivery",
+    egress: () => null,
     client: () => reply([B]),
   } as unknown as NodeLinks;
   const fleet = new DeliveryFleet({
@@ -303,7 +305,9 @@ test("the fleet reports a node once when it comes back", async () => {
   };
   const links = {
     sync() {},
-    names: () => ["node-a"],
+    names: (kind?: string) => (kind === "egress" ? [] : ["node-a"]),
+    kindOf: () => "delivery",
+    egress: () => null,
     client: () => client,
   } as unknown as NodeLinks;
   const up: string[] = [];
