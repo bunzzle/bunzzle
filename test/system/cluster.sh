@@ -24,11 +24,19 @@ finish() {
     for h in $hosts; do
       echo "== $h"
       docker exec "bz-$h" systemctl list-jobs --no-pager 2>/dev/null || true
-      docker exec "bz-$h" sh -c 'findmnt /run; findmnt -R /run/credentials; ls -laR /run/credentials' 2>&1 | head -30 || true
       docker exec "bz-$h" systemctl status 'bunzzle*' --no-pager 2>/dev/null | head -60 || true
       docker exec "bz-$h" journalctl -u 'bunzzle-*' --no-pager 2>/dev/null | tail -80 || true
       docker exec "bz-$h" nft list table inet bunzzle 2>/dev/null | grep counter || true
     done
+  fi
+  if [ "$code" != 0 ]; then
+    for props in "" "-p ProtectSystem=strict -p PrivateTmp=yes -p PrivateDevices=yes"; do
+      echo "== credential probe $props"
+      docker exec bz-core systemd-run --wait --pipe -q -p User=bunzzle-signer \
+        -p LoadCredential=master.key:/etc/bunzzle/master.key $props \
+        sh -c 'id; echo $CREDENTIALS_DIRECTORY; ls -la $CREDENTIALS_DIRECTORY; head -c 4 $CREDENTIALS_DIRECTORY/master.key; echo; grep credentials /proc/self/mountinfo' 2>&1 || true
+    done
+    docker exec bz-core sh -c 'ls -la /etc/bunzzle; systemd --version | head -1' 2>&1 || true
   fi
   docker rm -f bz-core bz-node bz-egress bz-world >/dev/null 2>&1 || true
   for n in admin link-node link-egress internet; do docker network rm "bz-$n" >/dev/null 2>&1 || true; done
