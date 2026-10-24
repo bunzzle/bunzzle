@@ -34,6 +34,7 @@ export interface DoctorDeps {
   storage?: () => StorageState;
   nodeCa?: () => string;
   corePin?: () => string;
+  deliveryLink?: () => number | null;
   fleet?: () => { health: NodeHealth[]; conflicts: { ip: string; nodes: string[] }[] };
   nodeClients?: () => RpcClient[];
   now?: () => number;
@@ -72,6 +73,7 @@ export function nodeChecks(
   caPem: string,
   corePin: string,
   now: number,
+  deliveryLink?: number | null,
 ): Check[] {
   if (nodes.length === 0) return [];
   const checks: Check[] = [];
@@ -100,6 +102,16 @@ export function nodeChecks(
       });
     }
     expiry(`${n.name} certificate`, n.notAfter, NODE_WARN_DAYS);
+  }
+  if (deliveryLink !== undefined && nodes.some((n) => n.kind === "egress")) {
+    if (deliveryLink === null) {
+      checks.push({
+        area: "nodes",
+        item: "delivery link certificate",
+        status: "fail",
+        detail: "core's delivery role has no link certificate, so no egress can be used yet",
+      });
+    } else expiry("delivery link certificate", deliveryLink, NODE_WARN_DAYS);
   }
   return checks;
 }
@@ -343,7 +355,13 @@ export function doctorMethods(deps: DoctorDeps): Methods {
     }
     if (scope === null)
       checks.push(
-        ...nodeChecks(listNodes(db), deps.nodeCa?.() ?? "", deps.corePin?.() ?? "", now()),
+        ...nodeChecks(
+          listNodes(db),
+          deps.nodeCa?.() ?? "",
+          deps.corePin?.() ?? "",
+          now(),
+          deps.deliveryLink?.(),
+        ),
       );
     return checks;
   };

@@ -14,6 +14,8 @@ import {
   type RpcServer,
   serveRpc,
 } from "../../src/ipc/rpc.ts";
+import { DeliveryIdentity } from "../../src/nodes/delivery-identity.ts";
+import { DeliveryLinkKeeper } from "../../src/nodes/delivery-link.ts";
 import { DeliveryFleet, LOCAL } from "../../src/nodes/fleet.ts";
 import { CoreIdentity } from "../../src/nodes/identity.ts";
 import { NodeLinks } from "../../src/nodes/links.ts";
@@ -89,10 +91,38 @@ async function core(client = signer, clock = { now: Date.now() }) {
     Date.now(),
   );
   const now = () => clock.now;
-  const links = new NodeLinks({ db, writer, log: quiet, signer: client, identity, now });
+  const deliveryIdentity = new DeliveryIdentity();
+  const socket = `/tmp/bunzzle-${crypto.randomUUID().slice(0, 8)}.sock`;
+  const deliveryServer = await serveRpc(socket, deliveryIdentity.methods());
+  const delivery = new RpcClient(socket);
+  cleanup.push(() => {
+    delivery.close();
+    deliveryServer.stop();
+  });
+  let keeper: DeliveryLinkKeeper | null = null;
+  const links = new NodeLinks({
+    db,
+    writer,
+    log: quiet,
+    signer: client,
+    identity,
+    now,
+    deliveryPins: () => keeper?.pins() ?? null,
+  });
   cleanup.push(() => links.closeAll());
-  const methods = nodeMethods({ db, writer, log: quiet, signer: client, identity, links, now });
-  return { db, identity, methods, links };
+  keeper = new DeliveryLinkKeeper({ delivery, signer: client, links, log: quiet, now });
+  const deliveryLink = keeper;
+  const methods = nodeMethods({
+    db,
+    writer,
+    log: quiet,
+    signer: client,
+    identity,
+    links,
+    now,
+    deliveryLink,
+  });
+  return { db, identity, methods, links, deliveryIdentity, deliveryLink, clock };
 }
 
 async function requestCsr(nodeDir: string, name: string) {
@@ -671,3 +701,140 @@ describe("egress", () => {
     expect((err as Error).message).toContain("BUNZZLE_EGRESS_LISTEN");
   });
 });
+
+async function startEgress(c: Awaited<ReturnType<typeof core>>, name: string) {
+  const nodeDir = `${dir}/${name}-${crypto.randomUUID().slice(0, 6)}`;
+  const port = nextPort++;
+  const csr = await requestCsr(nodeDir, name);
+  const bundle = await invoke(c.methods, "addNode", {
+    name,
+    address: `127.0.0.1:${port}`,
+    csr,
+    kind: "egress",
+  });
+  await Bun.write(`${nodeDir}/bundle.json`, JSON.stringify(bundle));
+  await nodesCommand(["install", `${nodeDir}/bundle.json`, "--dir", nodeDir], config);
+  const run = () =>
+    runEgress({ egressListen: { hostname: "127.0.0.1", port }, nodeDir } as Config, quiet);
+  const e = { server: await run(), port, restart: async () => (e.server = await run()) };
+  cleanup.push(() => e.server.stop());
+  return e;
+}
+
+function asDelivery(c: Awaited<ReturnType<typeof core>>, name: string, port: number) {
+  const me = c.deliveryIdentity.current();
+  if (!me) throw new Error("delivery has no link certificate");
+  const egress = listNodes(c.db).find((n) => n.name === name);
+  const client = new RpcClient({
+    hostname: "127.0.0.1",
+    port,
+    tls: { cert: me.cert, key: me.key, ca: me.ca, pins: [egress?.pin ?? ""], name },
+  });
+  cleanup.push(() => client.close());
+  return client;
+}
+
+const statusOfLink = (c: Awaited<ReturnType<typeof core>>, name: string) =>
+  (c.links.client(name) as RpcClient).call<{ corePins: string[]; deliveryPins: string[] }>(
+    "linkStatus",
+    {},
+  );
+
+describe("delivery link certificate", () => {
+  test("the delivery pin reaches an egress but may not call link methods", async () => {
+    const c = await core();
+    const e = await startEgress(c, "edge-l");
+    expect(await c.deliveryLink.upkeep()).toBe(true);
+    const pin = c.deliveryIdentity.current()?.pin as string;
+    expect(c.deliveryLink.pins()).toEqual([pin]);
+    expect((await statusOfLink(c, "edge-l")).deliveryPins).toEqual([pin]);
+
+    const d = asDelivery(c, "edge-l", e.port);
+    for (const [m, params] of [
+      ["linkStatus", {}],
+      ["trustCorePins", { pins: [pin] }],
+      ["trustDeliveryPins", { pins: [] }],
+      ["trustCas", { ca: "x" }],
+      ["renewRequest", {}],
+      ["renewInstall", { cert: "x", ca: "x" }],
+    ] as const) {
+      const err = await d.call(m, params).catch((x: RpcError) => x);
+      expect(err).toMatchObject({ code: "forbidden" });
+    }
+    expect((await statusOfLink(c, "edge-l")).corePins).toEqual([c.identity.current().pin]);
+    expect(await c.deliveryLink.upkeep()).toBe(false);
+  });
+
+  test("renewal waits while an egress is down, unless the certificate is close to expiry", async () => {
+    const c = await core();
+    await startEgress(c, "edge-u");
+    const down = await startEgress(c, "edge-d");
+    await c.deliveryLink.upkeep();
+    const first = c.deliveryIdentity.current()?.pin as string;
+    down.server.stop();
+    c.links.close("edge-d");
+
+    c.clock.now += 2 * DAY_MS;
+    expect(await c.deliveryLink.upkeep()).toBe(false);
+    expect(c.deliveryIdentity.current()?.pin).toBe(first);
+    expect((await statusOfLink(c, "edge-u")).deliveryPins).toEqual([first]);
+
+    c.clock.now += 4 * DAY_MS;
+    expect(await c.deliveryLink.upkeep()).toBe(true);
+    const second = c.deliveryIdentity.current()?.pin as string;
+    expect(second).not.toBe(first);
+    expect((await statusOfLink(c, "edge-u")).deliveryPins).toEqual([second]);
+
+    await down.restart();
+    c.links.close("edge-d");
+    c.links.sync();
+    await c.links.reconcile("edge-d");
+    expect((await statusOfLink(c, "edge-d")).deliveryPins).toEqual([second]);
+  });
+
+  test("CA rotation reissues the delivery certificate from the new CA", async () => {
+    const rotCa = await NodeCa.open(`${dir}/rot-d/node-ca.json`, master, null, Date.now());
+    const client = await startSigner(rotCa);
+    const c = await core(client);
+    const e = await startEgress(c, "edge-r");
+    await c.deliveryLink.upkeep();
+    const step = (s: string) => invoke(c.methods, "rotateNodeCa", { step: s });
+    await step("start");
+    await c.links.reconcile("edge-r");
+    await step("promote");
+    const next = rotCa.states().find((s) => s.state === "active")?.name;
+    expect(c.deliveryIdentity.current()?.issuer).toBe(next);
+    const err = await asDelivery(c, "edge-r", e.port)
+      .call("linkStatus", {})
+      .catch((x: RpcError) => x);
+    expect(err).toMatchObject({ code: "forbidden" });
+  });
+
+  test("doctor fails without a delivery link certificate once an egress exists", () => {
+    const egress = {
+      name: "edge-x",
+      kind: "egress" as const,
+      address: "127.0.0.1:7465",
+      pin: "sha256/x",
+      notAfter: Date.now() + 20 * DAY_MS,
+      ca: "",
+      trustedCas: [],
+      corePins: [],
+      createdAt: 0,
+    };
+    const checks = (link: number | null) =>
+      nodeChecks([egress], "", "sha256/core", Date.now(), link).filter(
+        (x) => x.item === "delivery link certificate",
+      );
+    expect(checks(null).map((x) => x.status)).toEqual(["fail"]);
+    expect(checks(Date.now() + DAY_MS).map((x) => x.status)).toEqual(["warn"]);
+    expect(checks(Date.now() + 6 * DAY_MS).map((x) => x.status)).toEqual(["ok"]);
+    expect(
+      nodeChecks([{ ...egress, kind: "delivery" }], "", "sha256/core", Date.now(), null).filter(
+        (x) => x.item === "delivery link certificate",
+      ),
+    ).toEqual([]);
+  });
+});
+
+const DAY_MS = 86_400_000;

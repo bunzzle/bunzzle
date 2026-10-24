@@ -46,6 +46,7 @@ export interface NodeDeps {
   identity: CoreIdentity;
   links: NodeLinks;
   health?: () => NodeHealth[];
+  deliveryLink?: { upkeep(force?: boolean): Promise<boolean> };
   now?: () => number;
 }
 
@@ -114,6 +115,7 @@ export function nodeMethods(deps: NodeDeps): Methods {
         );
         await identity.reissue();
         await links.identityChanged();
+        await deps.deliveryLink?.upkeep(true);
         log.info("node CA rotation step done", { step });
         return {
           ...(await rotation()),

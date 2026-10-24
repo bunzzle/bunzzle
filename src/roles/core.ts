@@ -45,6 +45,7 @@ import { pruneRouted } from "../inbound/routes.ts";
 import { method, RpcClient, serveRpc } from "../ipc/rpc.ts";
 import { rollover } from "../ips/warmup.ts";
 import { RoleUsage } from "../metrics/usage.ts";
+import { DeliveryLinkKeeper } from "../nodes/delivery-link.ts";
 import { DeliveryFleet, LOCAL } from "../nodes/fleet.ts";
 import { CoreIdentity } from "../nodes/identity.ts";
 import { NodeLinks } from "../nodes/links.ts";
@@ -123,7 +124,23 @@ export async function runCore(config: Config, log: Logger) {
   const ns = config.ns ? new RpcClient(sock.ns) : null;
 
   const identity = await CoreIdentity.load(`${config.dataDir}/node-link`, signer, Date.now());
-  const links = new NodeLinks({ db, writer, log, signer, identity });
+  let deliveryLink: DeliveryLinkKeeper | null = null;
+  const links = new NodeLinks({
+    db,
+    writer,
+    log,
+    signer,
+    identity,
+    deliveryPins: () => deliveryLink?.pins() ?? null,
+  });
+  deliveryLink = new DeliveryLinkKeeper({ delivery, signer, links, log });
+  const keeper = deliveryLink;
+  const keepDeliveryLink = () =>
+    keeper
+      .upkeep()
+      .catch((err) =>
+        log.warn("delivery link certificate check failed", { error: (err as Error).message }),
+      );
   let wakeQueue = () => {};
   const fleet = new DeliveryFleet({
     local: delivery,
@@ -542,8 +559,11 @@ export async function runCore(config: Config, log: Logger) {
     publicUrl: config.publicUrl,
   });
   const linkTick = () => (links.coreRenewalDue() ? links.renewCore() : links.reconcileAll());
-  void linkTick();
+  void keepDeliveryLink().then(async () => {
+    await linkTick();
+  });
   const stopLinks = every(3_600_000, linkTick);
+  const stopDeliveryLink = every(60_000, keepDeliveryLink);
   const stopFleet = every(fleet.checkMs, () => fleet.check());
   void usage.poll();
   const stopUsage = every(usage.pollMs, () => usage.poll());
@@ -556,6 +576,7 @@ export async function runCore(config: Config, log: Logger) {
     storage: () => storage.state(),
     nodeCa: () => identity.current().ca,
     corePin: () => identity.current().pin,
+    deliveryLink: () => keeper.notAfter(),
     fleet: () => ({ health: fleet.health(), conflicts: fleet.conflicts() }),
     nodeClients: () =>
       links.names().flatMap((name) => {
@@ -565,7 +586,16 @@ export async function runCore(config: Config, log: Logger) {
   });
   const all = {
     ...api.methods,
-    ...nodeMethods({ db, writer, log, signer, identity, links, health: () => fleet.health() }),
+    ...nodeMethods({
+      db,
+      writer,
+      log,
+      signer,
+      identity,
+      links,
+      health: () => fleet.health(),
+      deliveryLink: keeper,
+    }),
     ...feedback.methods,
     ...routes.methods,
     ...templateMethods({ db, writer }),
@@ -775,6 +805,7 @@ export async function runCore(config: Config, log: Logger) {
   onStop(log, async () => {
     await tel?.stop();
     stopLinks();
+    stopDeliveryLink();
     stopFleet();
     stopUsage();
     links.closeAll();

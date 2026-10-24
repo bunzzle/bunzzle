@@ -193,6 +193,12 @@ export interface RpcServer {
 export interface ServeOptions {
   mode?: "600" | "660";
   onRefused?(reason: string, remote: string): void;
+  allow?(pin: string, method: string): boolean;
+}
+
+function peerPin(socket: Socket<undefined>): string {
+  const raw = (socket.getPeerCertificate() as { raw?: Uint8Array } | null)?.raw;
+  return raw ? pinOf(parseCertificate(new Uint8Array(raw)).spki) : "";
 }
 
 const usage = method(b.object({}), async () => ({ cpuSeconds: await cpuSeconds() }));
@@ -204,10 +210,17 @@ export async function serveRpc(
 ): Promise<RpcServer> {
   const methods: Methods = { usage, ...served };
   const framers = new Map<Socket<undefined>, Framer>();
-  const respond = async (framer: Framer, frame: unknown) => {
+  const respond = async (framer: Framer, frame: unknown, pin: string | null) => {
     const req = request.safeParse(frame);
     if (!req.success) return;
     const { id } = req.data;
+    if (pin !== null && opts.allow && !opts.allow(pin, req.data.method)) {
+      framer.send({
+        id,
+        error: { code: "forbidden", message: `${req.data.method} is not allowed for this peer` },
+      });
+      return;
+    }
     const m = methods[req.data.method];
     if (!m) {
       framer.send({ id, error: { code: "invalid", message: `unknown method ${req.data.method}` } });
@@ -249,8 +262,8 @@ export async function serveRpc(
       });
     }
   };
-  const accept = (s: Socket<undefined>) => {
-    const framer = new Framer(s, (frame) => void respond(framer, frame));
+  const accept = (s: Socket<undefined>, pin: string | null = null) => {
+    const framer = new Framer(s, (frame) => void respond(framer, frame, pin));
     framers.set(s, framer);
   };
   const handlers = {
@@ -284,7 +297,7 @@ export async function serveRpc(
               return;
             }
             s.setKeepAlive(true, 15_000);
-            accept(s);
+            accept(s, peerPin(s));
           },
         },
       });
