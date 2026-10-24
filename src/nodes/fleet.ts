@@ -35,6 +35,7 @@ export interface FleetDeps {
   log: Logger;
   now?: () => number;
   checkMs?: number;
+  onUp?: (name: string) => void;
 }
 
 export class DeliveryFleet {
@@ -98,7 +99,8 @@ export class DeliveryFleet {
             {},
             { result: ipList, timeoutMs: this.checkMs },
           );
-          if (!s.up) this.#d.log.info("delivery node up", { name });
+          const back = !s.up;
+          if (back) this.#d.log.info("delivery node up", { name });
           Object.assign(s, {
             up: true,
             downSince: null,
@@ -107,6 +109,7 @@ export class DeliveryFleet {
             ips: ips.map((x) => x.ip),
             error: null,
           });
+          if (back) this.#d.onUp?.(name);
         } catch (err) {
           s.failures++;
           s.error = (err as Error).message;
@@ -153,7 +156,11 @@ export class DeliveryFleet {
       const name = owners[0] as string;
       const s = this.#stateOf(name);
       if (s.up) return null;
-      return { reason: `node ${name} is down (${ip})`, since: s.downSince ?? this.#now() };
+      return {
+        reason: `node ${name} is down (${ip})`,
+        since: s.downSince ?? this.#now(),
+        node: name,
+      };
     }
     let since = this.#unowned.get(ip);
     if (since === undefined) {

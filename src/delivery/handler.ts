@@ -5,7 +5,7 @@ import { projectOfMessage } from "../accounts/projects.ts";
 import type { SourceIp } from "../config.ts";
 import { type Clock, systemClock } from "../core/clock.ts";
 import { appendEvent } from "../core/events.ts";
-import type { ClaimedJob } from "../core/jobs.ts";
+import { type ClaimedJob, waitOnNodes } from "../core/jobs.ts";
 import type { Logger } from "../core/log.ts";
 import { type Apply, defer, fail, type Outcome, ok, requeue, unknown } from "../core/outcome.ts";
 import { clampHint } from "../core/retry.ts";
@@ -283,11 +283,14 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       delayMs: number,
       visible: boolean,
       path: string | null,
+      nodes: string[] = [],
     ): Outcome => ({
       ...requeue(reason, delayMs),
       ...(path ? { path } : {}),
       apply: (d, settled, at) => {
-        if (!visible || settled !== "requeued") return;
+        if (settled !== "requeued") return;
+        if (nodes.length > 0) waitOnNodes(d, job, nodes);
+        if (!visible) return;
         d.query<unknown, [string, number, string]>(
           `UPDATE recipients SET status = 'deferred', reply = ?, updated_at = ?
            WHERE job_id = ? AND status IN ('queued', 'deferred')`,
@@ -349,7 +352,7 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
         : { source: fixedSource };
       if ("wait" in choice) {
         if (!(choice.wait.blocked && canFallback)) {
-          return waitFor(choice.wait.reason, choice.wait.delayMs, true, null);
+          return waitFor(choice.wait.reason, choice.wait.delayMs, true, null, choice.wait.nodes);
         }
         via = RELAY;
       } else source = choice.source;

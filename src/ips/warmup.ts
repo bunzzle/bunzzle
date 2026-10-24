@@ -174,12 +174,13 @@ export interface Choice {
 }
 
 export interface Wait {
-  wait: { delayMs: number; reason: string; blocked?: boolean };
+  wait: { delayMs: number; reason: string; blocked?: boolean; nodes?: string[] };
 }
 
 export interface IpDown {
   reason: string;
   since: number;
+  node?: string | null;
 }
 
 const DOWN_WAIT_MIN_MS = 60_000;
@@ -254,7 +255,8 @@ export function choose(
     const delayMs =
       soonestPause === null ? backoff : Math.max(1_000, Math.min(backoff, soonestPause - now));
     const reasons = [...new Set(unavailable.map((u) => u.reason))];
-    return { wait: { delayMs, reason: reasons.join("; ") } };
+    const nodes = [...new Set(unavailable.flatMap((u) => (u.node ? [u.node] : [])))];
+    return { wait: { delayMs, reason: reasons.join("; "), ...(nodes.length ? { nodes } : {}) } };
   }
   if (overBudget) {
     const tomorrow = (dayOf(now) + 1) * DAY_MS;

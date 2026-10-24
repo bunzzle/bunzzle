@@ -12,6 +12,7 @@ import {
 } from "../accounts/recipients.ts";
 import { pruneUsage } from "../accounts/usage.ts";
 import type { Config } from "../config.ts";
+import { wakeWaitingOn } from "../core/jobs.ts";
 import type { Logger } from "../core/log.ts";
 import { fail, type Outcome } from "../core/outcome.ts";
 import { defaultRetryPolicy, type RetryPolicy } from "../core/retry.ts";
@@ -123,7 +124,27 @@ export async function runCore(config: Config, log: Logger) {
 
   const identity = await CoreIdentity.load(`${config.dataDir}/node-link`, signer, Date.now());
   const links = new NodeLinks({ db, writer, log, signer, identity });
-  const fleet = new DeliveryFleet({ local: delivery, links, log });
+  let wakeQueue = () => {};
+  const fleet = new DeliveryFleet({
+    local: delivery,
+    links,
+    log,
+    onUp: (name) => {
+      void writer
+        .run((d) => wakeWaitingOn(d, name, Date.now()))
+        .then((woken) => {
+          if (woken > 0)
+            log.info("mail waiting on a delivery node is due again", { name, jobs: woken });
+          wakeQueue();
+        })
+        .catch((err) =>
+          log.error("could not wake mail waiting on a delivery node", {
+            name,
+            error: (err as Error).message,
+          }),
+        );
+    },
+  });
   await fleet.check();
   const usage = new RoleUsage({
     targets: () => [
@@ -747,6 +768,7 @@ export async function runCore(config: Config, log: Logger) {
     : null;
   if (tel) spanSink = (s) => tel.record(s);
 
+  wakeQueue = () => scheduler.wake();
   await scheduler.start();
   onStop(log, async () => {
     await tel?.stop();
