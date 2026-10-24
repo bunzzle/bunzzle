@@ -115,5 +115,6 @@ if [ -n "$failed" ]; then
   done
   die "not running:$failed (see journalctl -u 'bunzzle-*')"
 fi
+"$PREFIX/bunzzle" nodes allow || echo "install: could not set the addresses bunzzle-link may reach: run sudo bunzzle nodes allow" >&2
 echo "bunzzle $("$PREFIX/bunzzle" --version) is running: systemctl status 'bunzzle-*'"
 echo "optional egress filter (only delivery and dns may connect out): nft -f /etc/bunzzle/bunzzle.nft"

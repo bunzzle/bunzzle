@@ -75,7 +75,7 @@ The certificate is read at start, so restart the role after renewal, for example
 |---|---|---|---|
 | signer | bunzzle-signer | none | `/var/lib/bunzzle/keys` |
 | core | bunzzle-core | none | `/var/lib/bunzzle/data` |
-| link | bunzzle-link | outbound to delivery nodes and egresses (only those with the filter) | nothing |
+| link | bunzzle-link | outbound to the IPs of delivery nodes and egresses only | nothing |
 | delivery | bunzzle-delivery | outbound (25, 53, 443 with the filter) | nothing |
 | api | bunzzle-api | listen on its port | nothing |
 | inbound | bunzzle-inbound | listen on 25 | nothing |

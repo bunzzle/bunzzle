@@ -82,6 +82,14 @@ timeout 120 docker exec -e BUNZZLE_NODE=1 bz-node /src/deploy/install.sh /src/di
 timeout 120 docker exec -e BUNZZLE_EGRESS=1 bz-egress /src/deploy/install.sh /src/dist/bunzzle >/dev/null
 step "installed with install.sh"
 
+ask_link() {
+  printf '{"host":"%s","port":%s}\n' "$1" "$2" | timeout 20 docker exec -i bz-core nc -U -w 2 /run/bunzzle/link.sock | head -1
+}
+case "$(ask_link 127.0.0.1 3000)" in
+  *error*) step "bunzzle-link may reach no address before a node is added" ;;
+  *) echo "cluster: bunzzle-link reached 127.0.0.1:3000 with no node added" >&2; exit 1 ;;
+esac
+
 on core nft -f /etc/bunzzle/bunzzle.nft
 on core nft add element inet bunzzle node_links4 "{ $NODE_LINK . 7465 }"
 on core nft add element inet bunzzle egress_links4 "{ $EGRESS_LINK . 7466 }"
@@ -129,6 +137,17 @@ enroll() {
 enroll node node-1 bunzzle-delivery /var/lib/bunzzle/node "$NODE_LINK:7465" bunzzle-delivery
 enroll egress edge-1 bunzzle-egress /var/lib/bunzzle/egress "$EGRESS_LINK:7466" bunzzle-egress --egress
 step "node and egress enrolled with nodes request, add and install"
+
+allowed="$(on core systemctl show -p IPAddressAllow --value bunzzle-link.service)"
+[ "$allowed" = "$NODE_LINK/32 $EGRESS_LINK/32" ] || [ "$allowed" = "$EGRESS_LINK/32 $NODE_LINK/32" ] || {
+  echo "cluster: bunzzle-link may reach $allowed" >&2
+  exit 1
+}
+on core bunzzle doctor | grep -q "\[ok\]   bunzzle-link addresses: may reach $NODE_LINK, $EGRESS_LINK" || {
+  on core bunzzle doctor | grep -i link >&2
+  exit 1
+}
+step "bunzzle-link may reach only $NODE_LINK and $EGRESS_LINK"
 
 token="$(on core bunzzle keys create --name cluster --scope full | tail -1)"
 docker exec -e BUNZZLE_CLUSTER_TOKEN="$token" \

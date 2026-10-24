@@ -6,9 +6,10 @@ import { parseCertificate } from "../x509/cert.ts";
 import { certificateRequest, importP256, validName } from "../x509/issue.ts";
 import { call } from "./admin.ts";
 import { parseArgs, UsageError } from "./args.ts";
+import { allowLinks, printAllowed } from "./link-allow.ts";
 
 const USAGE =
-  "usage: bunzzle nodes [list | request NAME [--egress] | add NAME ADDRESS CSR_FILE [--egress] | install BUNDLE_FILE | remove NAME | rotate-ca [start | promote | finish]]";
+  "usage: bunzzle nodes [list | request NAME [--egress] | add NAME ADDRESS CSR_FILE [--egress] | install BUNDLE_FILE | remove NAME | allow | rotate-ca [start | promote | finish]]";
 
 interface Rotation {
   cas: { name: string; state: string; expires_at: string }[];
@@ -119,6 +120,7 @@ async function add(argv: string[], config: Config) {
   const what = result.kind === "egress" ? "egress" : "delivery node";
   console.log(`Added ${what} ${name} at ${address}. Wrote ${out}.`);
   console.log(`On the ${what}: bunzzle nodes install ${out}`);
+  printAllowed(await allowLinks(config));
 }
 
 async function install(argv: string[], config: Config) {
@@ -197,6 +199,16 @@ export async function nodesCommand(argv: string[], config: Config) {
       if (!name || extra.length > 0) throw new UsageError(USAGE);
       await call(config, "removeNode", { name });
       console.log(`Removed ${name}.`);
+      printAllowed(await allowLinks(config));
+      return;
+    }
+    case "allow": {
+      if (rest.length > 0) throw new UsageError(USAGE);
+      const hosts = await allowLinks(config);
+      if (hosts === null) {
+        console.log("No bunzzle-link systemd unit here, or not run as root: nothing to set.");
+      }
+      printAllowed(hosts);
       return;
     }
     default:
