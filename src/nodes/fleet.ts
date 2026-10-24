@@ -61,7 +61,7 @@ export class DeliveryFleet {
   }
 
   #names(): string[] {
-    return [LOCAL, ...this.#d.links.names()];
+    return [LOCAL, ...this.#d.links.names("delivery")];
   }
 
   client(name: string): RpcClient | null {

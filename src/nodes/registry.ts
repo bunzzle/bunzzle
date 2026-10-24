@@ -1,7 +1,10 @@
 import type { Database } from "bun:sqlite";
 
+export type NodeKind = "delivery" | "egress";
+
 export interface DeliveryNode {
   name: string;
+  kind: NodeKind;
   address: string;
   pin: string;
   notAfter: number;
@@ -13,6 +16,7 @@ export interface DeliveryNode {
 
 interface Row {
   name: string;
+  kind: NodeKind;
   address: string;
   pin: string;
   not_after: number;
@@ -24,6 +28,7 @@ interface Row {
 
 const fromRow = (r: Row): DeliveryNode => ({
   name: r.name,
+  kind: r.kind,
   address: r.address,
   pin: r.pin,
   notAfter: r.not_after,
@@ -36,12 +41,13 @@ const fromRow = (r: Row): DeliveryNode => ({
 export function addNode(db: Database, n: DeliveryNode): boolean {
   return (
     db
-      .query<unknown, [string, string, string, number, string, string, string, number]>(
-        `INSERT INTO nodes (name, address, pin, not_after, ca, trusted_cas, core_pins, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+      .query<unknown, [string, NodeKind, string, string, number, string, string, string, number]>(
+        `INSERT INTO nodes (name, kind, address, pin, not_after, ca, trusted_cas, core_pins, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
       )
       .run(
         n.name,
+        n.kind,
         n.address,
         n.pin,
         n.notAfter,

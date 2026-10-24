@@ -11,6 +11,7 @@ import { runApi } from "../roles/api.ts";
 import { runCore } from "../roles/core.ts";
 import { runDelivery } from "../roles/delivery.ts";
 import { runDns } from "../roles/dns.ts";
+import { runEgress } from "../roles/egress.ts";
 import { runInbound } from "../roles/inbound.ts";
 import { runNs } from "../roles/ns.ts";
 import { Reloader } from "../roles/reload.ts";
@@ -57,7 +58,8 @@ Usage:
   bunzzle keys        create|list|revoke API keys; --admin for a key that manages projects (needs \`serve\` running)
   bunzzle projects    add|list|show|limits|suspend|resume|remove projects (needs \`serve\` running)
   bunzzle pools       list IP pools; own POOL PROJECT gives a pool to one project; share POOL; rules [add DOMAIN|PROVIDER POOL|relay | remove ID] (needs \`serve\` running)
-  bunzzle nodes       delivery nodes: request NAME (on the node); add NAME ADDRESS CSR_FILE, list, remove NAME (on core, needs \`serve\` running); install BUNDLE_FILE (on the node); rotate-ca [start|promote|finish] (on core)
+  bunzzle nodes       delivery nodes and egresses: request NAME [--egress] (on the node); add NAME ADDRESS CSR_FILE [--egress], list, remove NAME (on core, needs \`serve\` running); install BUNDLE_FILE (on the node); rotate-ca [start|promote|finish] (on core)
+  bunzzle egress      Serve the node link on BUNZZLE_EGRESS_LISTEN for core (on a machine that only lends its IPs)
   bunzzle paths       sending speed per destination and why it changed (needs \`serve\` running)
   bunzzle webhooks    add|list|remove event webhooks; deliveries ID shows every attempt; resend ID DELIVERY or --from --to (needs \`serve\` running)
   bunzzle routes      add|list|remove|retry inbound routes: mail for an address posted to a URL (needs \`serve\` running)
@@ -224,6 +226,14 @@ async function main(input: string[]) {
       return serve();
     case "role":
       return role(argv[1]);
+    case "egress": {
+      const config = loadConfig();
+      await runEgress(
+        config,
+        createLogger(config.logLevel, { service: "bunzzle", role: "egress" }),
+      );
+      return;
+    }
     case "send":
       process.exitCode = await sendCommand(argv.slice(1), loadConfig());
       return;

@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { fromPem } from "../../src/asn1/der.ts";
 import { nodesCommand } from "../../src/cli/nodes.ts";
-import type { Config } from "../../src/config.ts";
+import { type Config, ConfigError } from "../../src/config.ts";
 import { createLogger } from "../../src/core/log.ts";
 import { openDatabase } from "../../src/core/store/db.ts";
 import { Writer } from "../../src/core/store/writer.ts";
@@ -21,6 +21,7 @@ import { nodeLinkMethods } from "../../src/nodes/node.ts";
 import { listNodes } from "../../src/nodes/registry.ts";
 import { fleetChecks, nodeChecks } from "../../src/roles/core-doctor.ts";
 import { nodeMethods } from "../../src/roles/core-nodes.ts";
+import { runEgress } from "../../src/roles/egress.ts";
 import { loadLinkTls } from "../../src/roles/node-link.ts";
 import { NodeCa } from "../../src/signer/node-ca.ts";
 import { b } from "../../src/validate/schema.ts";
@@ -228,6 +229,7 @@ describe("delivery nodes", () => {
     const caEnd = parseCertificate(fromPem(ca.trusted())[0] as Uint8Array).notAfter;
     const node = (name: string, notAfter: number) => ({
       name,
+      kind: "delivery" as const,
       address: "127.0.0.1:7465",
       pin: "sha256/x",
       notAfter,
@@ -616,5 +618,56 @@ describe("delivery fleet", () => {
     await fleet.check();
     expect(fleet.health().map((h) => h.name)).toEqual([LOCAL]);
     expect(fleet.ready(NODE_IP)).toBe(false);
+  });
+});
+
+describe("egress", () => {
+  test("an egress is added, installed and reached over the node link, and stays out of the fleet", async () => {
+    const c = await core();
+    const nodeDir = `${dir}/edge-a`;
+    const csr = await requestCsr(nodeDir, "edge-a");
+    const port = nextPort++;
+    const result = (await invoke(c.methods, "addNode", {
+      name: "edge-a",
+      address: `127.0.0.1:${port}`,
+      csr,
+      kind: "egress",
+    })) as { kind: string };
+    expect(result.kind).toBe("egress");
+    expect(listNodes(c.db).map((n) => [n.name, n.kind])).toEqual([["edge-a", "egress"]]);
+    const listed = (await invoke(c.methods, "listNodes", {})) as { kind: string }[];
+    expect(listed.map((n) => n.kind)).toEqual(["egress"]);
+
+    await Bun.write(`${nodeDir}/bundle.json`, JSON.stringify(result));
+    await nodesCommand(["install", `${nodeDir}/bundle.json`, "--dir", nodeDir], config);
+    const server = await runEgress(
+      { egressListen: { hostname: "127.0.0.1", port }, nodeDir } as Config,
+      quiet,
+    );
+    cleanup.push(() => server.stop());
+
+    expect(c.links.names()).toEqual(["edge-a"]);
+    expect(c.links.names("delivery")).toEqual([]);
+    expect(c.links.kindOf("edge-a")).toBe("egress");
+    expect((await c.links.reconcile("edge-a")).name).toBe("edge-a");
+    const client = c.links.client("edge-a") as RpcClient;
+    const refused = await client.call("deliver", {}).catch((e: RpcError) => e.message);
+    expect(refused).toBe("unknown method deliver");
+
+    const fleet = new DeliveryFleet({
+      local: { call: async () => [], close() {} } as never,
+      links: c.links,
+      log: quiet,
+    });
+    await fleet.check();
+    expect(fleet.health().map((h) => h.name)).toEqual([LOCAL]);
+  });
+
+  test("an egress needs BUNZZLE_EGRESS_LISTEN", async () => {
+    const err = await runEgress({ egressListen: null, nodeDir: dir } as Config, quiet).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ConfigError);
+    expect((err as Error).message).toContain("BUNZZLE_EGRESS_LISTEN");
   });
 });

@@ -34,6 +34,7 @@ import nodes from "./0033_nodes.sql" with { type: "text" };
 import nodeCorePins from "./0034_node_core_pins.sql" with { type: "text" };
 import jobNode from "./0035_job_node.sql" with { type: "text" };
 import jobWaitNodes from "./0036_job_wait_nodes.sql" with { type: "text" };
+import nodeKind from "./0037_node_kind.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -78,4 +79,5 @@ export const migrations: readonly Migration[] = [
   { version: 34, name: "node core pins", sql: nodeCorePins },
   { version: 35, name: "job node", sql: jobNode },
   { version: 36, name: "job wait nodes", sql: jobWaitNodes },
+  { version: 37, name: "node kind", sql: nodeKind },
 ];

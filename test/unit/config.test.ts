@@ -55,6 +55,7 @@ describe("loadConfig", () => {
       route53: null,
       desec: null,
       deliveryListen: null,
+      egressListen: null,
       nodeDir: "./node",
       ns: null,
       postmaster: null,
