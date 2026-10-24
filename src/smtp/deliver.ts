@@ -6,6 +6,7 @@ import { type Provider, providerOfTargets } from "../routing/providers.ts";
 import { mxAllowed, type StsPolicy } from "./mta-sts.ts";
 import type { SessionPool } from "./pool.ts";
 import {
+  type OnOutcomes,
   type Phase,
   type RecipientResult,
   type RecipientStatus,
@@ -25,6 +26,7 @@ export interface DeliveryInput {
   requireTls?: boolean;
   connections?: number;
   sts?: StsPolicy | null;
+  onOutcomes?: OnOutcomes | undefined;
 }
 
 export interface DeliveryOptions {
@@ -265,6 +267,7 @@ export async function deliverTo(
         : {}),
       from: input.from,
       recipients: input.recipients,
+      onOutcomes: input.onOutcomes,
       data: input.data,
       smtpUtf8: input.smtpUtf8,
       ...(opts.localAddress ? { localAddress: opts.localAddress } : {}),

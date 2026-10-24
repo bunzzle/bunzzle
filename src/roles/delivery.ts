@@ -354,7 +354,7 @@ export async function runDelivery(config: Config, log: Logger) {
     nsDelegation: method(b.object({ zone: b.string().min(1).max(253) }), ({ zone }) =>
       delegationAt(zone, uncached),
     ),
-    deliver: method(deliverRequestWire, async (wire) => {
+    deliver: method(deliverRequestWire, async (wire, ctx) => {
       const req = requestFromWire(wire);
       if (!ehloName) {
         return {
@@ -373,7 +373,7 @@ export async function runDelivery(config: Config, log: Logger) {
         };
       }
       const start = Date.now();
-      const report = await transport.deliver(req);
+      const report = await transport.deliver(req, (recipients) => ctx.progress({ recipients }));
       spans?.add(deliverySpans(req, report, start, Date.now()));
       return report;
     }),

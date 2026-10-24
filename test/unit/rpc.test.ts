@@ -105,3 +105,101 @@ describe("rpc over unix sockets", () => {
     expect((await Bun.file(path).stat()).mode & 0o007).toBe(0);
   });
 });
+
+describe("progress", () => {
+  test("progress frames arrive before the result, later ones are dropped", async () => {
+    const path = `${dir}/${crypto.randomUUID()}.sock`;
+    let late: (() => void) | null = null;
+    servers.push(
+      await serveRpc(path, {
+        count: method(b.object({ n: b.number() }), ({ n }, ctx) => {
+          for (let i = 1; i <= n; i++) ctx.progress({ i });
+          late = () => ctx.progress({ i: 99 });
+          return "done";
+        }),
+      }),
+    );
+    const client = new RpcClient(path);
+    clients.push(client);
+    const seen: number[] = [];
+    const result = await client.call(
+      "count",
+      { n: 3 },
+      {
+        progress: b.object({ i: b.number() }),
+        onProgress: (p) => seen.push(p.i),
+      },
+    );
+    (late as unknown as () => void)();
+    expect(await client.call("count", { n: 0 })).toBe("done");
+    expect(result).toBe("done");
+    expect(seen).toEqual([1, 2, 3]);
+  });
+
+  test("progress that fails its schema is skipped", async () => {
+    const path = `${dir}/${crypto.randomUUID()}.sock`;
+    servers.push(
+      await serveRpc(path, {
+        mixed: method(b.object({}), (_p, ctx) => {
+          ctx.progress({ i: "x" });
+          ctx.progress({ i: 2 });
+          return null;
+        }),
+      }),
+    );
+    const client = new RpcClient(path);
+    clients.push(client);
+    const seen: number[] = [];
+    await client.call(
+      "mixed",
+      {},
+      {
+        progress: b.object({ i: b.number() }),
+        onProgress: (p) => seen.push(p.i),
+      },
+    );
+    expect(seen).toEqual([2]);
+  });
+
+  test("progress is kept when the server process is killed before the result", async () => {
+    const path = `${dir}/${crypto.randomUUID()}.sock`;
+    const rpc = new URL("../../src/ipc/rpc.ts", import.meta.url).pathname;
+    const schema = new URL("../../src/validate/schema.ts", import.meta.url).pathname;
+    const proc = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `import { method, serveRpc } from ${JSON.stringify(rpc)};
+         import { b } from ${JSON.stringify(schema)};
+         await serveRpc(${JSON.stringify(path)}, {
+           hang: method(b.object({}), (_p, ctx) => {
+             ctx.progress({ i: 1 });
+             return new Promise(() => {});
+           }),
+         });
+         console.log("ready");`,
+      ],
+      { stdout: "pipe", stderr: "inherit" },
+    );
+    const reader = proc.stdout.getReader();
+    await reader.read();
+    const client = new RpcClient(path);
+    clients.push(client);
+    const seen: number[] = [];
+    const call = client.call(
+      "hang",
+      {},
+      {
+        progress: b.object({ i: b.number() }),
+        onProgress: (p) => {
+          seen.push(p.i);
+          proc.kill("SIGKILL");
+        },
+      },
+    );
+    const err = await failure(call);
+    await proc.exited;
+    expect(seen).toEqual([1]);
+    expect(err.code).toBe("lost");
+  });
+});
