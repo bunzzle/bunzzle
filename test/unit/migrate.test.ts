@@ -65,7 +65,7 @@ describe("migrate", () => {
             VALUES ('m1', 'ready', 10, 2, 'busy', 7), ('m2', 'unknown', 11, 1, NULL, 8)`);
     expect(migrate(db, migrations)).toEqual([
       3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-      28, 29, 30, 31, 32, 33, 34, 35,
+      28, 29, 30, 31, 32, 33, 34, 35, 36,
     ]);
     const rows = db
       .query<Record<string, unknown>, []>(
@@ -129,7 +129,7 @@ describe("migrate", () => {
     );
 
     expect(migrate(db, migrations)).toEqual([
-      21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+      21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
     ]);
     expect(db.query("SELECT id, name, suspended_at, deleted_at FROM projects").all()).toEqual([
       { id: "default", name: "default", suspended_at: null, deleted_at: null },
@@ -192,7 +192,7 @@ describe("migrate", () => {
     db.run(
       "INSERT INTO project_limit_notices (project_id, span, notified_at) VALUES ('default', 'day', 5)",
     );
-    expect(migrate(db, migrations)).toEqual([32, 33, 34, 35]);
+    expect(migrate(db, migrations)).toEqual([32, 33, 34, 35, 36]);
     expect(db.query("SELECT project_id, unit, slot, n FROM project_usage").all()).toEqual([
       { project_id: "default", unit: "hour", slot: 7, n: 3 },
     ]);

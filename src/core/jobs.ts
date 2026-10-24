@@ -162,7 +162,8 @@ export function claim(
     "SELECT MIN(priority) AS p FROM jobs WHERE state = 'ready' AND priority > ?",
   );
   const lease = db.query<LeasedRow, [number, number, number, number, string, string, number]>(
-    `UPDATE jobs SET state = 'leased', attempt = attempt + 1, lease_until = ?1, updated_at = ?2
+    `UPDATE jobs SET state = 'leased', attempt = attempt + 1, lease_until = ?1, updated_at = ?2,
+       wait_nodes = NULL
      WHERE id IN (
        SELECT id FROM jobs
        WHERE state = 'ready' AND priority = ?3 AND run_after <= ?4
@@ -177,7 +178,8 @@ export function claim(
     LeasedRow,
     [number, number, number, number, string, string, number, string]
   >(
-    `UPDATE jobs SET state = 'leased', attempt = attempt + 1, lease_until = ?1, updated_at = ?2
+    `UPDATE jobs SET state = 'leased', attempt = attempt + 1, lease_until = ?1, updated_at = ?2,
+       wait_nodes = NULL
      WHERE id IN (
        SELECT id FROM jobs
        WHERE state = 'ready' AND project_id = ?8 AND priority = ?3 AND run_after <= ?4
@@ -412,6 +414,22 @@ export function holdsLease(db: Database, job: Pick<ClaimedJob, "id" | "attempt">
       )
       .get(job.id, job.attempt) !== null
   );
+}
+
+export function waitOnNodes(db: Database, job: Pick<ClaimedJob, "id">, nodes: string[]): void {
+  db.query<unknown, [string, string]>(
+    "UPDATE jobs SET wait_nodes = ? WHERE id = ? AND state = 'ready'",
+  ).run(JSON.stringify(nodes), job.id);
+}
+
+export function wakeWaitingOn(db: Database, node: string, now: number): number {
+  return db
+    .query<unknown, [number, string]>(
+      `UPDATE jobs SET run_after = ?1, wait_nodes = NULL, updated_at = ?1
+       WHERE state = 'ready' AND wait_nodes IS NOT NULL AND run_after > ?1
+         AND EXISTS (SELECT 1 FROM json_each(jobs.wait_nodes) WHERE value = ?2)`,
+    )
+    .run(now, node).changes;
 }
 
 export function renewLease(
