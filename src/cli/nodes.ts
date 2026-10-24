@@ -47,7 +47,7 @@ function split(argv: string[]): [string[], string[]] {
   return i < 0 ? [argv, []] : [argv.slice(0, i), argv.slice(i)];
 }
 
-const SYSTEM_NODE_DIR = "/var/lib/bunzzle/node";
+const SYSTEM_DIRS = { delivery: "/var/lib/bunzzle/node", egress: "/var/lib/bunzzle/egress" };
 
 async function run(cmd: string[], path: string) {
   const p = Bun.spawn(cmd, {
@@ -60,13 +60,13 @@ async function run(cmd: string[], path: string) {
   }
 }
 
-async function nodeDirOf(config: Config): Promise<string> {
+async function nodeDirOf(config: Config, kind: "delivery" | "egress"): Promise<string> {
   if (Bun.env["BUNZZLE_NODE_DIR"]) return config.nodeDir;
-  const system = await Bun.file(SYSTEM_NODE_DIR)
+  const system = await Bun.file(SYSTEM_DIRS[kind])
     .stat()
     .then((s) => s.isDirectory())
     .catch(() => false);
-  return system ? SYSTEM_NODE_DIR : config.nodeDir;
+  return system ? SYSTEM_DIRS[kind] : config.nodeDir;
 }
 
 async function writePrivate(path: string, text: string) {
@@ -80,7 +80,8 @@ async function request(argv: string[], config: Config) {
   const [name, ...extra] = positional;
   if (!name || extra.length > 0) throw new UsageError(USAGE);
   if (!validName(name)) throw new UsageError("node names use a-z, 0-9 and -, up to 63 characters");
-  const dir = args.strings.get("dir") ?? (await nodeDirOf(config));
+  const kind = args.flags.has("egress") ? "egress" : "delivery";
+  const dir = args.strings.get("dir") ?? (await nodeDirOf(config, kind));
   if ((await Bun.file(`${dir}/key.pem`).exists()) && !args.flags.has("force")) {
     throw new UsageError(`${dir}/key.pem already exists (use --force to replace it)`);
   }
@@ -127,7 +128,7 @@ async function install(argv: string[], config: Config) {
   if (!file || extra.length > 0) throw new UsageError(USAGE);
   const parsed = bundle.safeParse(await Bun.file(file).json());
   if (!parsed.success) throw new UsageError(`${file} is not a node bundle`);
-  const dir = args.strings.get("dir") ?? (await nodeDirOf(config));
+  const dir = args.strings.get("dir") ?? (await nodeDirOf(config, parsed.data.kind));
   const keyFile = Bun.file(`${dir}/key.pem`);
   if (!(await keyFile.exists())) {
     throw new UsageError(`${dir}/key.pem is missing: run bunzzle nodes request first`);

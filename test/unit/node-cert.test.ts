@@ -12,6 +12,7 @@ import {
   signWith,
 } from "../../src/x509/issue.ts";
 import { verifySignature } from "../../src/x509/verify.ts";
+import { freePort } from "../support/ports.ts";
 
 const DAY = 86_400_000;
 const now = Date.now();
@@ -112,7 +113,7 @@ describe("node certificates", () => {
     const node = await leaf("node-1", "server");
     const core = await leaf("core", "client");
     const ca = pem("CERTIFICATE", caCert);
-    const port = 20_000 + Math.floor(Math.random() * 20_000);
+    const port = freePort();
     servers.push(
       await serveRpc(
         {

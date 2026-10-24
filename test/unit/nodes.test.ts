@@ -33,6 +33,7 @@ import { b } from "../../src/validate/schema.ts";
 import { parseCertificate } from "../../src/x509/cert.ts";
 import { parseCertificateRequest } from "../../src/x509/issue.ts";
 import { type FakeMx, type MxScenario, startFakeMx, TEST_CA } from "../support/fake-mx.ts";
+import { freePort } from "../support/ports.ts";
 
 const dir = `${Bun.env["TMPDIR"] ?? "/tmp"}/bunzzle-nodes-${crypto.randomUUID()}`;
 await Bun.$`mkdir -p ${dir}/keys`.quiet();
@@ -156,7 +157,7 @@ describe("delivery nodes", () => {
     const tls = await loadLinkTls(nodeDir);
     expect(tls.pins).toEqual([identity.current().pin]);
 
-    const port = 20_000 + Math.floor(Math.random() * 20_000);
+    const port = freePort();
     const server = await serveRpc(
       { hostname: "127.0.0.1", port, tls },
       { ping: method(b.object({}), () => "pong") },
@@ -371,11 +372,9 @@ describe("delivery nodes", () => {
   });
 });
 
-let nextPort = 21_000 + Math.floor(Math.random() * 15_000);
-
 async function startNode(c: Awaited<ReturnType<typeof core>>, name: string, ips: string[] = []) {
   const nodeDir = `${dir}/${name}-${crypto.randomUUID().slice(0, 6)}`;
-  const port = nextPort++;
+  const port = freePort();
   const csr = await requestCsr(nodeDir, name);
   const bundle = await invoke(c.methods, "addNode", { name, address: `127.0.0.1:${port}`, csr });
   await Bun.write(`${nodeDir}/bundle.json`, JSON.stringify(bundle));
@@ -660,7 +659,7 @@ describe("egress", () => {
     const c = await core();
     const nodeDir = `${dir}/edge-a`;
     const csr = await requestCsr(nodeDir, "edge-a");
-    const port = nextPort++;
+    const port = freePort();
     const result = (await invoke(c.methods, "addNode", {
       name: "edge-a",
       address: `127.0.0.1:${port}`,
@@ -722,7 +721,7 @@ async function startEgress(
   sources: string[] = [],
 ) {
   const nodeDir = `${dir}/${name}-${crypto.randomUUID().slice(0, 6)}`;
-  const port = nextPort++;
+  const port = freePort();
   const csr = await requestCsr(nodeDir, name);
   const bundle = await invoke(c.methods, "addNode", {
     name,

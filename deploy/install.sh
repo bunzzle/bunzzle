@@ -49,7 +49,9 @@ fi
 install -m 0755 "$binary" "$PREFIX/bunzzle"
 install -m 0644 "$SRC/systemd/bunzzle.sysusers" /usr/lib/sysusers.d/bunzzle.conf
 install -m 0644 "$SRC/systemd/bunzzle.tmpfiles" /usr/lib/tmpfiles.d/bunzzle.conf
-if [ -n "${BUNZZLE_NODE:-}" ]; then
+if [ -n "${BUNZZLE_EGRESS:-}" ]; then
+  units="bunzzle-egress.service"
+elif [ -n "${BUNZZLE_NODE:-}" ]; then
   units="bunzzle-delivery.service"
 else
   units="bunzzle.target bunzzle-signer.service bunzzle-dns.service bunzzle-core.service bunzzle-delivery.service bunzzle-api.service bunzzle-inbound.service"
@@ -67,6 +69,14 @@ if [ ! -f /etc/bunzzle/bunzzle.env ]; then
 fi
 if [ -f "$SRC/nftables/bunzzle.nft" ]; then
   install -m 0644 "$SRC/nftables/bunzzle.nft" /etc/bunzzle/bunzzle.nft
+fi
+
+if [ -n "${BUNZZLE_EGRESS:-}" ]; then
+  systemctl daemon-reload
+  systemctl add-wants multi-user.target bunzzle-egress.service >/dev/null
+  echo "egress installed: set BUNZZLE_SOURCE_IPS and BUNZZLE_EGRESS_LISTEN in /etc/bunzzle/bunzzle.env"
+  echo "then: sudo -u bunzzle-egress bunzzle nodes request NAME --egress"
+  exit 0
 fi
 
 if [ -n "${BUNZZLE_NODE:-}" ]; then

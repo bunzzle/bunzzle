@@ -11,6 +11,7 @@ import {
 } from "../../src/ipc/rpc.ts";
 import { b } from "../../src/validate/schema.ts";
 import { parseCertificate } from "../../src/x509/cert.ts";
+import { freePort } from "../support/ports.ts";
 
 const dir = `${import.meta.dir}/../fixtures/node`;
 const read = (name: string) => Bun.file(`${dir}/${name}`).text();
@@ -42,7 +43,7 @@ const failure = (p: Promise<unknown>): Promise<RpcError> =>
 let release: (() => void) | null = null;
 
 async function start(pins = [corePin]) {
-  const port = 20_000 + Math.floor(Math.random() * 20_000);
+  const port = freePort();
   const refused: string[] = [];
   servers.push(
     await serveRpc(
@@ -191,7 +192,7 @@ describe("rpc over TCP with mutual TLS", () => {
   });
 
   test("reconnects with backoff after a failed connect", async () => {
-    const port = 40_000 + Math.floor(Math.random() * 10_000);
+    const port = freePort();
     const c = client(port);
     const first = await failure(c.call("add", { a: 1, b: 1 }));
     expect(first.code).toBe("unavailable");
