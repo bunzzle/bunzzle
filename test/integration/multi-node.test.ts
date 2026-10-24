@@ -163,6 +163,8 @@ beforeAll(async () => {
   await waitFor("signer", () => exists(`${CORE}/run/signer.sock`));
   await startRole("dns", "dns", CORE, coreEnv);
   await waitFor("dns", () => exists(`${CORE}/run/dns.sock`));
+  await startRole("link", "link", CORE, coreEnv);
+  await waitFor("link", () => exists(`${CORE}/run/link.sock`));
   await startRole("delivery", "delivery", CORE, { ...coreEnv, BUNZZLE_SOURCE_IPS: "" });
   await waitFor("local delivery", () => exists(`${CORE}/run/delivery.sock`));
   await startRole("core", "core", CORE, coreEnv);

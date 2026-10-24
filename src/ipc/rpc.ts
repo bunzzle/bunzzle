@@ -1,4 +1,4 @@
-import type { Socket, SocketListener, UnixSocketListener } from "bun";
+import type { Socket, SocketHandler, SocketListener, TLSOptions, UnixSocketListener } from "bun";
 import { cpuSeconds } from "../metrics/usage.ts";
 import { b } from "../validate/schema.ts";
 import { parseCertificate } from "../x509/cert.ts";
@@ -164,6 +164,7 @@ export interface TcpEndpoint {
   hostname: string;
   port: number;
   tls: LinkTls;
+  via?: string;
 }
 
 export type Endpoint = string | TcpEndpoint;
@@ -418,6 +419,57 @@ export interface CallOptions<R, P = unknown> {
 const BACKOFF_MIN = 250;
 const BACKOFF_MAX = 30_000;
 
+async function throughLink(
+  via: string,
+  to: TcpEndpoint,
+  tls: TLSOptions,
+  secured: SocketHandler<undefined>,
+): Promise<Socket<undefined>> {
+  const { promise, resolve, reject } = Promise.withResolvers<Socket<undefined>>();
+  let head = "";
+  let upgraded = false;
+  const raw = await Bun.connect({
+    unix: via,
+    socket: {
+      data(s, chunk) {
+        if (upgraded) return;
+        head += new TextDecoder().decode(chunk);
+        const end = head.indexOf("\n");
+        if (end < 0) return;
+        upgraded = true;
+        let answer: unknown;
+        try {
+          answer = JSON.parse(head.slice(0, end));
+        } catch {
+          answer = null;
+        }
+        const reply = streamReply.safeParse(answer);
+        if (!reply.success) {
+          reject(new RpcError("invalid", `${via}: bad answer to the link request`));
+          s.end();
+          return;
+        }
+        if ("error" in reply.data) {
+          reject(new RpcError("unavailable", `${via}: ${reply.data.error.message}`));
+          s.end();
+          return;
+        }
+        const pair = s.upgradeTLS({ tls, socket: secured });
+        if (pair) resolve(pair[1]);
+        else reject(new RpcError("unavailable", "TLS over the link failed"));
+      },
+      close() {
+        if (!upgraded) reject(new RpcError("unavailable", `${via}: closed`));
+      },
+      error(_s, err) {
+        if (!upgraded) reject(new RpcError("unavailable", `${via}: ${err.message}`));
+      },
+    },
+  });
+  raw.write(`${JSON.stringify({ host: to.hostname, port: to.port })}\n`);
+  return promise;
+}
+
 export class RpcClient {
   readonly #endpoint: Endpoint;
   #failures = 0;
@@ -491,36 +543,40 @@ export class RpcClient {
       10_000,
     );
     let socket: Socket<undefined> | null = null;
+    const tls = {
+      ...tlsOptions(endpoint.tls),
+      rejectUnauthorized: true,
+      ...(endpoint.tls.name ? { serverName: endpoint.tls.name } : {}),
+    };
+    const secured: SocketHandler<undefined> = {
+      ...handlers,
+      close: (s) => {
+        reject(new RpcError("unavailable", `${this.path}: closed during handshake`));
+        this.#lost(s);
+      },
+      error: (s, err) => {
+        reject(new RpcError("unavailable", `${this.path}: ${err.message}`));
+        this.#lost(s);
+      },
+      handshake: (s, _success, authorizationError) => {
+        const refused = peerRefusal(s, endpoint.tls, "server", authorizationError);
+        if (refused) {
+          reject(new RpcError("unavailable", `${this.path}: ${refused}`));
+          s.end();
+          return;
+        }
+        resolve();
+      },
+    };
     try {
-      socket = await Bun.connect({
-        hostname: endpoint.hostname,
-        port: endpoint.port,
-        tls: {
-          ...tlsOptions(endpoint.tls),
-          rejectUnauthorized: true,
-          ...(endpoint.tls.name ? { serverName: endpoint.tls.name } : {}),
-        },
-        socket: {
-          ...handlers,
-          close: (s) => {
-            reject(new RpcError("unavailable", `${this.path}: closed during handshake`));
-            this.#lost(s);
-          },
-          error: (s, err) => {
-            reject(new RpcError("unavailable", `${this.path}: ${err.message}`));
-            this.#lost(s);
-          },
-          handshake: (s, _success, authorizationError) => {
-            const refused = peerRefusal(s, endpoint.tls, "server", authorizationError);
-            if (refused) {
-              reject(new RpcError("unavailable", `${this.path}: ${refused}`));
-              s.end();
-              return;
-            }
-            resolve();
-          },
-        },
-      });
+      socket = endpoint.via
+        ? await throughLink(endpoint.via, endpoint, tls, secured)
+        : await Bun.connect({
+            hostname: endpoint.hostname,
+            port: endpoint.port,
+            tls,
+            socket: secured,
+          });
       await promise;
     } catch (err) {
       socket?.end();

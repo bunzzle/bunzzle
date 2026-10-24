@@ -20,6 +20,7 @@ const BY_ROLE: Record<Role, string[]> = {
     "BUNZZLE_RETENTION_DAYS",
     "BUNZZLE_PUBLIC_URL",
   ],
+  link: [],
   core: [
     "BUNZZLE_OTLP_ENDPOINT",
     "BUNZZLE_OTLP_METRICS_INTERVAL",
