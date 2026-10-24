@@ -290,7 +290,13 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       ...(aged ? { aged } : {}),
       ...(path ? { path } : {}),
       apply: (d, settled, at) => {
-        if (settled === "dead") return record(job, [], none)(d, settled, at);
+        if (settled === "dead") {
+          d.query<unknown, [string, number, string]>(
+            `UPDATE recipients SET reply = ?, updated_at = ?
+             WHERE job_id = ? AND status IN ('queued', 'deferred', 'unknown')`,
+          ).run(reason, at, job.id);
+          return record(job, [], none)(d, settled, at);
+        }
         if (settled !== "requeued") return;
         if (nodes.length > 0) waitOnNodes(d, job, nodes);
         if (!visible) return;

@@ -203,7 +203,11 @@ export function choose(
   const pool = (name: string) => ips.filter((x) => x.pool === name);
   if (assigned !== null && pool(assigned).length === 0) {
     return {
-      wait: { delayMs: 5 * 60_000, reason: `no source IP is in the pool ${assigned}` },
+      wait: {
+        delayMs: 5 * 60_000,
+        reason: `no source IP is configured in the pool ${assigned}`,
+        aged: true,
+      },
     };
   }
   const candidates =

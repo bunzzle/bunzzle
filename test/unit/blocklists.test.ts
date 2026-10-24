@@ -195,7 +195,7 @@ describe("blocklists", () => {
     expect(pick("transactional", "acme")).toEqual({ source: "192.0.2.3" });
     expect(pick("bulk", "acme")).toEqual({ source: "192.0.2.3" });
     expect(pick("transactional", "gone")).toEqual({
-      wait: { delayMs: 300_000, reason: "no source IP is in the pool gone" },
+      wait: { delayMs: 300_000, reason: "no source IP is configured in the pool gone", aged: true },
     });
   });
 });

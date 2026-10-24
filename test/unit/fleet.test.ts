@@ -68,7 +68,7 @@ function harness(
   const renewed: (string | null | undefined)[] = [];
   let n = 0;
   let last: ClaimedJob | null = null;
-  const run = async (): Promise<Outcome | string> => {
+  const run = async (metadata?: Record<string, unknown>): Promise<Outcome | string> => {
     enqueueEmail(
       db,
       DEFAULT_PROJECT,
@@ -79,6 +79,7 @@ function harness(
         recipients: ["x@company.example"],
         smtpUtf8: false,
         requireTls: false,
+        ...(metadata ? { metadata } : {}),
       },
       clock.now(),
     );
@@ -384,4 +385,31 @@ test("other waits keep waiting past the age limit", async () => {
   const hold: Outcome = { kind: "requeue", reason: "bulk mail on hold: review", delayMs: MIN };
   expect(settleAs(h, hold, { createdAt: h.clock.now() - 6 * DAY })).toBe("requeued");
   expect(events(h, "delayed")).toEqual([]);
+});
+
+test("a wait for a pool with no source IP fails at the age limit and names the pool", async () => {
+  const h = harness(() => null);
+  const outcome = (await h.run({ pool: "acme" })) as Outcome;
+  expect(outcome).toMatchObject({
+    kind: "requeue",
+    aged: true,
+    reason: "no source IP is configured in the pool acme",
+  });
+  expect(settleAs(h, outcome, { createdAt: h.clock.now() - 5 * DAY })).toBe("dead");
+  expect(events(h, "dead").at(-1)).toMatchObject({
+    code: "retries_exhausted",
+    reason: "no source IP is configured in the pool acme",
+  });
+  const r = h.db
+    .query<{ status: string; reply: string }, [string]>(
+      "SELECT status, reply FROM recipients WHERE job_id = ?",
+    )
+    .get(h.last().id);
+  expect(r).toEqual({ status: "failed", reply: "no source IP is configured in the pool acme" });
+  const job = h.db
+    .query<{ last_error: string }, [string]>("SELECT last_error FROM jobs WHERE id = ?")
+    .get(h.last().id);
+  expect(job?.last_error).toBe(
+    "reached the maximum age while waiting: no source IP is configured in the pool acme",
+  );
 });
