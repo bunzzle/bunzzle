@@ -24,6 +24,7 @@ finish() {
     for h in $hosts; do
       echo "== $h"
       docker exec "bz-$h" systemctl list-jobs --no-pager 2>/dev/null || true
+      docker exec "bz-$h" sh -c 'findmnt /run; findmnt -R /run/credentials; ls -laR /run/credentials' 2>&1 | head -30 || true
       docker exec "bz-$h" systemctl status 'bunzzle*' --no-pager 2>/dev/null | head -60 || true
       docker exec "bz-$h" journalctl -u 'bunzzle-*' --no-pager 2>/dev/null | tail -80 || true
       docker exec "bz-$h" nft list table inet bunzzle 2>/dev/null | grep counter || true
@@ -47,7 +48,7 @@ docker network create --internal --subnet 10.89.3.0/24 bz-internet >/dev/null
 
 host() {
   docker run -d --name "bz-$1" --hostname "$1" --privileged --cgroupns=private \
-    --tmpfs /run:exec --tmpfs /run/lock -v "$PWD:/src:ro" \
+    -v "$PWD:/src:ro" \
     --network "bz-$2" --ip "$3" bunzzle-host:test >/dev/null
   docker network connect --ip "$5" "bz-$4" "bz-$1"
 }
