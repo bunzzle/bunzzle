@@ -125,7 +125,10 @@ export function projectEvents(db: Database, now: number, limit = 500): number {
       detail["suppression"] = { reason: data["reason"] ?? null, scope: data["scope"] ?? null };
     }
     if (type === "email.complained") detail["feedback_type"] = data["feedback_type"] ?? null;
-    if (type === "email.failed") detail["reason"] = data["code"] ?? null;
+    if (type === "email.failed") {
+      detail["reason"] = data["code"] ?? null;
+      detail["message"] = typeof data["reason"] === "string" ? data["reason"].slice(0, 4096) : null;
+    }
     if (type === "email.opened" || type === "email.clicked") {
       detail["user_agent"] = data["user_agent"] ?? null;
     }
