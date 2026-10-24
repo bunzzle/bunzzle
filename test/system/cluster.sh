@@ -34,7 +34,7 @@ finish() {
       echo "== credential probe $props"
       docker exec bz-core systemd-run --wait --pipe -q -p User=bunzzle-signer \
         -p LoadCredential=master.key:/etc/bunzzle/master.key $props \
-        sh -c 'id; echo $CREDENTIALS_DIRECTORY; ls -la $CREDENTIALS_DIRECTORY; head -c 4 $CREDENTIALS_DIRECTORY/master.key; echo; grep credentials /proc/self/mountinfo' 2>&1 || true
+        sh -c 'id; echo $CREDENTIALS_DIRECTORY; ls -la $CREDENTIALS_DIRECTORY; wc -c < $CREDENTIALS_DIRECTORY/master.key; grep credentials /proc/self/mountinfo' 2>&1 || true
     done
     docker exec bz-core sh -c 'ls -la /etc/bunzzle; systemd --version | head -1' 2>&1 || true
   fi
