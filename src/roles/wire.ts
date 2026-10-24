@@ -185,6 +185,13 @@ export const deliverRequestWire = b.object({
   bounceDomain: b.string().max(253).nullable().optional(),
   source: b.string().max(64).optional(),
   via: b.enum(["relay"]).optional(),
+  egress: b
+    .object({
+      name: b.string().min(1).max(63),
+      address: b.string().max(64),
+      pin: b.string().regex(/^sha256\/[A-Za-z0-9+/]{43}=$/),
+    })
+    .optional(),
 });
 
 export const requestToWire = ({ body, opened, ...r }: DeliverRequest) => ({

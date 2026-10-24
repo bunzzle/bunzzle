@@ -1,4 +1,5 @@
 import type { Socket } from "bun";
+import type { Via } from "../egress/tunnel.ts";
 
 export interface Reply {
   code: number;
@@ -27,6 +28,7 @@ export interface ConnectOptions {
   port: number;
   localAddress?: string;
   timeoutMs: number;
+  via?: Via | undefined;
 }
 
 const MAX_LINE = 4096;
@@ -114,7 +116,19 @@ export class SmtpConnection {
     return this.closedError !== null;
   }
 
-  static connect(opts: ConnectOptions): Promise<SmtpConnection> {
+  static async connect(opts: ConnectOptions): Promise<SmtpConnection> {
+    const via = opts.via;
+    const unix = via
+      ? await via
+          .open(opts.host, opts.port, opts.localAddress ?? "", opts.timeoutMs)
+          .catch((err) => {
+            const timedOut = (err as { code?: string }).code === "timeout";
+            throw new SmtpError(
+              timedOut ? "timeout" : "network",
+              `connect to ${opts.host}:${opts.port} through ${via.name}: ${(err as Error).message}`,
+            );
+          })
+      : null;
     const conn = new SmtpConnection(opts.host);
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -132,28 +146,29 @@ export class SmtpConnection {
         opts.timeoutMs,
       );
       const h = conn.handlers();
-      const options = {
+      const socket = {
+        ...h,
+        open(s: Socket<undefined>) {
+          conn.socket = s;
+          s.setNoDelay(true);
+          if (settled) s.end();
+          else settle(() => resolve(conn));
+        },
+        connectError(_s: Socket<undefined>, err: Error) {
+          settle(() =>
+            reject(
+              new SmtpError("network", `connect to ${opts.host}:${opts.port}: ${err.message}`),
+            ),
+          );
+        },
+      };
+      const tcp = {
         hostname: opts.host,
         port: opts.port,
         ...(opts.localAddress ? { localAddress: opts.localAddress } : {}),
-        socket: {
-          ...h,
-          open(s: Socket<undefined>) {
-            conn.socket = s;
-            s.setNoDelay(true);
-            if (settled) s.end();
-            else settle(() => resolve(conn));
-          },
-          connectError(_s: Socket<undefined>, err: Error) {
-            settle(() =>
-              reject(
-                new SmtpError("network", `connect to ${opts.host}:${opts.port}: ${err.message}`),
-              ),
-            );
-          },
-        },
+        socket,
       };
-      Bun.connect(options).catch((err: Error) =>
+      (unix ? Bun.connect({ unix, socket }) : Bun.connect(tcp)).catch((err: Error) =>
         settle(() =>
           reject(new SmtpError("network", `connect to ${opts.host}:${opts.port}: ${err.message}`)),
         ),

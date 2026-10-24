@@ -1,4 +1,5 @@
 import type { TlsaData } from "../dns/wire.ts";
+import type { Via } from "../egress/tunnel.ts";
 import {
   type Reply,
   replyText,
@@ -89,6 +90,7 @@ export type OnOutcomes = (results: RecipientResult[]) => void;
 
 export interface SessionInput {
   onOutcomes?: OnOutcomes | undefined;
+  via?: Via | undefined;
   host: string;
   address: string;
   port: number;
@@ -226,11 +228,12 @@ export async function runSession(input: SessionInput): Promise<SessionResult> {
         port: input.port,
         timeoutMs: t.connect,
         ...(input.localAddress ? { localAddress: input.localAddress } : {}),
+        via: input.via,
       });
       conn.transcript = { start: startedAt, lines: [] };
       conn.note(
         "-",
-        `connected to ${input.address}:${input.port}${input.localAddress ? ` from ${input.localAddress}` : ""}`,
+        `connected to ${input.address}:${input.port}${input.localAddress ? ` from ${input.localAddress}` : ""}${input.via ? ` through ${input.via.name}` : ""}`,
       );
 
       if (input.implicitTls) {

@@ -467,4 +467,53 @@ describe("delivery: through a delivery node", () => {
     expect(report.recipients.map((r) => r.status)).toEqual(["delivered"]);
     expect(mx?.sessions[0]?.messages[0] ?? "").toStartWith("DKIM-Signature:");
   });
+  test("a send through an egress needs a source IP and a link certificate", async () => {
+    const t = await setup();
+    const node = localTransport(
+      {
+        resolver: createResolver({ servers: [{ host: "127.0.0.1", port: dns.port }] }),
+        ehloName: "out.bunzzle.test",
+        port: mx?.port ?? 0,
+        allowPrivate: true,
+        sources: ["127.0.0.1"],
+        egressVia: () => "this delivery role has no link certificate yet",
+      },
+      async () => {
+        throw new Error("no signer on this machine");
+      },
+    );
+    const id = Bun.randomUUIDv7();
+    const body = await sealBody(await t.signer.epochKey(), id, DATA);
+    const opened = await t.signer.open(id, body, { lane: "transactional", bounceDomain: null });
+    const egress = {
+      name: "edge-a",
+      address: "203.0.113.9:7466",
+      pin: `sha256/${"A".repeat(43)}=`,
+    };
+    const ask = async (source?: string) => {
+      const wire = JSON.parse(
+        JSON.stringify(
+          requestToWire({
+            key: `${id}#1`,
+            recall: null,
+            messageId: id,
+            domain: "example.test",
+            destination: await node.lookup("example.test"),
+            from: "a@bunzzle.test",
+            recipients: ["x@example.test"],
+            smtpUtf8: false,
+            requireTls: false,
+            opened,
+            egress,
+            ...(source ? { source } : {}),
+          }),
+        ),
+      );
+      expect(deliverRequestWire.parse(wire).egress).toEqual(egress);
+      return (await node.deliver(requestFromWire(deliverRequestWire.parse(wire)))).recipients;
+    };
+    expect((await ask("127.0.0.1"))[0]?.reply).toContain("no link certificate yet");
+    expect((await ask())[0]?.reply).toContain("a send through edge-a needs a source IP");
+    expect(mx?.sessions.length ?? 0).toBe(0);
+  });
 });

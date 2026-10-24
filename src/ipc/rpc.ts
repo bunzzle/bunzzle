@@ -70,15 +70,47 @@ function concat(parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
+export class Outbox {
+  #out: Uint8Array[] = [];
+
+  constructor(private readonly socket: Socket<undefined>) {}
+
+  write(bytes: Uint8Array) {
+    if (bytes.length === 0) return;
+    this.#out.push(bytes);
+    this.flush();
+  }
+
+  get pending(): number {
+    return this.#out.length;
+  }
+
+  flush() {
+    while (this.#out.length > 0) {
+      const head = this.#out[0] as Uint8Array;
+      const n = this.socket.write(head);
+      if (n < 0) return;
+      if (n < head.length) {
+        this.#out[0] = head.subarray(n);
+        return;
+      }
+      this.#out.shift();
+    }
+  }
+}
+
 class Framer {
   #chunks: Uint8Array[] = [];
   #size = 0;
-  #out: Uint8Array[] = [];
+  readonly #out: Outbox;
+  rest: Uint8Array | null = null;
 
   constructor(
     private readonly socket: Socket<undefined>,
-    private readonly onFrame: (frame: unknown) => void,
-  ) {}
+    private readonly onFrame: (frame: unknown) => boolean | undefined,
+  ) {
+    this.#out = new Outbox(socket);
+  }
 
   push(chunk: Uint8Array) {
     let start = 0;
@@ -96,7 +128,10 @@ class Framer {
         this.socket.end();
         return;
       }
-      this.onFrame(parsed);
+      if (this.onFrame(parsed) === true) {
+        this.rest = chunk.slice(start);
+        return;
+      }
     }
     if (start < chunk.length) {
       this.#size += chunk.length - start;
@@ -109,21 +144,11 @@ class Framer {
   }
 
   send(value: unknown) {
-    this.#out.push(enc.encode(`${JSON.stringify(value)}\n`));
-    this.flush();
+    this.#out.write(enc.encode(`${JSON.stringify(value)}\n`));
   }
 
   flush() {
-    while (this.#out.length > 0) {
-      const head = this.#out[0] as Uint8Array;
-      const n = this.socket.write(head);
-      if (n < 0) return;
-      if (n < head.length) {
-        this.#out[0] = head.subarray(n);
-        return;
-      }
-      this.#out.shift();
-    }
+    this.#out.flush();
   }
 }
 
@@ -190,11 +215,20 @@ export interface RpcServer {
   reload(tls: LinkTls): void;
 }
 
+export interface StreamHandler {
+  data(chunk: Uint8Array): void;
+  drain(): void;
+  close(): void;
+}
+
 export interface ServeOptions {
   mode?: "600" | "660";
   onRefused?(reason: string, remote: string): void;
   allow?(pin: string, method: string): boolean;
+  stream?(params: unknown, socket: Socket<undefined>): StreamHandler;
 }
+
+const streamFrame = b.object({ stream: b.unknown() });
 
 function peerPin(socket: Socket<undefined>): string {
   const raw = (socket.getPeerCertificate() as { raw?: Uint8Array } | null)?.raw;
@@ -210,6 +244,7 @@ export async function serveRpc(
 ): Promise<RpcServer> {
   const methods: Methods = { usage, ...served };
   const framers = new Map<Socket<undefined>, Framer>();
+  const streams = new Map<Socket<undefined>, StreamHandler>();
   const respond = async (framer: Framer, frame: unknown, pin: string | null) => {
     const req = request.safeParse(frame);
     if (!req.success) return;
@@ -262,23 +297,52 @@ export async function serveRpc(
       });
     }
   };
+  const startStream = (s: Socket<undefined>, framer: Framer, frame: unknown, pin: string) => {
+    if (!opts.stream || (opts.allow && !opts.allow(pin, "stream"))) {
+      framer.send({
+        error: { code: "forbidden", message: "streams are not allowed for this peer" },
+      });
+      s.end();
+      return true;
+    }
+    const handler = opts.stream((frame as { stream: unknown }).stream, s);
+    framers.delete(s);
+    streams.set(s, handler);
+    queueMicrotask(() => {
+      if (framer.rest?.length) handler.data(framer.rest);
+    });
+    return true;
+  };
   const accept = (s: Socket<undefined>, pin: string | null = null) => {
-    const framer = new Framer(s, (frame) => void respond(framer, frame, pin));
+    let first = true;
+    const framer = new Framer(s, (frame) => {
+      const opening = first && pin !== null && streamFrame.safeParse(frame).success;
+      first = false;
+      if (opening) return startStream(s, framer, frame, pin);
+      void respond(framer, frame, pin);
+      return undefined;
+    });
     framers.set(s, framer);
+  };
+  const closed = (s: Socket<undefined>) => {
+    framers.delete(s);
+    const stream = streams.get(s);
+    streams.delete(s);
+    stream?.close();
   };
   const handlers = {
     data(s: Socket<undefined>, chunk: Uint8Array) {
-      framers.get(s)?.push(chunk);
+      const stream = streams.get(s);
+      if (stream) stream.data(chunk);
+      else framers.get(s)?.push(chunk);
     },
     drain(s: Socket<undefined>) {
-      framers.get(s)?.flush();
+      const stream = streams.get(s);
+      if (stream) stream.drain();
+      else framers.get(s)?.flush();
     },
-    close(s: Socket<undefined>) {
-      framers.delete(s);
-    },
-    error(s: Socket<undefined>) {
-      framers.delete(s);
-    },
+    close: closed,
+    error: closed,
   };
   if (typeof endpoint !== "string") {
     let tls = endpoint.tls;
@@ -415,7 +479,7 @@ export class RpcClient {
     const endpoint = this.#endpoint;
     if (typeof endpoint === "string") {
       const socket = await Bun.connect({ unix: endpoint, socket: handlers });
-      framer = new Framer(socket, (frame) => this.#onFrame(frame));
+      framer = new Framer(socket, (frame) => void this.#onFrame(frame));
       this.#socket = socket;
       this.#framer = framer;
       return framer;
@@ -465,7 +529,7 @@ export class RpcClient {
       clearTimeout(timer);
     }
     socket.setKeepAlive(true, 15_000);
-    framer = new Framer(socket, (frame) => this.#onFrame(frame));
+    framer = new Framer(socket, (frame) => void this.#onFrame(frame));
     this.#socket = socket;
     this.#framer = framer;
     return framer;
@@ -540,4 +604,148 @@ export class RpcClient {
       s.end();
     }
   }
+}
+
+const streamReply = b.union([
+  b.object({ ok: b.literal(true) }),
+  b.object({ error: b.object({ code: b.string(), message: b.string() }) }),
+]);
+
+export class RawStream {
+  #socket: Socket<undefined> | null = null;
+  #out: Outbox | null = null;
+  #queued: Uint8Array[] = [];
+  #reader: ((chunk: Uint8Array) => void) | null = null;
+  #onClose: (() => void) | null = null;
+  #closed = false;
+
+  attach(socket: Socket<undefined>) {
+    this.#socket = socket;
+    this.#out = new Outbox(socket);
+  }
+
+  read(reader: (chunk: Uint8Array) => void, onClose: () => void) {
+    this.#reader = reader;
+    this.#onClose = onClose;
+    for (const chunk of this.#queued.splice(0)) reader(chunk);
+    if (this.#closed) onClose();
+  }
+
+  push(chunk: Uint8Array) {
+    if (this.#reader) this.#reader(chunk);
+    else this.#queued.push(chunk);
+  }
+
+  closed() {
+    if (this.#closed) return;
+    this.#closed = true;
+    this.#onClose?.();
+  }
+
+  write(bytes: Uint8Array) {
+    this.#out?.write(bytes);
+  }
+
+  flush() {
+    this.#out?.flush();
+  }
+
+  end() {
+    this.#socket?.end();
+  }
+}
+
+export async function openStream(
+  endpoint: TcpEndpoint,
+  params: unknown,
+  timeoutMs = 10_000,
+): Promise<RawStream> {
+  const at = label(endpoint);
+  const stream = new RawStream();
+  let head: Uint8Array = new Uint8Array(0);
+  let open = false;
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  promise.catch(() => {});
+  const timer = setTimeout(
+    () => reject(new RpcError("timeout", `${at}: no answer to the stream request`)),
+    timeoutMs,
+  );
+  let socket: Socket<undefined> | null = null;
+  try {
+    socket = await Bun.connect({
+      hostname: endpoint.hostname,
+      port: endpoint.port,
+      tls: {
+        ...tlsOptions(endpoint.tls),
+        rejectUnauthorized: true,
+        ...(endpoint.tls.name ? { serverName: endpoint.tls.name } : {}),
+      },
+      socket: {
+        handshake(s, _success, authorizationError) {
+          const refused = peerRefusal(s, endpoint.tls, "server", authorizationError);
+          if (refused) {
+            reject(new RpcError("unavailable", `${at}: ${refused}`));
+            s.end();
+            return;
+          }
+          stream.attach(s);
+          stream.write(enc.encode(`${JSON.stringify({ stream: params })}\n`));
+        },
+        data(s, chunk) {
+          if (open) {
+            stream.push(chunk);
+            return;
+          }
+          head = concat([head, chunk]);
+          const i = head.indexOf(NL);
+          if (i < 0) {
+            if (head.length > MAX_FRAME) s.end();
+            return;
+          }
+          let answer: unknown;
+          try {
+            answer = JSON.parse(dec.decode(head.subarray(0, i)));
+          } catch {
+            answer = null;
+          }
+          const reply = streamReply.safeParse(answer);
+          if (!reply.success) {
+            reject(new RpcError("invalid", `${at}: bad answer to the stream request`));
+            s.end();
+            return;
+          }
+          if ("error" in reply.data) {
+            reject(new RpcError(reply.data.error.code, reply.data.error.message));
+            s.end();
+            return;
+          }
+          open = true;
+          const rest = head.slice(i + 1);
+          if (rest.length > 0) stream.push(rest);
+          resolve();
+        },
+        drain() {
+          stream.flush();
+        },
+        close() {
+          reject(new RpcError("lost", `${at}: closed`));
+          stream.closed();
+        },
+        error(_s, err) {
+          reject(new RpcError("lost", `${at}: ${err.message}`));
+          stream.closed();
+        },
+      },
+    });
+    await promise;
+  } catch (err) {
+    socket?.end();
+    throw err instanceof RpcError
+      ? err
+      : new RpcError("unavailable", `${at}: ${(err as Error).message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+  socket.setKeepAlive(true, 15_000);
+  return stream;
 }

@@ -1,12 +1,13 @@
-import type { Config } from "../config.ts";
+import { type Config, parseLinkAddress } from "../config.ts";
 import type { Logger } from "../core/log.ts";
-import { localTransport, rememberingTransport } from "../delivery/transport.ts";
+import { type EgressTarget, localTransport, rememberingTransport } from "../delivery/transport.ts";
 import { cachingResolver } from "../dns/cache.ts";
 import { localValidatingResolver } from "../dns/dnssec.ts";
 import { delegationAt, measureNs } from "../dns/probe.ts";
 import { createResolver, dnsServers, type Resolver } from "../dns/resolver.ts";
 import { checkReverse, type ReverseCheck } from "../dns/reverse.ts";
 import { ownValidation } from "../dnssec/resolver.ts";
+import { egressVia, type Via } from "../egress/tunnel.ts";
 import { method, RpcClient, type RpcServer, serveRpc } from "../ipc/rpc.ts";
 import { blocklists, checkBlocklists, type Listing } from "../ips/blocklists.ts";
 import { onThisMachine } from "../ips/local.ts";
@@ -154,6 +155,16 @@ export async function runDelivery(config: Config, log: Logger) {
   if (!ehloName) log.warn("BUNZZLE_EHLO_NAME is not set: email will wait until it is");
 
   const pool = new SessionPool();
+  const linkIdentity = new DeliveryIdentity();
+  const tunnels = Bun.env["TMPDIR"] ?? "/tmp";
+  const viaFor = (egress: EgressTarget): Via | string => {
+    const me = linkIdentity.current();
+    if (!me) return "this delivery role has no link certificate yet";
+    const at = parseLinkAddress(egress.address);
+    if (!at) return `bad address for ${egress.name}`;
+    const tls = { cert: me.cert, key: me.key, ca: me.ca, pins: [egress.pin], name: egress.name };
+    return egressVia(egress.name, { ...at, tls }, tunnels);
+  };
   const stsCache = new StsCache(resolver, async (url) => {
     const r = await guardedRequest(
       { method: "GET", url, maxBody: 64 * 1024 },
@@ -175,6 +186,7 @@ export async function runDelivery(config: Config, log: Logger) {
         pool,
         sources: ips,
         ehloFor,
+        egressVia: viaFor,
         sts: (domain) => stsCache.policyFor(domain),
         perConnection: (provider) => limitsFor(provider).perConnection,
         ehloName: ehloName ?? "",
@@ -397,7 +409,6 @@ export async function runDelivery(config: Config, log: Logger) {
       },
     ),
   };
-  const linkIdentity = new DeliveryIdentity();
   const server = await serveRpc(sock.delivery, { ...methods, ...linkIdentity.methods() });
   let link: RpcServer | null = null;
   if (config.deliveryListen) {
