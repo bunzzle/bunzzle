@@ -127,8 +127,9 @@ export function nodeMethods(deps: NodeDeps): Methods {
         name: b.string().max(63),
         address: b.string().max(64),
         csr: b.string().max(4000),
+        kind: b.enum(["delivery", "egress"]).default("delivery"),
       }),
-      async ({ name, address, csr }) => {
+      async ({ name, address, csr, kind }) => {
         if (!validName(name)) {
           throw new RpcError("invalid", "node names use a-z, 0-9 and -, up to 63 characters");
         }
@@ -146,6 +147,7 @@ export function nodeMethods(deps: NodeDeps): Methods {
         }
         const node = {
           name,
+          kind,
           address,
           pin: pinOf(parsed.spki),
           notAfter: parsed.notAfter,
@@ -158,8 +160,8 @@ export function nodeMethods(deps: NodeDeps): Methods {
           throw new RpcError("invalid", `there is already a node ${name} or one at ${address}`);
         }
         links.sync();
-        log.info("delivery node added", { name, address });
-        return { name, cert, ca, corePins: [identity.current().pin] };
+        log.info(kind === "egress" ? "egress added" : "delivery node added", { name, address });
+        return { name, kind, cert, ca, corePins: [identity.current().pin] };
       },
     ),
 
@@ -169,6 +171,7 @@ export function nodeMethods(deps: NodeDeps): Methods {
         const h = health.find((x) => x.name === n.name);
         return {
           name: n.name,
+          kind: n.kind,
           address: n.address,
           pin: n.pin,
           up: h?.up ?? false,

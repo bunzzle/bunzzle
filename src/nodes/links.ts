@@ -8,7 +8,7 @@ import { b } from "../validate/schema.ts";
 import { parseCertificate } from "../x509/cert.ts";
 import type { CoreIdentity } from "./identity.ts";
 import type { NodeStatus } from "./node.ts";
-import { type DeliveryNode, listNodes, updateNode } from "./registry.ts";
+import { type DeliveryNode, listNodes, type NodeKind, updateNode } from "./registry.ts";
 
 const DAY = 86_400_000;
 const NODE_DAYS = 30;
@@ -38,6 +38,7 @@ const sameSet = (a: string[], c: string[]) =>
   a.length === c.length && a.every((x) => c.includes(x));
 
 interface Link {
+  kind: NodeKind;
   tls: LinkTls;
   client: RpcClient;
 }
@@ -73,7 +74,7 @@ export class NodeLinks {
       pins: [node.pin],
       name: node.name,
     };
-    return { tls, client: new RpcClient({ ...at, tls }) };
+    return { kind: node.kind, tls, client: new RpcClient({ ...at, tls }) };
   }
 
   sync(): void {
@@ -95,8 +96,15 @@ export class NodeLinks {
     for (const name of [...this.#links.keys()]) this.close(name);
   }
 
-  names(): string[] {
-    return [...this.#links.keys()].sort();
+  names(kind?: NodeKind): string[] {
+    return [...this.#links.entries()]
+      .filter(([, l]) => kind === undefined || l.kind === kind)
+      .map(([name]) => name)
+      .sort();
+  }
+
+  kindOf(name: string): NodeKind | null {
+    return this.#links.get(name)?.kind ?? null;
   }
 
   client(name: string): RpcClient | null {

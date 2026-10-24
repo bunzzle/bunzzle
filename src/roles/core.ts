@@ -152,9 +152,11 @@ export async function runCore(config: Config, log: Logger) {
       { role: "dns", node: null, client: dns },
       { role: "delivery", node: null, client: delivery },
       ...(ns ? [{ role: "ns", node: null, client: ns }] : []),
-      ...links
-        .names()
-        .map((name) => ({ role: "delivery", node: name, client: links.client(name) })),
+      ...links.names().map((name) => ({
+        role: links.kindOf(name) ?? "delivery",
+        node: name,
+        client: links.client(name),
+      })),
     ],
     pushed: ["api", "inbound"],
   });

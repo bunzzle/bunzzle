@@ -8,7 +8,7 @@ import { call } from "./admin.ts";
 import { parseArgs, UsageError } from "./args.ts";
 
 const USAGE =
-  "usage: bunzzle nodes [list | request NAME | add NAME ADDRESS CSR_FILE | install BUNDLE_FILE | remove NAME | rotate-ca [start | promote | finish]]";
+  "usage: bunzzle nodes [list | request NAME [--egress] | add NAME ADDRESS CSR_FILE [--egress] | install BUNDLE_FILE | remove NAME | rotate-ca [start | promote | finish]]";
 
 interface Rotation {
   cas: { name: string; state: string; expires_at: string }[];
@@ -36,6 +36,7 @@ function printRotation(r: Rotation) {
 
 const bundle = b.object({
   name: b.string(),
+  kind: b.enum(["delivery", "egress"]).default("delivery"),
   cert: b.string(),
   ca: b.string(),
   corePins: b.array(b.string()).min(1),
@@ -75,7 +76,7 @@ async function writePrivate(path: string, text: string) {
 
 async function request(argv: string[], config: Config) {
   const [positional, options] = split(argv);
-  const args = parseArgs(options, { strings: ["dir"], flags: ["force"] });
+  const args = parseArgs(options, { strings: ["dir"], flags: ["force", "egress"] });
   const [name, ...extra] = positional;
   if (!name || extra.length > 0) throw new UsageError(USAGE);
   if (!validName(name)) throw new UsageError("node names use a-z, 0-9 and -, up to 63 characters");
@@ -95,12 +96,13 @@ async function request(argv: string[], config: Config) {
   const csr = `${dir}/request.csr`;
   await Bun.write(csr, pem("CERTIFICATE REQUEST", await certificateRequest(name, key)));
   console.log(`Wrote ${dir}/key.pem and ${csr}.`);
-  console.log(`On core: bunzzle nodes add ${name} <ip>:<port> request.csr`);
+  const flag = args.flags.has("egress") ? " --egress" : "";
+  console.log(`On core: bunzzle nodes add ${name} <ip>:<port> request.csr${flag}`);
 }
 
 async function add(argv: string[], config: Config) {
   const [positional, options] = split(argv);
-  const args = parseArgs(options, { strings: ["out"] });
+  const args = parseArgs(options, { strings: ["out"], flags: ["egress"] });
   const [name, address, csrFile, ...extra] = positional;
   if (!name || !address || !csrFile || extra.length > 0) throw new UsageError(USAGE);
   const der = fromPem(await Bun.file(csrFile).text())[0];
@@ -109,11 +111,13 @@ async function add(argv: string[], config: Config) {
     name,
     address,
     csr: der.toBase64(),
+    kind: args.flags.has("egress") ? "egress" : "delivery",
   });
   const out = args.strings.get("out") ?? `${name}.bundle.json`;
   await writePrivate(out, `${JSON.stringify(result, null, 2)}\n`);
-  console.log(`Added ${name} at ${address}. Wrote ${out}.`);
-  console.log(`On the node: bunzzle nodes install ${out}`);
+  const what = result.kind === "egress" ? "egress" : "delivery node";
+  console.log(`Added ${what} ${name} at ${address}. Wrote ${out}.`);
+  console.log(`On the ${what}: bunzzle nodes install ${out}`);
 }
 
 async function install(argv: string[], config: Config) {
@@ -137,7 +141,8 @@ async function install(argv: string[], config: Config) {
   await Bun.write(`${dir}/cert.pem`, parsed.data.cert);
   await Bun.write(`${dir}/ca.pem`, parsed.data.ca);
   await Bun.write(`${dir}/peer.pin`, `${parsed.data.corePins.join("\n")}\n`);
-  console.log(`Installed ${parsed.data.name} in ${dir}. Restart the delivery role.`);
+  const restart = parsed.data.kind === "egress" ? "bunzzle egress" : "the delivery role";
+  console.log(`Installed ${parsed.data.name} in ${dir}. Restart ${restart}.`);
 }
 
 export async function nodesCommand(argv: string[], config: Config) {
@@ -148,6 +153,7 @@ export async function nodesCommand(argv: string[], config: Config) {
       const nodes = await call<
         {
           name: string;
+          kind: "delivery" | "egress";
           address: string;
           up: boolean;
           last_seen_at: string | null;
@@ -155,11 +161,11 @@ export async function nodesCommand(argv: string[], config: Config) {
           certificate_expires_at: string;
         }[]
       >(config, "listNodes", {});
-      if (nodes.length === 0) console.log("No delivery nodes.");
+      if (nodes.length === 0) console.log("No nodes.");
       for (const n of nodes) {
         const state = n.up ? "up" : `down (last seen ${n.last_seen_at ?? "never"})`;
         console.log(
-          `${n.name.padEnd(20)} ${n.address.padEnd(22)} ${state.padEnd(10)} ips ${n.ips.join(",") || "-"}  cert until ${n.certificate_expires_at.slice(0, 10)}`,
+          `${n.name.padEnd(20)} ${n.kind.padEnd(9)} ${n.address.padEnd(22)} ${state.padEnd(10)} ips ${n.ips.join(",") || "-"}  cert until ${n.certificate_expires_at.slice(0, 10)}`,
         );
       }
       return;

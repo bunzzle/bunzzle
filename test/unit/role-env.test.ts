@@ -3,6 +3,7 @@ import { roleEnv } from "../../src/roles/env.ts";
 import { ROLES } from "../../src/roles/wire.ts";
 
 const SUPERVISOR_ONLY = new Set(["BUNZZLE_MASTER_KEY", "BUNZZLE_MASTER_KEY_FILE"]);
+const STANDALONE = new Set(["BUNZZLE_EGRESS_LISTEN"]);
 
 const settings = async () => {
   const source = await Bun.file(`${import.meta.dir}/../../src/config.ts`).text();
@@ -19,9 +20,14 @@ describe("role environments under bunzzle serve", () => {
     const all = await settings();
     expect(all.length).toBeGreaterThan(50);
     const missing = all.filter(
-      (name) => !SUPERVISOR_ONLY.has(name) && rolesGetting(name).length === 0,
+      (name) =>
+        !SUPERVISOR_ONLY.has(name) && !STANDALONE.has(name) && rolesGetting(name).length === 0,
     );
     expect(missing).toEqual([]);
+  });
+
+  test("settings for bunzzle egress reach no role under bunzzle serve", () => {
+    for (const name of STANDALONE) expect(rolesGetting(name)).toEqual([]);
   });
 
   test("the master key reaches no role through the environment", () => {
