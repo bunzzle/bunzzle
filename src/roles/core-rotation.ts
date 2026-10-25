@@ -69,7 +69,7 @@ export function rotation(deps: RotationDeps) {
 
   const keys = (domain: string) => signer.call("keyStates", { domain }, { result: keyInfo });
 
-  const rebuild = async (domain: string, list: KeyInfo[]): Promise<Domain | null> => {
+  const inspect = async (domain: string, list: KeyInfo[]): Promise<Domain | null> => {
     const d = findDomain(db, domain);
     if (!d) return null;
     const records = domainRecords(d, list, deps.sourceIp, deps.inboundHost, deps.nsZone ?? null);
@@ -78,12 +78,12 @@ export function rotation(deps: RotationDeps) {
       await lookupRecords(records, lookup, [d.name, deps.nsZone ?? d.name]),
       deps.sourceIp,
     );
-    const next: Domain = {
-      ...d,
-      records: checked.records,
-      status: checked.status,
-      checkedAt: now(),
-    };
+    return { ...d, records: checked.records, status: checked.status, checkedAt: now() };
+  };
+
+  const rebuild = async (domain: string, list: KeyInfo[]): Promise<Domain | null> => {
+    const next = await inspect(domain, list);
+    if (!next) return null;
     await writer.run((w) => {
       saveDomain(w, next, now());
       setSlotKeys(
@@ -316,5 +316,5 @@ export function rotation(deps: RotationDeps) {
     }
   };
 
-  return { step, tick, publish, selfCheck, rebuild, keys, switchMode };
+  return { step, tick, publish, selfCheck, inspect, rebuild, keys, switchMode };
 }
