@@ -35,12 +35,10 @@ interface Snap {
   cpu: Map<string, number>;
   delivered: number;
 }
-const snap = async (): Promise<Snap> => {
-  const cpu = await cpuByRole(bench.roles());
-  const own = process.cpuUsage();
-  cpu.set("bench", (own.user + own.system) / 1_000);
-  return { cpu, delivered: sink.stats().unique };
-};
+const snap = async (): Promise<Snap> => ({
+  cpu: await cpuByRole(bench.roles()),
+  delivered: sink.stats().unique,
+});
 
 let accepted = 0;
 let intakeErrors = 0;
