@@ -70,6 +70,7 @@ export async function startBench(
   )
     .split("\n")
     .pop() as string;
+  await cli("projects", "limits", "default", "--new-recipients-auto", "off");
   const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
   const domain = (await (
     await fetch(`${served.url}/domains`, {
