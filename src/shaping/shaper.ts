@@ -33,6 +33,8 @@ interface Path {
   timer: ReturnType<typeof setTimeout> | null;
   sent: number;
   logged: Change | null;
+  holdMs: number | null;
+  slotAt: number;
 }
 
 export interface PathView {
@@ -59,10 +61,18 @@ export interface ShaperOptions {
   bulkEvery?: number;
   onChange?: (key: string, state: ControlState) => void;
   restore?: Map<string, ControlState>;
+  slots?: number;
 }
 
 const MIN_REQUEUE_MS = 1_000;
 const MAX_REQUEUE_MS = 5 * 60_000;
+const MAX_SLOT_MS = 60 * 60_000;
+const BULK_AHEAD_MS = 1_000;
+const HOLD_WEIGHT = 0.2;
+const PARALLEL_MARGIN = 1.5;
+const SLOW_HOLD_MS = 1_000;
+const SLOW_MIN_SHARE = 0.25;
+const FAST_RESERVE = 0.25;
 const LANES = ["transactional", "bulk"] as const;
 
 export class Shaper {
@@ -71,6 +81,8 @@ export class Shaper {
   readonly #clock: Clock;
   readonly #tuning: Tuning;
   readonly #bulkEvery: number;
+  #slowHeld = 0;
+  #fastHeld = 0;
 
   constructor(o: ShaperOptions) {
     this.#o = o;
@@ -101,6 +113,8 @@ export class Shaper {
         timer: null,
         sent: 0,
         logged: control.changes.at(-1) ?? null,
+        holdMs: null,
+        slotAt: 0,
       };
       this.#paths.set(key, p);
     }
@@ -124,23 +138,69 @@ export class Shaper {
     return Math.min(MAX_REQUEUE_MS, Math.max(MIN_REQUEUE_MS, ms));
   }
 
+  #perSec(p: Path): number {
+    const c = p.control;
+    if (p.holdMs === null) return c.rate;
+    return Math.min(c.rate, (c.connections * 1000) / Math.max(1, p.holdMs));
+  }
+
+  #parallel(p: Path): number {
+    const c = p.control;
+    if (p.holdMs === null) return 1;
+    const needed = Math.ceil((c.rate * p.holdMs * PARALLEL_MARGIN) / 1000);
+    return Math.max(1, Math.min(c.connections, needed));
+  }
+
+  #bulkBudget(p: Path): number {
+    const ahead = Math.ceil((this.#perSec(p) * BULK_AHEAD_MS) / 1000);
+    return Math.max(2, this.#parallel(p) + ahead);
+  }
+
+  #overBudget(p: Path): boolean {
+    return p.control.inflight + p.waiting.bulk.length >= this.#bulkBudget(p);
+  }
+
+  #slow(p: Path): boolean {
+    return p.holdMs !== null && p.holdMs > SLOW_HOLD_MS;
+  }
+
+  #slowFull(): boolean {
+    const slots = this.#o.slots;
+    if (slots === undefined) return false;
+    const free = slots - this.#fastHeld - slots * FAST_RESERVE;
+    return this.#slowHeld >= Math.max(slots * SLOW_MIN_SHARE, free);
+  }
+
+  #nextSlot(p: Path, now: number): number {
+    p.slotAt = Math.min(now + MAX_SLOT_MS, Math.max(now, p.slotAt) + 1000 / this.#perSec(p));
+    return Math.max(MIN_REQUEUE_MS, Math.round(p.slotAt - now));
+  }
+
   blocked(): { paused: string[]; full: string[] } {
     const now = this.#clock.now();
     const paused: string[] = [];
     const full: string[] = [];
+    const slow: string[] = [];
+    this.#slowHeld = 0;
+    this.#fastHeld = 0;
     for (const p of this.#paths.values()) {
       p.control.tick(now);
       this.#flush(p);
+      if (this.#slow(p)) this.#slowHeld += p.control.inflight + p.waiting.bulk.length;
+      else this.#fastHeld += p.control.inflight + this.#waitingCount(p);
       if (
         p.control.mode === "paused" ||
         (p.control.mode === "probing" && p.control.probeOut) ||
         this.#waitingCount(p) >= this.#hardCap(p)
       ) {
         paused.push(p.key);
-      } else if (this.#waitingCount(p) >= this.#maxWaiting(p)) {
+      } else if (this.#waitingCount(p) >= this.#maxWaiting(p) || this.#overBudget(p)) {
         full.push(p.key);
+      } else if (this.#slow(p)) {
+        slow.push(p.key);
       }
     }
+    if (this.#slowFull()) full.push(...slow);
     return { paused, full };
   }
 
@@ -172,6 +232,13 @@ export class Shaper {
         blocked: true,
       });
     }
+    if (lane === "bulk" && (this.#overBudget(p) || (this.#slow(p) && this.#slowFull()))) {
+      return Promise.resolve({
+        kind: "requeue",
+        delayMs: this.#nextSlot(p, now),
+        reason: `${p.target} queue full`,
+      });
+    }
     const waiting = this.#waitingCount(p);
     if (waiting >= this.#maxWaiting(p)) {
       if (lane === "bulk") {
@@ -198,6 +265,7 @@ export class Shaper {
         });
       }
     }
+    if (lane === "bulk" && this.#slow(p)) this.#slowHeld++;
     return new Promise<Admission>((resolve) => {
       const w: Waiter = { lane, settle: resolve, timer: null };
       w.timer = setTimeout(() => {
@@ -235,6 +303,7 @@ export class Shaper {
   #pump(p: Path) {
     const now = this.#clock.now();
     while (this.#waitingCount(p) > 0) {
+      if (p.control.mode === "normal" && p.control.inflight >= this.#parallel(p)) break;
       if (!p.control.tryAcquire(now)) break;
       const w = this.#next(p);
       if (!w) break;
@@ -245,7 +314,7 @@ export class Shaper {
         release: (signal, reason) => {
           if (released) return;
           released = true;
-          this.#release(p, signal, reason);
+          this.#release(p, signal, reason, this.#clock.now() - now);
         },
       });
     }
@@ -257,6 +326,7 @@ export class Shaper {
     if (p.timer) clearTimeout(p.timer);
     p.timer = null;
     if (this.#waitingCount(p) === 0) return;
+    if (p.control.mode === "normal" && p.control.inflight >= this.#parallel(p)) return;
     const now = this.#clock.now();
     const at = p.control.nextChanceAt(now);
     if (at === null) return;
@@ -292,15 +362,21 @@ export class Shaper {
     this.#o.onChange?.(p.key, p.control.state());
   }
 
-  #release(p: Path, signal: Signal, reason: string) {
+  #release(p: Path, signal: Signal, reason: string, heldMs: number) {
     if (signal === "success") p.sent++;
+    p.holdMs = p.holdMs === null ? heldMs : p.holdMs + (heldMs - p.holdMs) * HOLD_WEIGHT;
     p.control.release(this.#clock.now(), signal, reason);
     this.#flush(p);
     if (p.control.mode === "paused") {
       const delayMs = Math.max(MIN_REQUEUE_MS, (p.control.until ?? 0) - this.#clock.now());
       for (const lane of LANES) {
         for (const w of p.waiting[lane].splice(0)) {
-          this.#settle(w, { kind: "requeue", delayMs, reason: `${p.target} paused` });
+          this.#settle(w, {
+            kind: "requeue",
+            delayMs,
+            reason: `${p.target} paused`,
+            blocked: true,
+          });
         }
       }
     }
