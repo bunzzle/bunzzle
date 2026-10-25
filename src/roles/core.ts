@@ -88,6 +88,7 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 const MAX_SETTLED = 50_000;
+const DELIVERY_SLOTS = 512;
 
 export function leaseTimes(scale: number): { leaseMs: number; maxWaitMs: number } {
   const leaseMs = Math.max(2_000, Math.max(1, Math.round(45 * MIN * scale)));
@@ -273,6 +274,7 @@ export async function runCore(config: Config, log: Logger) {
   );
   const shaper = new Shaper({
     log,
+    slots: DELIVERY_SLOTS,
     tuning: {
       ...DEFAULT_TUNING,
       holdMs: scaled(DEFAULT_TUNING.holdMs),
@@ -338,7 +340,7 @@ export async function runCore(config: Config, log: Logger) {
     retry: scaledPolicy(defaultRetryPolicy, scale),
     reconcileMs: scaled(15 * MIN),
     leaseMs: leaseTimes(scale).leaseMs,
-    concurrency: 512,
+    concurrency: DELIVERY_SLOTS,
     filter: () => shaper.blocked(),
   });
 

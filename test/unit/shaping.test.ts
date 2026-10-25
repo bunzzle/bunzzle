@@ -153,30 +153,102 @@ describe("shaper: lanes and waiting queues (B2, H3)", () => {
     void t.admit("transactional", "reset");
     for (let i = 0; i < 3; i++) await t.step(1_000);
     t.shaper.stop();
-    expect(t.order.slice(0, 3)).toEqual(["b0", "reset", "b1"]);
+    expect(t.order.filter((x) => !x.endsWith(":requeue")).slice(0, 3)).toEqual([
+      "b0",
+      "reset",
+      "b1",
+    ]);
   });
 
   test("bulk still gets a guaranteed share", async () => {
     const t = setup(1, 1, 5);
     for (let i = 0; i < 10; i++) void t.admit("bulk", `b${i}`);
     for (let i = 0; i < 10; i++) void t.admit("transactional", `t${i}`);
-    for (let i = 0; i < 12; i++) await t.step(1_000);
+    for (let i = 0; i < 12; i++) {
+      void t.admit("bulk", `r${i}`);
+      await t.step(1_000);
+    }
     t.shaper.stop();
-    const served = t.order.slice(0, 11);
-    expect(served.filter((x) => x.startsWith("b")).length).toBe(3);
+    const served = t.order.filter((x) => !x.endsWith(":requeue")).slice(0, 11);
+    expect(served.filter((x) => !x.startsWith("t")).length).toBe(3);
   });
 
-  test("a full queue sends bulk back to the database; transactional pushes bulk out", async () => {
+  test("bulk over the path's budget goes back to the database at spaced slots", async () => {
     const t = setup();
-    const pending = Array.from({ length: 22 }, (_, i) => t.admit("bulk", `b${i}`));
-    await t.step(0);
-    expect(t.order).toContain("b21:requeue");
+    const all = Array.from({ length: 6 }, () =>
+      t.shaper.admit("ip1", "example.test", null, "bulk"),
+    );
     expect(t.shaper.blocked().full).toEqual(["ip1|example.test"]);
-    void t.admit("transactional", "reset");
-    await t.step(0);
-    expect(t.order.filter((x) => x.endsWith(":requeue"))).toEqual(["b21:requeue", "b20:requeue"]);
+    const back = await Promise.all(all.slice(2));
+    expect(back.map((a) => (a.kind === "requeue" ? a.delayMs : null))).toEqual([
+      1_000, 2_000, 3_000, 4_000,
+    ]);
     t.shaper.stop();
-    void pending;
+  });
+
+  test("a slow path gets a smaller bulk budget than its rate allows", async () => {
+    const t = setup(5, 5);
+    const slow = Array.from({ length: 1 }, () =>
+      t.shaper.admit("ip1", "example.test", null, "bulk"),
+    );
+    const tickets = await Promise.all(slow);
+    t.clock.advance(3_000);
+    for (const a of tickets) if (a.kind === "go") a.release("success", "");
+    const kinds: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      void t.shaper.admit("ip1", "example.test", null, "bulk").then((a) => kinds.push(a.kind));
+    }
+    await t.step(0);
+    expect(kinds.filter((k) => k === "requeue").length).toBe(5);
+    t.shaper.stop();
+  });
+
+  test("a fast path sends on as few connections as its rate needs", async () => {
+    const t = setup(5, 5);
+    const warm = await Promise.all(
+      Array.from({ length: 1 }, () => t.shaper.admit("ip1", "example.test", null, "bulk")),
+    );
+    t.clock.advance(12);
+    for (const a of warm) if (a.kind === "go") a.release("success", "");
+    t.clock.advance(1_000);
+    const kinds: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      void t.shaper.admit("ip1", "example.test", null, "bulk").then((a) => kinds.push(a.kind));
+    }
+    await t.step(0);
+    expect(kinds).toEqual(["go"]);
+    expect(t.shaper.views()[0]?.inflight).toBe(1);
+    t.shaper.stop();
+  });
+
+  test("slow paths leave a quarter of the delivery slots to other paths", async () => {
+    const clock = manualClock(T0);
+    const shaper = new Shaper({
+      log: quiet,
+      clock,
+      slots: 4,
+      limits: () => ({ connections: 5, ratePerSec: 5, perConnection: 100 }),
+    });
+    const warm = await shaper.admit("ip1", "slow.test", null, "bulk");
+    clock.advance(3_000);
+    if (warm.kind === "go") warm.release("success", "");
+    const slow = [1, 2, 3, 4].map(() => shaper.admit("ip1", "slow.test", null, "bulk"));
+    const fast = [1, 2, 3].map(() => shaper.admit("ip1", "fast.test", null, "bulk"));
+    expect(shaper.blocked().full).toEqual(["ip1|slow.test"]);
+    const kinds = async (all: Promise<Admission>[]) => (await Promise.all(all)).map((a) => a.kind);
+    expect(await kinds(slow)).toEqual(["go", "go", "go", "requeue"]);
+    expect((await fast[0])?.kind).toBe("go");
+    shaper.stop();
+  });
+
+  test("transactional pushes waiting bulk out when the queue is full", async () => {
+    const t = setup();
+    void t.admit("bulk", "b0");
+    void t.admit("bulk", "b1");
+    for (let i = 0; i < 20; i++) void t.admit("transactional", `t${i}`);
+    await t.step(0);
+    expect(t.order).toContain("b1:requeue");
+    t.shaper.stop();
   });
 
   test("a waiter not served before its deadline goes back to the database", async () => {
@@ -208,7 +280,7 @@ describe("shaper: lanes and waiting queues (B2, H3)", () => {
     if (first.kind !== "go") throw new Error("expected go");
     first.release("reputation", "blocked");
     const w = await waiting;
-    expect(w).toMatchObject({ kind: "requeue", delayMs: 15 * MIN });
+    expect(w).toMatchObject({ kind: "requeue", delayMs: 15 * MIN, blocked: true });
     const later = await t.shaper.admit("ip1", "example.test", null, "transactional");
     expect(later.kind).toBe("requeue");
     expect(t.shaper.blocked().paused).toEqual(["ip1|example.test"]);
