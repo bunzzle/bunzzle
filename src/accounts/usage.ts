@@ -1,8 +1,13 @@
 import type { Database } from "bun:sqlite";
-import type { ProjectId } from "./projects.ts";
+import type { Project, ProjectId } from "./projects.ts";
 
 const MINUTE = 60_000;
 const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+
+export const AUTO_NEW_FLOOR = 200;
+export const AUTO_NEW_FACTOR = 3;
+export const AUTO_NEW_DAYS = 14;
 
 export type LimitWindow = "hour" | "day";
 
@@ -30,8 +35,16 @@ export interface Near {
 }
 
 const WINDOWS = [
-  { setting: "per_hour", window: "hour", span: "hour", unit: "minute", size: MINUTE, slots: 60 },
-  { setting: "per_day", window: "day", span: "day", unit: "hour", size: HOUR, slots: 24 },
+  {
+    setting: "per_hour",
+    window: "hour",
+    span: "hour",
+    unit: "minute",
+    size: MINUTE,
+    slots: 60,
+    keep: 60,
+  },
+  { setting: "per_day", window: "day", span: "day", unit: "hour", size: HOUR, slots: 24, keep: 24 },
   {
     setting: "new_recipients_per_day",
     window: "day",
@@ -39,6 +52,7 @@ const WINDOWS = [
     unit: "new_hour",
     size: HOUR,
     slots: 24,
+    keep: (AUTO_NEW_DAYS + 1) * 24,
   },
 ] as const;
 
@@ -58,8 +72,12 @@ export function takeQuota(
   fresh: number,
   now: number,
 ): { ok: true; near: Near[] } | { ok: false; over: Over } {
-  if (n <= 0 || (limits.perHour === null && limits.perDay === null && limits.newPerDay === null))
+  if (n <= 0) return { ok: true, near: [] };
+  const limited = limits.perHour !== null || limits.perDay !== null || limits.newPerDay !== null;
+  if (!limited) {
+    if (fresh > 0) addUsage(db, project, "new_hour", Math.floor(now / HOUR), fresh);
     return { ok: true, near: [] };
+  }
   const sum = db.query<{ n: number }, [string, string, number]>(
     "SELECT coalesce(sum(n), 0) AS n FROM project_usage WHERE project_id = ? AND unit = ? AND slot > ?",
   );
@@ -89,13 +107,9 @@ export function takeQuota(
     }
     return { ok: false, over: { ...over, retryAfterMs: Math.max(1_000, retryAfterMs) } };
   }
-  const add = db.query<unknown, [string, string, number, number]>(
-    `INSERT INTO project_usage (project_id, unit, slot, n) VALUES (?, ?, ?, ?)
-     ON CONFLICT (project_id, unit, slot) DO UPDATE SET n = n + excluded.n`,
-  );
   for (const w of WINDOWS) {
     const count = countOf(w, n, fresh);
-    if (count > 0) add.run(project, w.unit, Math.floor(now / w.size), count);
+    if (count > 0) addUsage(db, project, w.unit, Math.floor(now / w.size), count);
   }
   const near: Near[] = [];
   const notice = db.query<unknown, [string, string, number, number]>(
@@ -114,6 +128,47 @@ export function takeQuota(
     }
   }
   return { ok: true, near };
+}
+
+function addUsage(db: Database, project: ProjectId, unit: string, slot: number, n: number): void {
+  db.query<unknown, [string, string, number, number]>(
+    `INSERT INTO project_usage (project_id, unit, slot, n) VALUES (?, ?, ?, ?)
+     ON CONFLICT (project_id, unit, slot) DO UPDATE SET n = n + excluded.n`,
+  ).run(project, unit, slot, n);
+}
+
+const peaks = new WeakMap<Database, Map<string, { day: number; peak: number }>>();
+
+export function newRecipientsPeak(db: Database, project: ProjectId, now: number): number {
+  const day = Math.floor(now / DAY);
+  let byProject = peaks.get(db);
+  if (!byProject) {
+    byProject = new Map();
+    peaks.set(db, byProject);
+  }
+  const hit = byProject.get(project);
+  if (hit?.day === day) return hit.peak;
+  const peak =
+    db
+      .query<{ n: number }, [string, number, number]>(
+        `SELECT coalesce(max(s), 0) AS n FROM (
+           SELECT sum(n) AS s FROM project_usage
+            WHERE project_id = ? AND unit = 'new_hour' AND slot >= ? AND slot < ?
+            GROUP BY slot / 24)`,
+      )
+      .get(project, (day - AUTO_NEW_DAYS) * 24, day * 24)?.n ?? 0;
+  byProject.set(project, { day, peak });
+  return peak;
+}
+
+export function newRecipientsLimit(
+  db: Database,
+  p: Pick<Project, "id" | "newRecipientsPerDay" | "newRecipientsAuto">,
+  now: number,
+): number | null {
+  if (p.newRecipientsPerDay !== null) return p.newRecipientsPerDay;
+  if (!p.newRecipientsAuto) return null;
+  return Math.max(AUTO_NEW_FLOOR, AUTO_NEW_FACTOR * newRecipientsPeak(db, p.id, now));
 }
 
 export function noteLimitReached(
@@ -139,6 +194,6 @@ export function pruneUsage(db: Database, now: number): void {
   for (const w of WINDOWS) {
     db.query<unknown, [string, number]>(
       "DELETE FROM project_usage WHERE unit = ? AND slot <= ?",
-    ).run(w.unit, Math.floor(now / w.size) - w.slots);
+    ).run(w.unit, Math.floor(now / w.size) - w.keep);
   }
 }

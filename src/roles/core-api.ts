@@ -16,7 +16,13 @@ import {
   SYSTEM_PROJECT,
 } from "../accounts/projects.ts";
 import { newRecipients, type RecipientHash, rememberRecipients } from "../accounts/recipients.ts";
-import { type LimitSetting, noteLimitReached, type Over, takeQuota } from "../accounts/usage.ts";
+import {
+  type LimitSetting,
+  newRecipientsLimit,
+  noteLimitReached,
+  type Over,
+  takeQuota,
+} from "../accounts/usage.ts";
 import type { SourceIp } from "../config.ts";
 import { appendEvent } from "../core/events.ts";
 import { countByState } from "../core/jobs.ts";
@@ -255,7 +261,7 @@ export function coreMethods(deps: CoreDeps): {
     const limits = {
       perHour: settings?.perHour ?? null,
       perDay: settings?.perDay ?? null,
-      newPerDay: settings?.newRecipientsPerDay ?? null,
+      newPerDay: settings ? newRecipientsLimit(db, settings, now()) : null,
     };
     const id = p.id ?? Bun.randomUUIDv7();
     if (p.id !== undefined) {

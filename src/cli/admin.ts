@@ -732,16 +732,24 @@ interface ProjectView {
   per_hour: number | null;
   per_day: number | null;
   new_recipients_per_day: number | null;
+  new_recipients_auto: boolean;
+  new_recipients_effective: number | null;
   ip_pool: string | null;
   suspended: boolean;
   created_at: string;
+}
+
+function newRecipientsText(p: ProjectView): string {
+  if (p.new_recipients_per_day !== null) return `${p.new_recipients_per_day} (set)`;
+  if (p.new_recipients_auto) return `${p.new_recipients_effective} (auto)`;
+  return "no limit";
 }
 
 function printProject(p: ProjectView) {
   console.log(`${p.name}  (${p.id})${p.suspended ? "  SUSPENDED" : ""}`);
   console.log(`  per hour:           ${p.per_hour ?? "no limit"}`);
   console.log(`  per day:            ${p.per_day ?? "no limit"}`);
-  console.log(`  new recipients/day: ${p.new_recipients_per_day ?? "no limit"}`);
+  console.log(`  new recipients/day: ${newRecipientsText(p)}`);
   console.log(`  IP pool:            ${p.ip_pool ?? "default"}`);
   console.log(`  created:            ${p.created_at}`);
 }
@@ -786,10 +794,10 @@ export async function projectsCommand(argv: string[], config: Config) {
       const [name, ...flags] = rest;
       if (!name)
         throw new UsageError(
-          "usage: bunzzle projects limits NAME [--per-hour N|none] [--per-day N|none] [--new-recipients-per-day N|none] [--pool POOL|none]",
+          "usage: bunzzle projects limits NAME [--per-hour N|none] [--per-day N|none] [--new-recipients-per-day N|none] [--new-recipients-auto on|off] [--pool POOL|none]",
         );
       const args = parseArgs(flags, {
-        strings: ["per-hour", "per-day", "new-recipients-per-day", "pool"],
+        strings: ["per-hour", "per-day", "new-recipients-per-day", "new-recipients-auto", "pool"],
       });
       const perHour = limitArg(args.strings.get("per-hour"), "per-hour");
       const perDay = limitArg(args.strings.get("per-day"), "per-day");
@@ -797,6 +805,10 @@ export async function projectsCommand(argv: string[], config: Config) {
         args.strings.get("new-recipients-per-day"),
         "new-recipients-per-day",
       );
+      const auto = args.strings.get("new-recipients-auto");
+      if (auto !== undefined && auto !== "on" && auto !== "off") {
+        throw new UsageError("--new-recipients-auto must be on or off");
+      }
       const pool = args.strings.get("pool");
       printProject(
         await call<ProjectView>(config, "updateProject", {
@@ -804,6 +816,7 @@ export async function projectsCommand(argv: string[], config: Config) {
           ...(perHour !== undefined ? { perHour } : {}),
           ...(perDay !== undefined ? { perDay } : {}),
           ...(newRecipientsPerDay !== undefined ? { newRecipientsPerDay } : {}),
+          ...(auto !== undefined ? { newRecipientsAuto: auto === "on" } : {}),
           ...(pool !== undefined ? { pool: pool === "none" ? null : pool } : {}),
         }),
       );

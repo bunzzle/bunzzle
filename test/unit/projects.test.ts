@@ -621,6 +621,57 @@ describe("projects", () => {
     expect(newRecipients(db, A, [await hash("a@dest.test")], Date.now() + 91 * DAY)).toBe(1);
   });
 
+  test("adaptive first-time recipient limit: 200 on the first day, off means no limit", async () => {
+    const db = openDatabase({ path: ":memory:" });
+    saveDomain(
+      db,
+      {
+        project: A,
+        name: "a.test",
+        status: "verified",
+        mode: "records",
+        records: [],
+        createdAt: T0,
+        checkedAt: null,
+      },
+      T0,
+    );
+    expect(findProject(db, A)?.newRecipientsAuto).toBe(true);
+    expect(createProject(db, "fresh", T0)?.newRecipientsAuto).toBe(true);
+    const epoch = await epochKeyPair(1, newEpochSeed());
+    const stub = {
+      call: async (m: string) => (m === "domains" ? ["a.test"] : null),
+    } as unknown as RpcClient;
+    const { methods } = coreMethods({
+      db,
+      writer: new Writer(db),
+      log: createLogger("error", {}, () => {}),
+      signer: stub,
+      delivery: stub,
+      currentKey: async () => epoch,
+      recipientHash: await recipientHasher(new Uint8Array(32)),
+      sourceIp: null,
+    });
+    const email = (prefix: string, n: number) => ({
+      from: "x@a.test",
+      recipients: Array.from({ length: n }, (_, i) => `${prefix}${i}@dest.test`),
+      data: "From: x@a.test\r\nSubject: s\r\n\r\nhi\r\n",
+      smtpUtf8: false,
+      requireTls: false,
+    });
+    const enqueue = (p: unknown) => methods["enqueue"]?.handle(p) as Promise<unknown>;
+
+    await enqueue(email("a", 150));
+    await enqueue(email("b", 50));
+    await enqueue(email("a", 150));
+    await expect(enqueue(email("c", 1))).rejects.toMatchObject({
+      code: "project-limit",
+      message: expect.stringContaining("200 new recipients a day"),
+    });
+    updateProject(db, A, { newRecipientsAuto: false }, T0);
+    await enqueue(email("c", 300));
+  });
+
   test("moving a domain takes its inbound routes; queued email and stats stay", () => {
     const { db, id } = setup();
     countEmail(db, id, "delivered", 1, T0);

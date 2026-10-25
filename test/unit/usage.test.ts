@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_PROJECT as P } from "../../src/accounts/projects.ts";
-import { type Limits, noteLimitReached, pruneUsage, takeQuota } from "../../src/accounts/usage.ts";
+import {
+  type Limits,
+  newRecipientsLimit,
+  noteLimitReached,
+  pruneUsage,
+  takeQuota,
+} from "../../src/accounts/usage.ts";
 import { openDatabase } from "../../src/core/store/db.ts";
 
 const MIN = 60_000;
@@ -15,13 +21,17 @@ const take = (
 ) => takeQuota(db, P, { perHour: null, perDay: null, newPerDay: null, ...limits }, n, fresh, now);
 
 describe("project send limits", () => {
-  test("no limits: nothing is counted or stored", () => {
+  test("no limits: only first-time recipients are counted", () => {
     const db = openDatabase({ path: ":memory:" });
     expect(take(db, { perHour: null, perDay: null }, 5, T0)).toEqual({
       ok: true,
       near: [],
     });
     expect(db.query("SELECT * FROM project_usage").all()).toEqual([]);
+    expect(take(db, {}, 5, T0, 3)).toEqual({ ok: true, near: [] });
+    expect(db.query("SELECT unit, n FROM project_usage").all()).toEqual([
+      { unit: "new_hour", n: 3 },
+    ]);
   });
 
   test("refuses past the hourly limit and says when the oldest minute frees enough", () => {
@@ -121,5 +131,60 @@ describe("project send limits", () => {
     expect(noteLimitReached(db, P, "new_recipients_per_day", T0 + 60 * MIN)).toBe(false);
     expect(noteLimitReached(db, P, "per_hour", T0)).toBe(true);
     expect(noteLimitReached(db, P, "new_recipients_per_day", T0 + 24 * 60 * MIN)).toBe(true);
+  });
+});
+
+describe("adaptive first-time recipient limit", () => {
+  const HOUR = 60 * MIN;
+  const DAY = 24 * HOUR;
+  const TODAY = Math.floor(T0 / DAY) * DAY;
+  const project = (newRecipientsPerDay: number | null, newRecipientsAuto: boolean) => ({
+    id: P,
+    newRecipientsPerDay,
+    newRecipientsAuto,
+  });
+  const used = (db: ReturnType<typeof openDatabase>, at: number, n: number) =>
+    db.run("INSERT INTO project_usage (project_id, unit, slot, n) VALUES (?, 'new_hour', ?, ?)", [
+      P,
+      Math.floor(at / HOUR),
+      n,
+    ]);
+
+  test("an explicit limit wins, no limit when both are off", () => {
+    const db = openDatabase({ path: ":memory:" });
+    used(db, TODAY - DAY, 1_000);
+    expect(newRecipientsLimit(db, project(50, true), T0)).toBe(50);
+    expect(newRecipientsLimit(db, project(50, false), T0)).toBe(50);
+    expect(newRecipientsLimit(db, project(null, false), T0)).toBeNull();
+  });
+
+  test("200 without history, then three times the busiest of the last 14 days", () => {
+    expect(newRecipientsLimit(openDatabase({ path: ":memory:" }), project(null, true), T0)).toBe(
+      200,
+    );
+    const db = openDatabase({ path: ":memory:" });
+    used(db, TODAY - 15 * DAY, 5_000);
+    used(db, T0, 5_000);
+    used(db, TODAY - 3 * DAY + HOUR, 30);
+    used(db, TODAY - 3 * DAY + 20 * HOUR, 40);
+    used(db, TODAY - 14 * DAY, 90);
+    used(db, TODAY - 2 * DAY, 80);
+    expect(newRecipientsLimit(db, project(null, true), T0)).toBe(270);
+    expect(newRecipientsLimit(db, project(null, true), T0 + HOUR)).toBe(270);
+    expect(newRecipientsLimit(db, project(null, true), T0 + DAY)).toBe(15_000);
+  });
+
+  test("first-time recipient counts are kept 15 days", () => {
+    const db = openDatabase({ path: ":memory:" });
+    used(db, T0 - 15 * DAY + HOUR, 1);
+    used(db, T0 - 15 * DAY, 2);
+    db.run("INSERT INTO project_usage (project_id, unit, slot, n) VALUES (?, 'hour', ?, 3)", [
+      P,
+      Math.floor((T0 - 2 * DAY) / HOUR),
+    ]);
+    pruneUsage(db, T0);
+    expect(db.query("SELECT unit, n FROM project_usage").all()).toEqual([
+      { unit: "new_hour", n: 1 },
+    ]);
   });
 });

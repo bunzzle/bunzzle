@@ -90,9 +90,14 @@ When a project reaches 90 % of a limit, its webhooks get one `project.limit_appr
 ```sh
 sudo bunzzle projects limits shop --new-recipients-per-day 200
 sudo bunzzle projects limits shop --new-recipients-per-day none
+sudo bunzzle projects limits shop --new-recipients-auto on
 ```
 
-Or `PATCH /projects/shop` with `{"new_recipients_per_day": 200}`; `null` removes the limit. New projects have no limit. Set one for projects you do not fully trust: a leaked key or a bought list sends to many addresses the project never wrote to, long before it reaches its daily send limit.
+Or `PATCH /projects/shop` with `{"new_recipients_per_day": 200}`; `null` removes the number. A leaked key or a bought list sends to many addresses the project never wrote to, long before it reaches its daily send limit.
+
+With `new_recipients_auto` on and no number set, the limit follows the project's own sending: 200 a day, or three times its busiest day of first-time recipients in the last 14 days, whichever is larger. Days end at midnight UTC and today does not count. A number set with `new_recipients_per_day` always wins. First-time recipients are counted for every project, so a project that turns this on starts from its own history.
+
+New projects and the `default` project of a fresh install have `new_recipients_auto` on. Projects created by an earlier version of Bunzzle have it off; turn it on with `--new-recipients-auto on` or `PATCH /projects/shop` with `{"new_recipients_auto": true}`. `bunzzle doctor` warns about projects with no first-time recipient limit. `GET /projects/shop` returns `new_recipients_auto` and the limit in force as `new_recipients_effective` (`null` for no limit).
 
 A first-time recipient is an address this project has not had an email accepted for in the last 90 days. Each project has its own list, so an address known to one project is new to another. Upper and lower case are the same address. Suppressed addresses, simulator addresses and email sent with a test key are not counted. An address that appears twice in one request counts once.
 
