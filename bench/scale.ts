@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { cpuByRole, email, pct, startBench, usage } from "./setup.ts";
+import { cpuByRole, cpuShare, email, pct, startBench, usage } from "./setup.ts";
 import { behaviorOf, startSink } from "./sink.ts";
 
 const total = Number(Bun.argv[2] ?? 1_000_000);
@@ -31,10 +31,25 @@ console.log(
 const dbSize = async () =>
   Number((await Bun.$`du -sk ${bench.dir}/data`.nothrow().text()).split(/\s+/)[0] ?? 0) / 1024;
 
+interface Snap {
+  cpu: Map<string, number>;
+  delivered: number;
+}
+const snap = async (): Promise<Snap> => {
+  const cpu = await cpuByRole(bench.roles());
+  const own = process.cpuUsage();
+  cpu.set("bench", (own.user + own.system) / 1_000);
+  return { cpu, delivered: sink.stats().unique };
+};
+
 let accepted = 0;
 let intakeErrors = 0;
 let firstError: string | null = null;
 let intakeDone = 0;
+let atIntakeDone: Snap | null = null;
+let atRelease: Snap | null = null;
+let at99: Snap | null = null;
+const atStart = await snap();
 const started = performance.now();
 const releaseAt = new Date(Date.now() + BACKLOG_MS).toISOString();
 const intake = (async () => {
@@ -68,6 +83,7 @@ const intake = (async () => {
   };
   await Promise.all(Array.from({ length: concurrency }, client));
   intakeDone = performance.now();
+  atIntakeDone = await snap();
 })();
 
 const probeSent = new Map<number, number>();
@@ -110,6 +126,8 @@ for (;;) {
     if (!reached.has(m) && st.unique >= Math.ceil(total * m)) reached.set(m, now - started);
   }
   if (cpuAt99 === null && reached.has(0.99)) cpuAt99 = u.cpuMs;
+  if (backlog && atRelease === null && now - started >= BACKLOG_MS) atRelease = await snap();
+  if (at99 === null && reached.has(0.99)) at99 = await snap();
   const rate = ((st.unique - last.unique) * 1_000) / (now - last.at);
   console.log(
     `  ${String(Math.round((now - started) / 1_000)).padStart(4)}s  ${String(accepted).padStart(8)}  ${String(st.unique).padStart(9)}  ${String(Math.round(rate)).padStart(6)}  ${String(st.active).padStart(10)}  ${String(Math.round(u.rssMb)).padStart(6)}  ${String(Math.round(db)).padStart(5)}`,
@@ -194,8 +212,18 @@ console.log(
 console.log(
   `  CPU ${(((cpuAt99 ?? cpuAfter.cpuMs) - cpuBefore.cpuMs) / Math.max(1, Math.ceil(total * 0.99))).toFixed(2)} ms per email up to 99%; by role (s): ${[...roleCpu].map(([r, ms]) => `${r} ${(ms / 1_000).toFixed(0)}`).join(", ")}`,
 );
+const phase = (name: string, a: Snap | null, b: Snap | null, n: number) => {
+  if (a && b && n > 0)
+    console.log(`  ${name} CPU ms per email by role: ${cpuShare(a.cpu, b.cpu, n)}`);
+};
+if (backlog) {
+  phase("intake", atStart, atIntakeDone, accepted);
+  phase("delivery", atRelease, at99, at99 && atRelease ? at99.delivered - atRelease.delivered : 0);
+} else {
+  phase("intake + delivery", atStart, at99, at99?.delivered ?? 0);
+}
 console.log(
-  `  memory peak: ${Math.round(peaks.rssMb)} MB RSS summed (${[...peaks.roleRss].map(([r, mb]) => `${r} ${Math.round(mb)}`).join(", ")}); database peak ${Math.round(peaks.dbMb)} MB`,
+  `  memory peak:${Math.round(peaks.rssMb)} MB RSS summed (${[...peaks.roleRss].map(([r, mb]) => `${r} ${Math.round(mb)}`).join(", ")}); database peak ${Math.round(peaks.dbMb)} MB`,
 );
 console.log(
   `  jobs left: ${jobStates.map((r) => `${r.state} ${r.n}`).join(", ") || "none"}; recipients: ${rcptStates.map((r) => `${r.status} ${r.n}`).join(", ")}`,
