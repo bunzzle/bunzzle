@@ -36,6 +36,7 @@ import {
   zoneDomainNames,
 } from "../domains/domains.ts";
 import { pruneIdempotency } from "../emails/idempotency.ts";
+import { flushStats, holdStats } from "../emails/search.ts";
 import { pruneConversations } from "../emails/view.ts";
 import { beginAtEnd, exportEvents } from "../eventlog/export.ts";
 import { EventLog } from "../eventlog/log.ts";
@@ -111,6 +112,7 @@ export async function runCore(config: Config, log: Logger) {
   const scaled = (ms: number) => Math.max(1, Math.round(ms * scale));
   await privateDir(config.dataDir);
   const db = openDatabase({ path: config.dbPath });
+  holdStats(db);
   const writer = new Writer(db);
   const eventLog = config.eventLog ? new EventLog(config.eventLog) : null;
   if (eventLog && config.eventLog) {
@@ -361,7 +363,7 @@ export async function runCore(config: Config, log: Logger) {
   };
 
   let hashing: Promise<RecipientHash> | null = null;
-  const recipientHash: RecipientHash = async (address) => {
+  const recipientHasherOnce = (): Promise<RecipientHash> => {
     hashing ??= signer
       .call("recipientKey", {}, { result: b.string() })
       .then((k) => recipientHasher(Uint8Array.fromBase64(k)))
@@ -369,7 +371,7 @@ export async function runCore(config: Config, log: Logger) {
         hashing = null;
         throw err;
       });
-    return (await hashing)(address);
+    return hashing;
   };
 
   const hooks = hookMethods({ db, writer, log, delivery });
@@ -475,7 +477,7 @@ export async function runCore(config: Config, log: Logger) {
     signer,
     delivery,
     currentKey,
-    recipientHash,
+    recipientHasher: recipientHasherOnce,
     sourceIp: config.sourceIps.map((x) => x.ip),
     inboundHost: config.inboundHostname,
     nsZone: config.ns?.zone ?? null,
@@ -657,9 +659,8 @@ export async function runCore(config: Config, log: Logger) {
     let after = 0;
     for (;;) {
       const page = seedPage(db, after, Date.now());
-      const rows = await Promise.all(
-        page.rows.map(async (r) => ({ ...r, hash: await recipientHash(r.address) })),
-      );
+      const hash = await recipientHasherOnce();
+      const rows = page.rows.map((r) => ({ ...r, hash: hash(r.address) }));
       await writer.run((d) => {
         for (const r of rows) rememberRecipients(d, r.project, [r.hash], r.at);
         if (page.next === null) finishSeed(d, Date.now());
@@ -697,6 +698,7 @@ export async function runCore(config: Config, log: Logger) {
       enqueue: api.enqueueInternal,
     }).catch((err: Error) => log.warn("TLS reports failed", { error: err.message })),
   );
+  const stopStats = every(1_000, () => writer.run((d) => flushStats(d), { quiet: true }));
   const stopSuspensions = every(Math.max(1_000, scaled(MIN)), () =>
     writer.run((d) => expireSuspensions(d, Date.now())),
   );
@@ -831,6 +833,7 @@ export async function runCore(config: Config, log: Logger) {
     stopPrune();
     stopPurge();
     stopSuspensions();
+    stopStats();
     stopTlsReports();
     stopVerify();
     stopProject();
@@ -849,6 +852,7 @@ export async function runCore(config: Config, log: Logger) {
     admin.stop();
     shaper.stop();
     await scheduler.stop();
+    await writer.run((d) => flushStats(d)).catch(() => {});
     writer.close();
     db.close();
   });

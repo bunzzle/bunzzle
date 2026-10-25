@@ -15,7 +15,7 @@ import {
   recordAdminEvent,
   SYSTEM_PROJECT,
 } from "../accounts/projects.ts";
-import { newRecipients, type RecipientHash, rememberRecipients } from "../accounts/recipients.ts";
+import { checkRecipients, type RecipientHash, rememberRecipients } from "../accounts/recipients.ts";
 import {
   type LimitSetting,
   newRecipientsLimit,
@@ -128,7 +128,7 @@ export interface CoreDeps {
   signer: RpcClient;
   delivery: RpcClient;
   currentKey: () => Promise<EpochPublicKey>;
-  recipientHash: RecipientHash;
+  recipientHasher: () => Promise<RecipientHash>;
   sourceIp: string | string[] | null;
   inboundHost?: string | null;
   nsZone?: string | null;
@@ -372,7 +372,8 @@ export function coreMethods(deps: CoreDeps): {
       else sending.add(address);
     }
     const counted = key?.test ? 0 : sending.size;
-    const hashes = key?.test ? [] : await Promise.all([...sending].map(deps.recipientHash));
+    const hash = key?.test ? null : await deps.recipientHasher();
+    const hashes = hash ? [...sending].map(hash) : [];
     const data = deps.filter
       ? await deps.filter(p.data, {
           id,
@@ -403,8 +404,8 @@ export function coreMethods(deps: CoreDeps): {
           chosen !== null && (project === SYSTEM_PROJECT || poolUsableBy(d, chosen, project))
             ? chosen
             : null;
-        const fresh = newRecipients(d, project, hashes, t);
-        const quota = takeQuota(d, project, limits, counted, fresh, t);
+        const seen = checkRecipients(d, project, hashes, t);
+        const quota = takeQuota(d, project, limits, counted, seen.fresh, t);
         if (!quota.ok) throw limitError(project, quota.over);
         enqueueEmail(
           d,
@@ -431,7 +432,7 @@ export function coreMethods(deps: CoreDeps): {
           t,
         );
         if (idem) rememberIdempotent(d, idemOwner, idem.key, idem.hash, id, t);
-        rememberRecipients(d, project, hashes, t);
+        rememberRecipients(d, project, seen.stale, t);
         for (const near of quota.near) {
           appendEvent(d, {
             messageId: id,

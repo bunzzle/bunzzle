@@ -22,7 +22,7 @@ import {
   updateProject,
 } from "../../src/accounts/projects.ts";
 import { purgeDeletedProject } from "../../src/accounts/purge.ts";
-import { newRecipients, recipientHasher } from "../../src/accounts/recipients.ts";
+import { checkRecipients, recipientHasher } from "../../src/accounts/recipients.ts";
 import { appendEvent } from "../../src/core/events.ts";
 import {
   claim,
@@ -464,7 +464,7 @@ describe("projects", () => {
       signer: stub,
       delivery: stub,
       currentKey: async () => epoch,
-      recipientHash: await recipientHasher(new Uint8Array(32)),
+      recipientHasher: async () => recipientHasher(new Uint8Array(32)),
       sourceIp: null,
     });
     const data = "From: tlsrpt@b.test\r\nTo: r@dest.test\r\nSubject: report\r\n\r\nhi\r\n";
@@ -510,7 +510,7 @@ describe("projects", () => {
       signer: stub,
       delivery: stub,
       currentKey: async () => epoch,
-      recipientHash: await recipientHasher(new Uint8Array(32)),
+      recipientHasher: async () => recipientHasher(new Uint8Array(32)),
       sourceIp: null,
     });
     const email = (to: string[]) => ({
@@ -563,7 +563,7 @@ describe("projects", () => {
     const stub = {
       call: async (m: string) => (m === "domains" ? ["a.test"] : null),
     } as unknown as RpcClient;
-    const hash = await recipientHasher(new Uint8Array(32));
+    const hash = recipientHasher(new Uint8Array(32));
     const { methods } = coreMethods({
       db,
       writer: new Writer(db),
@@ -571,7 +571,7 @@ describe("projects", () => {
       signer: stub,
       delivery: stub,
       currentKey: async () => epoch,
-      recipientHash: hash,
+      recipientHasher: async () => hash,
       sourceIp: null,
     });
     const email = (to: string[]) => ({
@@ -616,9 +616,9 @@ describe("projects", () => {
     ).toEqual({ data: JSON.stringify({ setting: "new_recipients_per_day" }) });
 
     db.run("INSERT INTO projects (id, name, created_at) VALUES (?, 'other', ?)", [B, T0]);
-    expect(newRecipients(db, B, [await hash("a@dest.test")], Date.now())).toBe(1);
-    expect(newRecipients(db, A, [await hash("A@dest.test")], Date.now())).toBe(0);
-    expect(newRecipients(db, A, [await hash("a@dest.test")], Date.now() + 91 * DAY)).toBe(1);
+    expect(checkRecipients(db, B, [hash("a@dest.test")], Date.now()).fresh).toBe(1);
+    expect(checkRecipients(db, A, [hash("A@dest.test")], Date.now()).fresh).toBe(0);
+    expect(checkRecipients(db, A, [hash("a@dest.test")], Date.now() + 91 * DAY).fresh).toBe(1);
   });
 
   test("adaptive first-time recipient limit: 200 on the first day, off means no limit", async () => {
@@ -649,7 +649,7 @@ describe("projects", () => {
       signer: stub,
       delivery: stub,
       currentKey: async () => epoch,
-      recipientHash: await recipientHasher(new Uint8Array(32)),
+      recipientHasher: async () => recipientHasher(new Uint8Array(32)),
       sourceIp: null,
     });
     const email = (prefix: string, n: number) => ({
@@ -731,7 +731,7 @@ describe("projects", () => {
       signer: stub,
       delivery: stub,
       currentKey: async () => epoch,
-      recipientHash: await recipientHasher(new Uint8Array(32)),
+      recipientHasher: async () => recipientHasher(new Uint8Array(32)),
       sourceIp: null,
       ips: [
         { ip: "192.0.2.1", pool: "main", established: true },
