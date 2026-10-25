@@ -1,6 +1,6 @@
 {
   "name": "@bunzzle/sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Client for the Bunzzle API",
   "license": "MIT",
   "homepage": "https://bunzzle.com",
