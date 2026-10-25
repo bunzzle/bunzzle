@@ -618,6 +618,9 @@ export function startApp({ core, log, hostname, port }: AppOptions) {
               ...(p.new_recipients_per_day !== undefined
                 ? { newRecipientsPerDay: p.new_recipients_per_day }
                 : {}),
+              ...(p.new_recipients_auto !== undefined
+                ? { newRecipientsAuto: p.new_recipients_auto }
+                : {}),
               ...(p.ip_pool !== undefined ? { pool: p.ip_pool } : {}),
               ...(p.suspended !== undefined ? { suspended: p.suspended } : {}),
             }),

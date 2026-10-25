@@ -4458,6 +4458,15 @@
                     "null"
                   ]
                 },
+                "new_recipients_auto": {
+                  "type": "boolean"
+                },
+                "new_recipients_effective": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
                 "ip_pool": {
                   "type": [
                     "string",
@@ -4486,6 +4495,8 @@
                 "per_hour",
                 "per_day",
                 "new_recipients_per_day",
+                "new_recipients_auto",
+                "new_recipients_effective",
                 "ip_pool",
                 "suspended",
                 "created_at",
@@ -4542,6 +4553,15 @@
               "null"
             ]
           },
+          "new_recipients_auto": {
+            "type": "boolean"
+          },
+          "new_recipients_effective": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "ip_pool": {
             "type": [
               "string",
@@ -4570,6 +4590,8 @@
           "per_hour",
           "per_day",
           "new_recipients_per_day",
+          "new_recipients_auto",
+          "new_recipients_effective",
           "ip_pool",
           "suspended",
           "created_at",
@@ -4607,6 +4629,9 @@
             ],
             "minimum": 1,
             "maximum": 100000000
+          },
+          "new_recipients_auto": {
+            "type": "boolean"
           },
           "ip_pool": {
             "type": [

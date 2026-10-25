@@ -17,6 +17,7 @@ export interface Project {
   perHour: number | null;
   perDay: number | null;
   newRecipientsPerDay: number | null;
+  newRecipientsAuto: boolean;
   pool: string | null;
   createdAt: number;
   suspendedAt: number | null;
@@ -29,6 +30,7 @@ interface Row {
   per_hour: number | null;
   per_day: number | null;
   new_recipients_per_day: number | null;
+  new_recipients_auto: number;
   pool: string | null;
   created_at: number;
   suspended_at: number | null;
@@ -41,6 +43,7 @@ const fromRow = (r: Row): Project => ({
   perHour: r.per_hour,
   perDay: r.per_day,
   newRecipientsPerDay: r.new_recipients_per_day,
+  newRecipientsAuto: r.new_recipients_auto === 1,
   pool: r.pool,
   createdAt: r.created_at,
   suspendedAt: r.suspended_at,
@@ -59,7 +62,7 @@ export function createProject(db: Database, name: string, now: number): Project 
   const id = Bun.randomUUIDv7();
   const added = db
     .query<unknown, [string, string, number]>(
-      "INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+      "INSERT INTO projects (id, name, new_recipients_auto, created_at) VALUES (?, ?, 1, ?) ON CONFLICT DO NOTHING",
     )
     .run(id, name, now).changes;
   return added ? findProject(db, id) : null;
@@ -113,6 +116,7 @@ export interface ProjectChange {
   perHour?: number | null;
   perDay?: number | null;
   newRecipientsPerDay?: number | null;
+  newRecipientsAuto?: boolean;
   pool?: string | null;
   suspended?: boolean;
 }
@@ -129,15 +133,25 @@ export function updateProject(
     c.suspended === undefined ? p.suspendedAt : c.suspended ? (p.suspendedAt ?? now) : null;
   db.query<
     unknown,
-    [string, number | null, number | null, number | null, string | null, number | null, string]
+    [
+      string,
+      number | null,
+      number | null,
+      number | null,
+      number,
+      string | null,
+      number | null,
+      string,
+    ]
   >(
-    `UPDATE projects SET name = ?, per_hour = ?, per_day = ?, new_recipients_per_day = ?, pool = ?,
-     suspended_at = ? WHERE id = ? AND deleted_at IS NULL`,
+    `UPDATE projects SET name = ?, per_hour = ?, per_day = ?, new_recipients_per_day = ?,
+     new_recipients_auto = ?, pool = ?, suspended_at = ? WHERE id = ? AND deleted_at IS NULL`,
   ).run(
     c.name ?? p.name,
     c.perHour === undefined ? p.perHour : c.perHour,
     c.perDay === undefined ? p.perDay : c.perDay,
     c.newRecipientsPerDay === undefined ? p.newRecipientsPerDay : c.newRecipientsPerDay,
+    (c.newRecipientsAuto ?? p.newRecipientsAuto) ? 1 : 0,
     c.pool === undefined ? p.pool : c.pool,
     suspendedAt,
     id,

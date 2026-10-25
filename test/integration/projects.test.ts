@@ -174,4 +174,31 @@ describe("projects", () => {
     const own = await call(a, "GET", `/emails/${owned["emails"]}`);
     expect(own.status).toBe(200);
   }, 60_000);
+
+  test("first-time recipient limit: adaptive for a fresh install and new projects, opt-out and back", async () => {
+    const view = async (id: string) => json((await call(admin, "GET", `/projects/${id}`)).text);
+    expect(await view("default")).toMatchObject({
+      new_recipients_per_day: null,
+      new_recipients_auto: true,
+      new_recipients_effective: 200,
+    });
+    expect(await view("other")).toMatchObject({ new_recipients_auto: true });
+    const off = await call(admin, "PATCH", "/projects/other", { new_recipients_auto: false });
+    expect(json(off.text)).toMatchObject({
+      new_recipients_auto: false,
+      new_recipients_effective: null,
+    });
+    expect(await cli("doctor")).toContain(
+      "[warn] first-time recipients: no limit for other: run bunzzle projects limits NAME --new-recipients-auto on",
+    );
+    expect(await cli("projects", "limits", "other", "--new-recipients-auto", "on")).toContain(
+      "new recipients/day: 200 (auto)",
+    );
+    expect(await cli("projects", "limits", "other", "--new-recipients-per-day", "50")).toContain(
+      "new recipients/day: 50 (set)",
+    );
+    expect(await cli("doctor")).toContain(
+      "[ok]   first-time recipients: every project has a limit",
+    );
+  }, 30_000);
 });

@@ -471,6 +471,7 @@ export const updateProjectSchema = b.object({
   per_hour: limitField.optional(),
   per_day: limitField.optional(),
   new_recipients_per_day: limitField.optional(),
+  new_recipients_auto: b.boolean().optional(),
   ip_pool: b
     .string()
     .regex(/^[a-z0-9-]{1,32}$/)
@@ -498,6 +499,8 @@ export const project = b.object({
   per_hour: b.number().int().nullable(),
   per_day: b.number().int().nullable(),
   new_recipients_per_day: b.number().int().nullable(),
+  new_recipients_auto: b.boolean(),
+  new_recipients_effective: b.number().int().nullable(),
   ip_pool: b.string().nullable(),
   suspended: b.boolean(),
   created_at: time,

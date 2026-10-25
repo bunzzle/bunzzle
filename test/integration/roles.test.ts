@@ -96,6 +96,7 @@ test(
   async () => {
     const core = new RpcClient(`${served.dir}/run/admin.sock`);
     await verifiedDomain(core, "bunzzle.test");
+    await core.call("updateProject", { id: "default", newRecipientsAuto: false });
     let kills = 0;
     const killer = (async () => {
       for (const role of KILLS) {

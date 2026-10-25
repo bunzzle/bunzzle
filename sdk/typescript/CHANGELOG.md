@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Projects: `new_recipients_per_day` in `getProject`, `listProjects` and `updateProject`.
+- Projects: `new_recipients_per_day` and `new_recipients_auto` in `getProject`, `listProjects` and `updateProject`; `new_recipients_effective` in their responses.
 - Operations: `listNodes`.
 
 ## 0.2.0

@@ -22,6 +22,7 @@ import {
   recordAdminEvent,
   updateProject,
 } from "../accounts/projects.ts";
+import { newRecipientsLimit } from "../accounts/usage.ts";
 import type { SourceIp } from "../config.ts";
 import { holdProjectJobs, releaseProjectJobs } from "../core/jobs.ts";
 import type { Logger } from "../core/log.ts";
@@ -46,13 +47,15 @@ export interface ProjectDeps {
 
 const iso = (t: number | null) => (t === null ? null : new Date(t).toISOString());
 
-export const projectView = (p: Project) => ({
+export const projectView = (db: Database, t: number) => (p: Project) => ({
   object: "project",
   id: p.id,
   name: p.name,
   per_hour: p.perHour,
   per_day: p.perDay,
   new_recipients_per_day: p.newRecipientsPerDay,
+  new_recipients_auto: p.newRecipientsAuto,
+  new_recipients_effective: newRecipientsLimit(db, p, t),
   ip_pool: p.pool,
   suspended: p.suspendedAt !== null,
   created_at: iso(p.createdAt),
@@ -181,7 +184,7 @@ export function projectMethods(deps: ProjectDeps): Methods {
 
     listProjects: method(b.object({ tokenHash }), (p) => {
       resolveAdmin(db, p);
-      return listProjects(db).map(projectView);
+      return listProjects(db).map(projectView(db, now()));
     }),
 
     createProject: method(b.object({ tokenHash, name: b.string().max(63) }), async (p) => {
@@ -205,12 +208,12 @@ export function projectMethods(deps: ProjectDeps): Methods {
       });
       if (!made) throw new RpcError("invalid", `a project named ${p.name} already exists`);
       log.info("project created", { id: made.id, name: made.name });
-      return projectView(made);
+      return projectView(db, now())(made);
     }),
 
     getProject: method(b.object({ tokenHash, id: b.string().max(64) }), (p) => {
       resolveAdmin(db, p);
-      return projectView(target(p.id));
+      return projectView(db, now())(target(p.id));
     }),
 
     updateProject: method(
@@ -221,6 +224,7 @@ export function projectMethods(deps: ProjectDeps): Methods {
         perHour: limit,
         perDay: limit,
         newRecipientsPerDay: limit,
+        newRecipientsAuto: b.boolean().optional(),
         pool: b.string().max(32).nullable().optional(),
         suspended: b.boolean().optional(),
       }),
@@ -248,6 +252,9 @@ export function projectMethods(deps: ProjectDeps): Methods {
               ...(p.newRecipientsPerDay !== undefined
                 ? { newRecipientsPerDay: p.newRecipientsPerDay }
                 : {}),
+              ...(p.newRecipientsAuto !== undefined
+                ? { newRecipientsAuto: p.newRecipientsAuto }
+                : {}),
               ...(p.pool !== undefined ? { pool: p.pool } : {}),
               ...(p.suspended !== undefined ? { suspended: p.suspended } : {}),
             },
@@ -267,6 +274,9 @@ export function projectMethods(deps: ProjectDeps): Methods {
             ...(next.newRecipientsPerDay !== before.newRecipientsPerDay
               ? { new_recipients_per_day: next.newRecipientsPerDay }
               : {}),
+            ...(next.newRecipientsAuto !== before.newRecipientsAuto
+              ? { new_recipients_auto: next.newRecipientsAuto }
+              : {}),
             ...(next.pool !== before.pool ? { ip_pool: next.pool } : {}),
           };
           if (Object.keys(changed).length > 0) record("project.updated", changed);
@@ -279,7 +289,7 @@ export function projectMethods(deps: ProjectDeps): Methods {
           return next;
         });
         if (!after) throw new RpcError("not-found", "project not found");
-        return projectView(after);
+        return projectView(db, now())(after);
       },
     ),
 

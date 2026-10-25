@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { ProjectId } from "../accounts/projects.ts";
+import { listProjects, type ProjectId } from "../accounts/projects.ts";
 import { fromPem } from "../asn1/der.ts";
 import type { Config } from "../config.ts";
 import type { StorageState } from "../core/storage.ts";
@@ -339,6 +339,21 @@ export function doctorMethods(deps: DoctorDeps): Methods {
         add("paths", p.key, "warn", `${p.mode}: ${p.changes.at(-1)?.reason ?? ""}`);
       }
     }
+    const open = listProjects(db).filter(
+      (x) =>
+        (scope === null || x.id === scope) &&
+        x.newRecipientsPerDay === null &&
+        !x.newRecipientsAuto,
+    );
+    add(
+      "projects",
+      "first-time recipients",
+      open.length > 0 ? "warn" : "ok",
+      open.length > 0
+        ? `no limit for ${open.map((x) => x.name).join(", ")}: run bunzzle projects limits NAME --new-recipients-auto on`
+        : "every project has a limit",
+    );
+
     const failed =
       db
         .query<{ n: number }, [number]>(
