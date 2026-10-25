@@ -1,5 +1,6 @@
 import { type Config, parseLinkAddress } from "../config.ts";
 import type { Logger } from "../core/log.ts";
+import { holdProgress } from "../delivery/progress.ts";
 import { type EgressTarget, localTransport, rememberingTransport } from "../delivery/transport.ts";
 import { cachingResolver } from "../dns/cache.ts";
 import { localValidatingResolver } from "../dns/dnssec.ts";
@@ -20,13 +21,15 @@ import { deliverySpans } from "../otel/delivery-spans.ts";
 import { MAX_QUEUE, type Post, SpanExporter } from "../otel/exporter.ts";
 import { parseHeaders, spanWire } from "../otel/otlp.ts";
 import { limitsFor } from "../shaping/limits.ts";
-import { allRecipients } from "../smtp/deliver.ts";
+import { allRecipients, type DeliveryReport } from "../smtp/deliver.ts";
 import { StsCache } from "../smtp/mta-sts.ts";
 import { SessionPool } from "../smtp/pool.ts";
 import { b } from "../validate/schema.ts";
 import { loadLinkTls } from "./node-link.ts";
 import { every, onStop, ready } from "./runtime.ts";
 import { deliverRequestWire, requestFromWire, sealedBodyWire, sockets, toWire } from "./wire.ts";
+
+const PROGRESS_HOLD_MS = 20;
 
 export async function runDelivery(config: Config, log: Logger) {
   const sock = sockets(config.runDir);
@@ -386,7 +389,15 @@ export async function runDelivery(config: Config, log: Logger) {
         };
       }
       const start = Date.now();
-      const report = await transport.deliver(req, (recipients) => ctx.progress({ recipients }));
+      const progress = holdProgress((recipients) => ctx.progress({ recipients }), PROGRESS_HOLD_MS);
+      let report: DeliveryReport;
+      try {
+        report = await transport.deliver(req, progress.onOutcomes);
+      } catch (err) {
+        progress.flush();
+        throw err;
+      }
+      progress.drop();
       spans?.add(deliverySpans(req, report, start, Date.now()));
       return report;
     }),
