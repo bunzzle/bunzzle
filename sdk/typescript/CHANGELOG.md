@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+Needs Bunzzle 0.3.0 or later.
 
 - Projects: `new_recipients_per_day` and `new_recipients_auto` in `getProject`, `listProjects` and `updateProject`; `new_recipients_effective` in their responses.
 - Operations: `listNodes`.

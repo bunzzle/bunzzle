@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Bunzzle",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "license": {
       "name": "AGPL-3.0-only",
       "identifier": "AGPL-3.0-only"

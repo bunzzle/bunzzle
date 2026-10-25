@@ -16,7 +16,7 @@ sudo sh install.sh
 - writes `/etc/bunzzle/bunzzle.env` (settings) and `/etc/bunzzle/master.key` (secret, root only) if they don't exist yet;
 - starts everything and fails loudly if any role isn't running.
 
-To verify the signature yourself before installing, see [verify.md](verify.md). To install a specific version: `sudo BUNZZLE_VERSION=v0.2.0 sh install.sh`. From a checkout: `sudo ./deploy/install.sh path/to/bunzzle`.
+To verify the signature yourself before installing, see [verify.md](verify.md). To install a specific version: `sudo BUNZZLE_VERSION=v0.3.0 sh install.sh`. From a checkout: `sudo ./deploy/install.sh path/to/bunzzle`.
 
 Then:
 
