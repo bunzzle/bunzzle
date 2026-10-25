@@ -16,6 +16,35 @@ export type Metric = (typeof METRICS)[number];
 
 const tagKey = (t: { name: string; value: string }) => `${t.name}:${t.value}`;
 const dayOf = (at: number) => new Date(at).toISOString().slice(0, 10);
+const SEP = "\u0000";
+const held = new WeakMap<Database, Map<string, number>>();
+
+const upsertStat = (db: Database) =>
+  db.query<unknown, [string, string, string, string, string, number]>(
+    `INSERT INTO stats_daily (project_id, day, domain, tag, metric, n) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (project_id, day, domain, tag, metric) DO UPDATE SET n = n + excluded.n`,
+  );
+
+export function holdStats(db: Database): void {
+  if (!held.has(db)) held.set(db, new Map());
+}
+
+export function flushStats(db: Database): void {
+  const pending = held.get(db);
+  if (!pending || pending.size === 0) return;
+  const add = upsertStat(db);
+  for (const [key, n] of pending) {
+    const [project, day, domain, tag, metric] = key.split(SEP) as [
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
+    add.run(project, day, domain, tag, metric, n);
+  }
+  pending.clear();
+}
 
 export function indexEmail(
   db: Database,
@@ -31,10 +60,10 @@ export function indexEmail(
   db.query<unknown, [string, string, string, string | null, number]>(
     "INSERT OR IGNORE INTO email_index (message_id, project_id, domain, key_id, test) VALUES (?, ?, ?, ?, ?)",
   ).run(e.id, e.project, e.domain, e.keyId, e.test ? 1 : 0);
-  const tag = db.query<unknown, [string, string]>(
-    "INSERT OR IGNORE INTO email_tags (message_id, tag) VALUES (?, ?)",
-  );
-  for (const t of e.tags) tag.run(e.id, tagKey(t));
+  if (e.tags.length === 0) return;
+  db.query<unknown, string[]>(
+    `INSERT OR IGNORE INTO email_tags (message_id, tag) VALUES ${e.tags.map(() => "(?, ?)").join(", ")}`,
+  ).run(...e.tags.flatMap((t) => [e.id, tagKey(t)]));
 }
 
 export function countEmail(
@@ -55,11 +84,16 @@ export function countEmail(
     .query<{ tag: string }, [string]>("SELECT tag FROM email_tags WHERE message_id = ?")
     .all(messageId)
     .map((r) => r.tag);
-  const add = db.query<unknown, [string, string, string, string, string, number]>(
-    `INSERT INTO stats_daily (project_id, day, domain, tag, metric, n) VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT (project_id, day, domain, tag, metric) DO UPDATE SET n = n + excluded.n`,
-  );
   const day = dayOf(at);
+  const pending = held.get(db);
+  if (pending) {
+    for (const tag of ["", ...tags]) {
+      const key = [e.project_id, day, e.domain, tag, metric].join(SEP);
+      pending.set(key, (pending.get(key) ?? 0) + n);
+    }
+    return;
+  }
+  const add = upsertStat(db);
   for (const tag of ["", ...tags]) add.run(e.project_id, day, e.domain, tag, metric, n);
 }
 
@@ -91,6 +125,20 @@ export function statsFor(db: Database, project: ProjectId, q: StatsQuery): DayCo
   for (const r of rows) {
     const d = byDay.get(r.day);
     if (d) d[r.metric] = r.n;
+  }
+  for (const [key, n] of held.get(db) ?? []) {
+    const [p, day, domain, tag, metric] = key.split(SEP) as [
+      string,
+      string,
+      string,
+      string,
+      Metric,
+    ];
+    if (p !== project || tag !== (q.tag ?? "") || (q.domain !== undefined && domain !== q.domain)) {
+      continue;
+    }
+    const d = byDay.get(day);
+    if (d) d[metric] += n;
   }
   return [...byDay.values()];
 }

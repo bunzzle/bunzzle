@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_PROJECT as A, type ProjectId } from "../../src/accounts/projects.ts";
 import {
+  checkRecipients,
   finishSeed,
-  newRecipients,
   pruneRecipients,
   RECIPIENT_MEMORY_MS,
   recipientHasher,
@@ -20,24 +20,45 @@ const T0 = Date.UTC(2026, 9, 22, 12);
 const sealed = { epoch: 1, wrapped: new Uint8Array([1]), body: new Uint8Array([2]) };
 
 describe("known recipients", () => {
-  test("hashes ignore case and depend on the key", async () => {
-    const one = await recipientHasher(new Uint8Array(32));
-    const two = await recipientHasher(new Uint8Array(32).fill(1));
-    expect(await one("A@x.test")).toEqual(await one("a@x.test"));
-    expect(await one("a@x.test")).not.toEqual(await two("a@x.test"));
-    expect((await one("a@x.test")).length).toBe(16);
+  test("hashes ignore case and depend on the key", () => {
+    const one = recipientHasher(new Uint8Array(32));
+    const two = recipientHasher(new Uint8Array(32).fill(1));
+    expect(one("A@x.test")).toEqual(one("a@x.test"));
+    expect(one("a@x.test")).not.toEqual(two("a@x.test"));
+    expect(one("a@x.test").length).toBe(16);
   });
 
-  test("remembered for 90 days, then pruned", async () => {
+  test("hashes are HMAC-SHA-256 of the lowercase address, first 16 bytes", async () => {
+    const key = new Uint8Array(32).map((_, i) => i * 7);
+    const k = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, [
+      "sign",
+    ]);
+    const hash = recipientHasher(key);
+    for (const a of ["a@x.test", "Bob@Example.COM", "ü@ex.test"]) {
+      const mac = await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(a.toLowerCase()));
+      expect(hash(a)).toEqual(new Uint8Array(mac).slice(0, 16));
+    }
+  });
+
+  test("remembered for 90 days, then pruned", () => {
     const db = openDatabase({ path: ":memory:" });
-    const h = await (await recipientHasher(new Uint8Array(32)))("a@x.test");
+    const h = recipientHasher(new Uint8Array(32))("a@x.test");
     rememberRecipients(db, A, [h], T0);
-    expect(newRecipients(db, A, [h, h], T0 + 1)).toBe(0);
-    expect(newRecipients(db, A, [h, h], T0 + RECIPIENT_MEMORY_MS)).toBe(1);
+    expect(checkRecipients(db, A, [h, h], T0 + 1).fresh).toBe(0);
+    expect(checkRecipients(db, A, [h, h], T0 + RECIPIENT_MEMORY_MS).fresh).toBe(1);
     pruneRecipients(db, T0 + RECIPIENT_MEMORY_MS - 1);
     expect(db.query("SELECT count(*) AS n FROM project_recipients").get()).toEqual({ n: 1 });
     pruneRecipients(db, T0 + RECIPIENT_MEMORY_MS);
     expect(db.query("SELECT count(*) AS n FROM project_recipients").get()).toEqual({ n: 0 });
+  });
+
+  test("a recipient refreshed today is not written again", () => {
+    const db = openDatabase({ path: ":memory:" });
+    const h = recipientHasher(new Uint8Array(32))("a@x.test");
+    expect(checkRecipients(db, A, [h], T0)).toEqual({ fresh: 1, stale: [h] });
+    rememberRecipients(db, A, [h], T0);
+    expect(checkRecipients(db, A, [h], T0 + 23 * 3_600_000)).toEqual({ fresh: 0, stale: [] });
+    expect(checkRecipients(db, A, [h], T0 + 24 * 3_600_000)).toEqual({ fresh: 0, stale: [h] });
   });
 
   test("the first fill reads recent email, skips test and suppressed recipients", () => {

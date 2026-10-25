@@ -4,44 +4,46 @@ import type { ProjectId } from "./projects.ts";
 export const RECIPIENT_MEMORY_MS = 90 * 24 * 3_600_000;
 
 const HASH_BYTES = 16;
+const REFRESH_MS = 24 * 3_600_000;
 const SEEDED = "project_recipients_seeded";
-const enc = new TextEncoder();
 
-export type RecipientHash = (address: string) => Promise<Uint8Array>;
+export type RecipientHash = (address: string) => Uint8Array;
 
-export async function recipientHasher(key: Uint8Array): Promise<RecipientHash> {
-  const k = await crypto.subtle.importKey(
-    "raw",
-    key as Uint8Array<ArrayBuffer>,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  return async (address) =>
-    new Uint8Array(await crypto.subtle.sign("HMAC", k, enc.encode(address.toLowerCase()))).slice(
-      0,
-      HASH_BYTES,
-    );
+export function recipientHasher(key: Uint8Array): RecipientHash {
+  const keyed = new Bun.CryptoHasher("sha256", key);
+  const out = new Uint8Array(64);
+  return (address) => {
+    keyed.copy().update(address.toLowerCase()).digest(out);
+    return out.slice(0, HASH_BYTES);
+  };
 }
 
-export function newRecipients(
+export interface RecipientCheck {
+  fresh: number;
+  stale: Uint8Array[];
+}
+
+export function checkRecipients(
   db: Database,
   project: ProjectId,
   hashes: Uint8Array[],
   now: number,
-): number {
-  const known = db.query<{ n: number }, [string, Uint8Array, number]>(
-    "SELECT 1 AS n FROM project_recipients WHERE project_id = ? AND address_hash = ? AND last_at > ?",
+): RecipientCheck {
+  const last = db.query<{ last_at: number }, [string, Uint8Array]>(
+    "SELECT last_at FROM project_recipients WHERE project_id = ? AND address_hash = ?",
   );
   const seen = new Set<string>();
+  const stale: Uint8Array[] = [];
   let fresh = 0;
   for (const h of hashes) {
     const hex = h.toHex();
     if (seen.has(hex)) continue;
     seen.add(hex);
-    if (!known.get(project, h, now - RECIPIENT_MEMORY_MS)) fresh++;
+    const at = last.get(project, h)?.last_at;
+    if (at === undefined || at <= now - RECIPIENT_MEMORY_MS) fresh++;
+    if (at === undefined || at <= now - REFRESH_MS) stale.push(h);
   }
-  return fresh;
+  return { fresh, stale };
 }
 
 export function rememberRecipients(
