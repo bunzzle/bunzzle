@@ -221,6 +221,26 @@ describe("shaper: lanes and waiting queues (B2, H3)", () => {
     t.shaper.stop();
   });
 
+  test("a transactional email on a new path starts while the first bulk send is out", async () => {
+    const t = setup(100, 4);
+    const first = await t.shaper.admit("ip1", "example.test", null, "bulk");
+    expect(first.kind).toBe("go");
+    const kinds: string[] = [];
+    void t.shaper
+      .admit("ip1", "example.test", null, "bulk")
+      .then((a) => kinds.push(`bulk ${a.kind}`));
+    void t.shaper
+      .admit("ip1", "example.test", null, "transactional")
+      .then((a) => kinds.push(`transactional ${a.kind}`));
+    await t.step(0);
+    expect(kinds).toEqual(["transactional go"]);
+    expect(t.shaper.views()[0]).toMatchObject({
+      inflight: 2,
+      waiting: { transactional: 0, bulk: 1 },
+    });
+    t.shaper.stop();
+  });
+
   test("slow paths leave a quarter of the delivery slots to other paths", async () => {
     const clock = manualClock(T0);
     const shaper = new Shaper({

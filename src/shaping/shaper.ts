@@ -151,6 +151,10 @@ export class Shaper {
     return Math.max(1, Math.min(c.connections, needed));
   }
 
+  #capped(p: Path): boolean {
+    return p.control.mode === "normal" && p.control.inflight >= this.#parallel(p);
+  }
+
   #bulkBudget(p: Path): number {
     const ahead = Math.ceil((this.#perSec(p) * BULK_AHEAD_MS) / 1000);
     return Math.max(2, this.#parallel(p) + ahead);
@@ -303,9 +307,10 @@ export class Shaper {
   #pump(p: Path) {
     const now = this.#clock.now();
     while (this.#waitingCount(p) > 0) {
-      if (p.control.mode === "normal" && p.control.inflight >= this.#parallel(p)) break;
+      const capped = this.#capped(p);
+      if (capped && p.waiting.transactional.length === 0) break;
       if (!p.control.tryAcquire(now)) break;
-      const w = this.#next(p);
+      const w = capped ? p.waiting.transactional.shift() : this.#next(p);
       if (!w) break;
       let released = false;
       this.#settle(w, {
@@ -326,7 +331,7 @@ export class Shaper {
     if (p.timer) clearTimeout(p.timer);
     p.timer = null;
     if (this.#waitingCount(p) === 0) return;
-    if (p.control.mode === "normal" && p.control.inflight >= this.#parallel(p)) return;
+    if (this.#capped(p) && p.waiting.transactional.length === 0) return;
     const now = this.#clock.now();
     const at = p.control.nextChanceAt(now);
     if (at === null) return;
