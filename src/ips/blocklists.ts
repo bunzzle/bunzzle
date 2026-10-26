@@ -108,8 +108,19 @@ async function lookup(resolver: Resolver, name: string): Promise<Answer> {
 
 const loopback = (code: string) => code.startsWith("127.");
 
-async function usable(resolver: Resolver, list: Blocklist): Promise<string | null> {
-  const listed = await lookup(resolver, `2.0.0.127.${list.zone}`);
+const TEST = { v4: ["127.0.0.2", "127.0.0.1"], v6: ["::ffff:7f00:2", "::ffff:7f00:1"] } as const;
+
+function unmapped(ip: string): string {
+  const v6 = parseIPv6(ip);
+  if (!v6 || v6.subarray(0, 10).some((b) => b !== 0) || v6[10] !== 0xff || v6[11] !== 0xff) {
+    return ip;
+  }
+  return [...v6.subarray(12)].join(".");
+}
+
+async function usable(resolver: Resolver, list: Blocklist, v6: boolean): Promise<string | null> {
+  const [hit, miss] = v6 ? TEST.v6 : TEST.v4;
+  const listed = await lookup(resolver, `${listName(hit)}.${list.zone}`);
   if (listed.kind === "failed") return listed.why;
   if (listed.kind === "codes" && listed.codes.some((c) => list.errors?.includes(c))) {
     return list.id === "spamhaus"
@@ -117,9 +128,9 @@ async function usable(resolver: Resolver, list: Blocklist): Promise<string | nul
       : "the list refuses queries from this resolver";
   }
   if (listed.kind !== "codes" || !listed.codes.every(loopback)) {
-    return "the resolver does not return the list's test entry 127.0.0.2";
+    return `the resolver does not return the list's test entry ${hit}`;
   }
-  const clean = await lookup(resolver, `1.0.0.127.${list.zone}`);
+  const clean = await lookup(resolver, `${listName(miss)}.${list.zone}`);
   if (clean.kind === "failed") return clean.why;
   if (clean.kind === "codes") return "the resolver answers for names that do not exist";
   return null;
@@ -127,9 +138,10 @@ async function usable(resolver: Resolver, list: Blocklist): Promise<string | nul
 
 export async function checkBlocklists(
   resolver: Resolver,
-  ip: string,
+  client: string,
   lists: Blocklist[],
 ): Promise<Listing[]> {
+  const ip = unmapped(client);
   const name = listName(ip);
   if (!name) return [];
   const v6 = parseIPv4(ip) === null;
@@ -137,7 +149,7 @@ export async function checkBlocklists(
   for (const list of lists) {
     if (v6 && !list.ipv6) continue;
     const base = { list: list.id, name: list.name };
-    const problem = await usable(resolver, list);
+    const problem = await usable(resolver, list, v6);
     if (problem) {
       out.push({ ...base, status: "unusable", detail: problem, removal: null });
       continue;
