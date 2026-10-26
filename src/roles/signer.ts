@@ -10,7 +10,7 @@ import { dkimKeyFilesIn, Signer, SignerError } from "../signer/signer.ts";
 import { b } from "../validate/schema.ts";
 import { parseCertificateRequest } from "../x509/issue.ts";
 import { every, onStop, privateDir, ready } from "./runtime.ts";
-import { fromWire, MESSAGE_ID, sealedBodyWire, sockets } from "./wire.ts";
+import { MESSAGE_ID, sealedBodyWire, sockets } from "./wire.ts";
 
 const HOUR = 3_600_000;
 
@@ -149,7 +149,7 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
       }),
       async (p) => {
         try {
-          return await signer.openInbound(p.id, fromWire(p.body), p.routeId, p.msgId, p.timestamp);
+          return await signer.openInbound(p.id, p.body, p.routeId, p.msgId, p.timestamp);
         } catch (err) {
           if (err instanceof SignerError) throw new RpcError(err.code, err.message);
           throw new RpcError("failed", "cannot open this body");
@@ -165,7 +165,7 @@ export async function runSigner(config: Config, log: Logger, masterText: string)
       }),
       async ({ messageId, body, lane, bounceDomain }) => {
         try {
-          return await signer.open(messageId, fromWire(body), { lane, bounceDomain });
+          return await signer.open(messageId, body, { lane, bounceDomain });
         } catch (err) {
           if (err instanceof SignerError) {
             if (err.code === "unreadable")

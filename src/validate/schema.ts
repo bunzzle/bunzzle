@@ -396,6 +396,22 @@ function boolean(): Schema<boolean> {
   );
 }
 
+function bytes(): Schema<Uint8Array> {
+  return new Schema(
+    (v, p, i) => {
+      if (v instanceof Uint8Array) return v;
+      if (typeof v !== "string") return expected(i, p, "bytes", v);
+      try {
+        return Uint8Array.fromBase64(v);
+      } catch {
+        return fail(i, p, "must be base64");
+      }
+    },
+    false,
+    { type: "string", contentEncoding: "base64" },
+  );
+}
+
 function unknown(): Schema<unknown> {
   return new Schema((v) => v);
 }
@@ -515,6 +531,7 @@ export const b = {
   string,
   number,
   boolean,
+  bytes,
   unknown,
   literal,
   enum: enumOf,

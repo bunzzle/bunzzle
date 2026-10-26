@@ -27,7 +27,7 @@ import { SessionPool } from "../smtp/pool.ts";
 import { b } from "../validate/schema.ts";
 import { loadLinkTls } from "./node-link.ts";
 import { every, onStop, ready } from "./runtime.ts";
-import { deliverRequestWire, requestFromWire, sealedBodyWire, sockets, toWire } from "./wire.ts";
+import { deliverRequestWire, requestFromWire, sealedBodyWire, sockets } from "./wire.ts";
 
 const PROGRESS_HOLD_MS = 20;
 
@@ -205,7 +205,7 @@ export async function runDelivery(config: Config, log: Logger) {
       async (messageId, body, o) =>
         signer.call(
           "open",
-          { messageId, body: toWire(body), lane: o.lane, bounceDomain: o.bounceDomain },
+          { messageId, body: body, lane: o.lane, bounceDomain: o.bounceDomain },
           { result: b.object({ data: b.string(), bounceToken: b.string() }), timeoutMs: 60_000 },
         ),
     ),

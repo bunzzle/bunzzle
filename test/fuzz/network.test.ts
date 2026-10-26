@@ -204,10 +204,39 @@ describe("fuzz: network input", () => {
       const server = await serveRpc(path, {
         add: method(b.object({ a: b.number(), b: b.number() }), ({ a, b }) => a + b),
         echo: method(b.object({ text: b.string().max(100) }), ({ text }) => ({ text })),
+        bytes: method(b.object({ data: b.bytes() }), ({ data }) => ({ data, n: data.length })),
       });
       cleanups.push(() => server.stop());
+      const binary = (head: unknown, sections: Uint8Array[]) => {
+        const json = new TextEncoder().encode(JSON.stringify(head));
+        const size =
+          11 + 4 * sections.length + json.length + sections.reduce((n, x) => n + x.length, 0);
+        const out = new Uint8Array(size);
+        const view = new DataView(out.buffer);
+        view.setUint32(1, size - 5);
+        view.setUint32(5, json.length);
+        view.setUint16(9, sections.length);
+        let at = 11;
+        for (const x of sections) {
+          view.setUint32(at, x.length);
+          at += 4;
+        }
+        out.set(json, at);
+        at += json.length;
+        for (const x of sections) {
+          out.set(x, at);
+          at += x.length;
+        }
+        return out;
+      };
       const findings = await fuzz({
         seeds: [
+          binary({ id: 4, method: "bytes", params: { data: { "\u0000": 0 } } }, [
+            new Uint8Array(64).fill(1),
+          ]),
+          binary({ id: 5, method: "echo", params: { text: { "\u0000": -1 } } }, [
+            new TextEncoder().encode("hi"),
+          ]),
           '{"id":1,"method":"add","params":{"a":1,"b":2}}\n',
           '{"id":2,"method":"echo","params":{"text":"hi"}}\n{"id":3,"method":"nope","params":null}\n',
           '{"id":1.5,"method":"add"}\n[]\nnull\n"x"\n',

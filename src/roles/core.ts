@@ -83,7 +83,6 @@ import {
   outcomesWire,
   requestToWire,
   sockets,
-  toWire,
 } from "./wire.ts";
 
 const MIN = 60_000;
@@ -209,7 +208,7 @@ export async function runCore(config: Config, log: Logger) {
             "open",
             {
               messageId: asked.messageId,
-              body: toWire(body),
+              body: body,
               lane: asked.lane ?? "transactional",
               bounceDomain: asked.bounceDomain ?? null,
             },
