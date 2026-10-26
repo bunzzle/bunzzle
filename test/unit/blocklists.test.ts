@@ -20,6 +20,8 @@ const answer = (name: string, rcode: number, addresses: string[] = []): DnsAnswe
   })),
 });
 
+const V6_TEST = `${listName("::ffff:7f00:2")}.`;
+
 function resolver(
   entries: Record<string, string[] | "fail" | number>,
 ): Resolver & { asked: string[] } {
@@ -30,7 +32,8 @@ function resolver(
       asked.push(name);
       const zone = name.split(".").slice(4).join(".");
       const key = name in entries ? name : `*.${zone}`;
-      const e = entries[key] ?? (name.startsWith("2.0.0.127.") ? ["127.0.0.2"] : undefined);
+      const test = name.startsWith("2.0.0.127.") || name.startsWith(V6_TEST);
+      const e = entries[key] ?? (test ? ["127.0.0.2"] : undefined);
       if (e === "fail") throw new Error("timed out");
       if (typeof e === "number") return answer(name, e);
       return e ? answer(name, 0, e) : answer(name, 3);
@@ -147,7 +150,27 @@ describe("blocklists", () => {
     const dns = resolver({});
     const r = await checkBlocklists(dns, "2001:db8::1", blocklists("k3y"));
     expect(r.map((l) => l.list)).toEqual(["spamhaus"]);
+    expect(r[0]?.status).toBe("clean");
     expect(dns.asked.every((n) => n.endsWith(".k3y.zen.dq.spamhaus.net"))).toBe(true);
+    expect(dns.asked.slice(0, 2)).toEqual([
+      `${listName("::ffff:7f00:2")}.k3y.zen.dq.spamhaus.net`,
+      `${listName("::ffff:7f00:1")}.k3y.zen.dq.spamhaus.net`,
+    ]);
+    expect(dns.asked.some((n) => n.startsWith("2.0.0.127."))).toBe(false);
+  });
+
+  test("an IPv6 list without the IPv6 test entry is unusable", async () => {
+    const dns = resolver({ [`${listName("::ffff:7f00:2")}.zen.spamhaus.org`]: 3 });
+    const r = await checkBlocklists(dns, "2001:db8::1", lists);
+    expect(r[0]?.status).toBe("unusable");
+    expect(r[0]?.detail).toContain("::ffff:7f00:2");
+  });
+
+  test("an IPv4-mapped IPv6 address is checked as IPv4 on every list", async () => {
+    const dns = resolver({});
+    const r = await checkBlocklists(dns, `::ffff:${IP}`, lists);
+    expect(r).toHaveLength(lists.length);
+    expect(dns.asked).toContain("7.113.0.203.psbl.surriel.com");
   });
 
   test("IP choice skips listed IPs while an unlisted one is left", () => {
