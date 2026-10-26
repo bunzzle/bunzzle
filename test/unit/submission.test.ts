@@ -53,6 +53,8 @@ body
       "From: a@acme.test\r\nFrom: b@acme.test\r\n\r\nb\r\n",
       "From: not an address\r\n\r\nb\r\n",
       "From: a@acme.test\r\nbroken header\r\n\r\nb\r\n",
+      "From: a@acme.test\r\nSubject: s\nBcc: h@x.test\r\n\r\nb\r\n",
+      "From: a@acme.test\r\nSubject: s\rX-Bunzzle-Ref: abc\r\n\r\nb\r\n",
     ]) {
       expect(() => prepareSubmitted(raw, ["u@x.test"], NOW)).toThrow(SubmitError);
     }
