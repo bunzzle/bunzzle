@@ -11,6 +11,7 @@ import { deliveryHandler } from "../../src/delivery/handler.ts";
 import { enqueueEmail, recipientsOf } from "../../src/delivery/queue.ts";
 import { localTransport } from "../../src/delivery/transport.ts";
 import { generateKeyFile, sealKeyFile } from "../../src/dkim/keys.ts";
+import { cachingResolver } from "../../src/dns/cache.ts";
 import { createResolver } from "../../src/dns/resolver.ts";
 import { scaledPolicy } from "../../src/roles/core.ts";
 import { Scheduler } from "../../src/scheduler/scheduler.ts";
@@ -78,7 +79,9 @@ async function pipeline(scenario: MxScenario, limits: Limits, tuning = {}, route
   });
   const transport = localTransport(
     {
-      resolver: createResolver({ servers: [{ host: "127.0.0.1", port: dns.port }] }),
+      resolver: cachingResolver(
+        createResolver({ servers: [{ host: "127.0.0.1", port: dns.port }] }),
+      ),
       ehloName: "out.bunzzle.test",
       port: mx.port,
       allowPrivate: true,
