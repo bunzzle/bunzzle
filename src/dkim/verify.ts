@@ -49,7 +49,7 @@ export async function verifyDkim(raw: string, keys: Record<string, PublicKey>): 
       verdicts.push({ selector, ok: false, reason: "algorithm mismatch" });
       continue;
     }
-    if ((await bodyHash(body)) !== t.get("bh")) {
+    if (bodyHash(body) !== t.get("bh")) {
       verdicts.push({ selector, ok: false, reason: "body hash mismatch" });
       continue;
     }

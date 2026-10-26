@@ -34,9 +34,13 @@ export function relaxedHeader(raw: string): string {
 }
 
 export function relaxedBody(body: string): string {
-  const lines = body.split("\r\n").map((l) => l.replace(/[ \t]+/g, " ").replace(/ $/, ""));
-  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-  return lines.length === 0 ? "" : `${lines.join("\r\n")}\r\n`;
+  let s = body;
+  if (s.includes("\t") || s.includes("  ")) s = s.replace(/[ \t]{2,}|\t/g, " ");
+  if (s.includes(" \r\n")) s = s.replaceAll(" \r\n", "\r\n");
+  let end = s.length;
+  if (s.charCodeAt(end - 1) === 32) end--;
+  while (end >= 2 && s.charCodeAt(end - 1) === 10 && s.charCodeAt(end - 2) === 13) end -= 2;
+  return end === 0 ? "" : `${s.slice(0, end)}\r\n`;
 }
 
 export function simpleBody(body: string): string {
@@ -62,7 +66,6 @@ export function headerData(
   return out;
 }
 
-export async function bodyHash(body: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(relaxedBody(body)));
-  return new Uint8Array(digest).toBase64();
+export function bodyHash(body: string): string {
+  return new Bun.CryptoHasher("sha256").update(relaxedBody(body)).digest("base64");
 }
