@@ -3,8 +3,9 @@ import { DEFAULT_PROJECT, type ProjectId } from "../../src/accounts/projects.ts"
 import { openDatabase } from "../../src/core/store/db.ts";
 import { shredBodies } from "../../src/delivery/queue.ts";
 import {
-  claimDeliveries,
+  claimFor,
   createWebhook,
+  enabledWebhooks,
   getResend,
   listDeliveries,
   queueResend,
@@ -38,7 +39,7 @@ test("every attempt is kept with status, error and duration, oldest first", () =
     [null, "connection refused", T0 + 310_000],
     [200, null, T0 + 2_110_000],
   ] as const) {
-    const [d] = claimDeliveries(db, at, 10);
+    const [d] = claimFor(db, hook.id, at, 10);
     recordAttempt(db, { deliveryId: "d1", at, status, error, durationMs: 40 });
     settleDelivery(db, d as { id: string; attempt: number }, status === 200, error, at);
   }
@@ -58,6 +59,24 @@ test("every attempt is kept with status, error and duration, oldest first", () =
   });
   const long = listDeliveries(db, DEFAULT_PROJECT, hook.id, { limit: 10 })?.[0]?.attempts.at(-1);
   expect(long?.error?.length).toBe(500);
+});
+
+test("claims are per webhook, oldest due first, up to the limit", () => {
+  const { db, hook, add } = setup();
+  const other = createWebhook(db, DEFAULT_PROJECT, "https://hooks.test/other", [], T0);
+  for (let i = 0; i < 5; i++) add(`w${i}`, "pending", T0 + i);
+  add("later", "pending", T0 + 60_000);
+  db.run(
+    `INSERT INTO webhook_deliveries (id, webhook_id, type, payload, state, next_at, created_at, updated_at)
+     VALUES ('o1', ?, 'email.delivered', '{}', 'pending', ?, ?, ?)`,
+    [other.id, T0, T0, T0],
+  );
+  expect(enabledWebhooks(db).toSorted()).toEqual([hook.id, other.id].toSorted());
+  expect(claimFor(db, hook.id, T0 + 10, 3).map((d) => d.id)).toEqual(["w0", "w1", "w2"]);
+  expect(claimFor(db, hook.id, T0 + 10, 10).map((d) => d.id)).toEqual(["w3", "w4"]);
+  expect(claimFor(db, other.id, T0 + 10, 10).map((d) => d.id)).toEqual(["o1"]);
+  db.run("UPDATE webhooks SET disabled_at = ? WHERE id = ?", [T0, other.id]);
+  expect(enabledWebhooks(db)).toEqual([hook.id]);
 });
 
 test("filters, pages and keeps other projects out", () => {
@@ -84,7 +103,7 @@ test("a resend starts the retry schedule again; a delivery in flight cannot be r
   expect(resendDelivery(db, DEFAULT_PROJECT, hook.id, "p1", T0)).toBe("in-flight");
   expect(resendDelivery(db, DEFAULT_PROJECT, hook.id, "nope", T0)).toBe("not-found");
   expect(resendDelivery(db, DEFAULT_PROJECT, hook.id, "f1", T0 + 9)).toBe("resent");
-  const claimed = claimDeliveries(db, T0 + 9, 10).find((d) => d.id === "f1");
+  const claimed = claimFor(db, hook.id, T0 + 9, 10).find((d) => d.id === "f1");
   expect(claimed?.attempt).toBe(1);
 });
 
