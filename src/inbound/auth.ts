@@ -4,8 +4,7 @@ import { checkDmarc, type DmarcCheck, type DmarcFrom } from "../dmarc/policy.ts"
 import { forbiddenReason } from "../dns/ip.ts";
 import type { Resolver } from "../dns/resolver.ts";
 import { type Blocklist, checkBlocklists, type Listing } from "../ips/blocklists.ts";
-import { AddressError, domainOf, parseAddress } from "../mime/address.ts";
-import { decodeWords } from "../mime/parse.ts";
+import { AddressError, parseAddressList, soleAddressDomain } from "../mime/address.ts";
 import { checkSpf, type SpfCheck } from "../spf/check.ts";
 
 export const REFUSE_CHECKS = ["spf", "dmarc", "blocklist"] as const;
@@ -24,41 +23,16 @@ export interface AuthMeta {
   helo: string | null;
 }
 
-function splitList(value: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let quoted = false;
-  let angle = 0;
-  for (let i = 0; i < value.length; i++) {
-    const ch = value[i] as string;
-    if (ch === "\\" && quoted) {
-      cur += ch + (value[++i] ?? "");
-      continue;
-    }
-    if (ch === '"') quoted = !quoted;
-    else if (!quoted && ch === "<") angle++;
-    else if (!quoted && ch === ">") angle = Math.max(0, angle - 1);
-    else if (!quoted && angle === 0 && ch === ",") {
-      out.push(cur);
-      cur = "";
-      continue;
-    }
-    cur += ch;
-  }
-  out.push(cur);
-  return out.map((s) => s.trim()).filter(Boolean);
-}
-
 export function fromDomain(raw: string): DmarcFrom {
   const froms = splitMessage(raw).headers.filter((h) => h.name.trim().toLowerCase() === "from");
   if (froms.length !== 1) return { problem: "the message must have exactly one From header" };
   const raw0 = (froms[0] as { raw: string }).raw;
-  const value = decodeWords(raw0.slice(raw0.indexOf(":") + 1).replace(/\r\n/g, ""));
-  const list = splitList(value.replace(/\([^()]*\)/g, ""));
-  if (list.length !== 1) return { problem: "the From header must have exactly one address" };
+  const value = raw0.slice(raw0.indexOf(":") + 1);
   try {
-    const domain = domainOf(parseAddress(list[0] as string).address);
-    return domain ? { domain } : { problem: "the From address has no domain" };
+    if (parseAddressList(value).length !== 1) {
+      return { problem: "the From header must have exactly one address" };
+    }
+    return { domain: soleAddressDomain(value) };
   } catch (err) {
     if (err instanceof AddressError) return { problem: "the From address is not valid" };
     throw err;

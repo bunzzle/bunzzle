@@ -4,6 +4,7 @@ import {
   formatAddress,
   normalizeAddress,
   parseAddress,
+  parseAddressList,
 } from "../../src/mime/address.ts";
 import { buildMessage, type MessageInput, MimeError } from "../../src/mime/builder.ts";
 import {
@@ -147,5 +148,43 @@ describe("buildMessage", () => {
     const { raw } = buildMessage({ ...base, text: "x".repeat(5000) });
     expect(raw).toContain("quoted-printable");
     for (const line of raw.split("\r\n")) expect(line.length).toBeLessThanOrEqual(998);
+  });
+});
+
+describe("parseAddressList", () => {
+  test("names, groups, comments, quoted local parts and literals", () => {
+    expect(
+      parseAddressList(
+        '"Doe, John" <j@x.test>, k@y.test (Kay), =?UTF-8?Q?A=2C_B?= <ab@x.test>, John Q. Public <q@x.test>',
+      ),
+    ).toEqual([
+      { address: "j@x.test", name: "Doe, John" },
+      { address: "k@y.test" },
+      { address: "ab@x.test", name: "A, B" },
+      { address: "q@x.test", name: "John Q. Public" },
+    ]);
+    expect(parseAddressList("undisclosed-recipients:;")).toEqual([]);
+    expect(
+      parseAddressList('Team: a@x.test, "B" <b@x.test>;, c@x.test').map((a) => a.address),
+    ).toEqual(["a@x.test", "b@x.test", "c@x.test"]);
+    expect(
+      parseAddressList('"a b"@x.test, "plain"@x.test, a@[127.0.0.1], <@r.test:r@x.test>,,').map(
+        (a) => a.address,
+      ),
+    ).toEqual(['"a b"@x.test', "plain@x.test", "a@[127.0.0.1]", "r@x.test"]);
+  });
+
+  test("malformed lists are refused", () => {
+    for (const v of [
+      "Doe, John <j@x.test>",
+      "a@",
+      "<a@x.test",
+      '"open',
+      "(open a@x.test",
+      "G: a@x.test",
+      "a@x.test b@x.test",
+    ]) {
+      expect(() => parseAddressList(v)).toThrow(AddressError);
+    }
   });
 });
