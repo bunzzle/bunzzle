@@ -102,7 +102,7 @@ export async function signMessage(
   time: Date = new Date(),
 ): Promise<string> {
   const { headers, body } = splitMessage(raw);
-  const bh = await bodyHash(body);
+  const bh = bodyHash(body);
   const h = headerList(headers);
   const data = headerData(headers, h);
   const t = Math.floor(time.getTime() / 1000);

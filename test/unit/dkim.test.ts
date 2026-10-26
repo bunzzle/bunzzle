@@ -62,6 +62,21 @@ describe("canonicalization", () => {
     expect(relaxedBody("\r\n\r\n")).toBe("");
     expect(relaxedBody("")).toBe("");
   });
+
+  test("relaxed body matches the line-by-line reading of RFC 6376 on random bodies", () => {
+    const byLines = (body: string) => {
+      const lines = body.split("\r\n").map((l) => l.replace(/[ \t]+/g, " ").replace(/ $/, ""));
+      while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+      return lines.length === 0 ? "" : `${lines.join("\r\n")}\r\n`;
+    };
+    const parts = [" ", "  ", "\t", "\r", "\n", "\r\n", "\r\n\r\n", "a", "b c", "=20", "é"];
+    for (let i = 0; i < 20_000; i++) {
+      let body = "";
+      const n = Math.floor(Math.random() * 12);
+      for (let k = 0; k < n; k++) body += parts[Math.floor(Math.random() * parts.length)];
+      expect([body, relaxedBody(body)]).toEqual([body, byLines(body)]);
+    }
+  });
 });
 
 describe("RFC 8463 test vectors", () => {
