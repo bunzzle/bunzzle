@@ -15,33 +15,44 @@ export function base64Lines(data: Uint8Array, width = 76): string {
   return lines.join("\r\n");
 }
 
-const HEX = "0123456789ABCDEF";
-
-function qpByte(b: number): string {
-  return `=${HEX[b >> 4]}${HEX[b & 15]}`;
-}
+const HEX = new TextEncoder().encode("0123456789ABCDEF");
+const LITERAL = new Uint8Array(256);
+for (let b = 0x21; b <= 0x7e; b++) if (b !== 0x3d) LITERAL[b] = 1;
+const ascii = new TextDecoder("latin1");
 
 export function quotedPrintable(text: string): string {
-  const out: string[] = [];
-  for (const line of toCrlf(text).split("\r\n")) {
-    const bytes = enc.encode(line);
-    let cur = "";
-    for (let i = 0; i < bytes.length; i++) {
-      const b = bytes[i] as number;
-      const last = i === bytes.length - 1;
-      let piece: string;
-      if (b === 0x3d || b < 0x20 || b > 0x7e) piece = b === 0x09 && !last ? "\t" : qpByte(b);
-      else if (b === 0x20 && last) piece = "=20";
-      else piece = String.fromCharCode(b);
-      if (cur.length + piece.length > 75) {
-        out.push(`${cur}=`);
-        cur = "";
-      }
-      cur += piece;
+  const src = enc.encode(toCrlf(text));
+  const out = new Uint8Array(src.length * 4 + 16);
+  let o = 0;
+  let col = 0;
+  for (let i = 0; i < src.length; i++) {
+    const b = src[i] as number;
+    if (b === 0x0d && src[i + 1] === 0x0a) {
+      out[o++] = 0x0d;
+      out[o++] = 0x0a;
+      col = 0;
+      i++;
+      continue;
     }
-    out.push(cur);
+    const literal =
+      LITERAL[b] === 1 || ((b === 0x20 || b === 0x09) && i + 1 < src.length && src[i + 1] !== 0x0d);
+    const width = literal ? 1 : 3;
+    if (col + width > 75) {
+      out[o++] = 0x3d;
+      out[o++] = 0x0d;
+      out[o++] = 0x0a;
+      col = 0;
+    }
+    if (literal) {
+      out[o++] = b;
+    } else {
+      out[o++] = 0x3d;
+      out[o++] = HEX[b >> 4] as number;
+      out[o++] = HEX[b & 15] as number;
+    }
+    col += width;
   }
-  return out.join("\r\n");
+  return ascii.decode(out.subarray(0, o));
 }
 
 export function needsQuotedPrintable(text: string): boolean {
