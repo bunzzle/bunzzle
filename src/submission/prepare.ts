@@ -36,6 +36,20 @@ export interface Submitted {
 }
 
 const DROP = new Set(["bcc", "return-path", "x-bunzzle-ref", "dkim-signature"]);
+const SINGLE = new Map(
+  [
+    "Date",
+    "Sender",
+    "Reply-To",
+    "To",
+    "Cc",
+    "Bcc",
+    "Message-ID",
+    "In-Reply-To",
+    "References",
+    "Subject",
+  ].map((n) => [n.toLowerCase(), n]),
+);
 const ADDR = /[^\s<>(),;:"[\]\\]+@[^\s<>(),;:"[\]\\]+/g;
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });
@@ -101,6 +115,14 @@ export function prepareSubmitted(raw: string, recipients: string[], now: Date): 
   const froms = all.filter((f) => f.name === "from");
   if (froms.length !== 1) {
     throw new SubmitError(550, "5.6.0 The message needs exactly one From header");
+  }
+  const seen = new Set<string>();
+  for (const f of all) {
+    const name = SINGLE.get(f.name);
+    if (name === undefined) continue;
+    if (seen.has(f.name))
+      throw new SubmitError(554, `5.6.0 The message has more than one ${name} header`);
+    seen.add(f.name);
   }
   let from: string;
   try {

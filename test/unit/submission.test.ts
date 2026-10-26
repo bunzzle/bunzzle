@@ -62,6 +62,31 @@ body
   });
 });
 
+describe("duplicate singular headers", () => {
+  test("a second Subject, To, Message-ID and the rest is refused", () => {
+    for (const name of [
+      "Date",
+      "Sender",
+      "Reply-To",
+      "To",
+      "Cc",
+      "Bcc",
+      "Message-ID",
+      "In-Reply-To",
+      "References",
+      "subject",
+    ]) {
+      const raw = `From: a@acme.test\r\n${name}: x\r\nX-Other: y\r\n${name.toUpperCase()}: z\r\n\r\nb\r\n`;
+      expect(() => prepareSubmitted(raw, ["u@x.test"], NOW)).toThrow(
+        /5\.6\.0 The message has more than one/,
+      );
+    }
+    const ok =
+      "From: a@acme.test\r\nReceived: a\r\nReceived: b\r\nX-Tag: 1\r\nX-Tag: 2\r\n\r\nb\r\n";
+    expect(prepareSubmitted(ok, ["u@x.test"], NOW).data).toContain("Received: b");
+  });
+});
+
 describe("SMTP server engine", () => {
   test("too many failed logins lock the address out", async () => {
     const server = startSmtpServer({

@@ -129,6 +129,9 @@ describe("buildMessage", () => {
     expect(() => buildMessage({ ...base, headers: { "X-Test": "a\nb" } })).toThrow(MimeError);
     expect(() => buildMessage({ ...base, headers: { From: "x@y.z" } })).toThrow(MimeError);
     expect(() => buildMessage({ ...base, headers: { "Bad Name": "x" } })).toThrow(MimeError);
+    expect(() =>
+      buildMessage({ ...base, headers: { References: "<a@x.org>", references: "<b@x.org>" } }),
+    ).toThrow(MimeError);
   });
 
   test("custom headers are kept", () => {
