@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { toBinary } from "../../src/mime/parse.ts";
 import { startSmtpServer } from "../../src/smtpd/server.ts";
 import { prepareSubmitted, SubmitError } from "../../src/submission/prepare.ts";
+import { smtpTalk } from "../support/smtp-client.ts";
 
 const crlf = (s: string) => s.replace(/\r?\n/g, "\r\n");
 const NOW = new Date(Date.UTC(2026, 9, 19, 12, 0, 0));
@@ -170,5 +171,150 @@ describe("SMTP server engine", () => {
     expect(guesses.filter((r) => r.startsWith("550"))).toHaveLength(1);
     expect((await talk([]))[0]).toStartWith("421 4.7.0 Too many errors");
     server.stop();
+  });
+
+  test("bare CR and LF inside DATA become CRLF and never end the message", async () => {
+    const raws: string[] = [];
+    const server = startSmtpServer({
+      hostname: "127.0.0.1",
+      port: 0,
+      name: "t.test",
+      banner: "test",
+      hooks: {
+        recipient: async () => null,
+        message: async (_r, raw) => {
+          raws.push(raw);
+          return { code: 250, text: "2.0.0 ok" };
+        },
+      },
+    });
+    const talk = await smtpTalk(server.port, [
+      "EHLO x",
+      "MAIL FROM:<a@b.test>",
+      "RCPT TO:<ok@t.test>",
+      "DATA",
+      "Subject: s\r\n\r\na\nb\rc\r\nd\n.\r\n.e\r\r\n.",
+      "QUIT",
+    ]);
+    server.stop();
+    expect(talk.replies[5]).toStartWith("250");
+    expect(raws).toEqual(["Subject: s\r\n\r\na\r\nb\r\nc\r\nd\r\n.\r\ne\r\n\r\n"]);
+  });
+
+  test("commands pipelined after the end of DATA start the next message", async () => {
+    const got: [string[], string][] = [];
+    const server = startSmtpServer({
+      hostname: "127.0.0.1",
+      port: 0,
+      name: "t.test",
+      banner: "test",
+      hooks: {
+        recipient: async () => null,
+        message: async (rcpts, raw) => {
+          got.push([rcpts, raw]);
+          return { code: 250, text: "2.0.0 ok" };
+        },
+      },
+    });
+    let text = "";
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data: (_s, chunk) => {
+          text += new TextDecoder().decode(chunk);
+        },
+      },
+    });
+    const until = async (n: number) => {
+      while ((text.match(/^354 /gm) ?? []).length < n) await Bun.sleep(5);
+    };
+    socket.write("EHLO x\r\nMAIL FROM:<a@b.test>\r\nRCPT TO:<c@t.test>\r\nDATA\r\n");
+    await until(1);
+    socket.write("x\r\n.\r\nMAIL FROM:<e@b.test>\r\nRCPT TO:<g@t.test>\r\nDATA\r\n");
+    await until(2);
+    socket.write("y\r\n.\r\nQUIT\r\n");
+    while (!text.includes("221 ")) await Bun.sleep(5);
+    socket.end();
+    server.stop();
+    expect(text).not.toContain("502");
+    expect(got).toEqual([
+      [["c@t.test"], "x\r\n"],
+      [["g@t.test"], "y\r\n"],
+    ]);
+  });
+
+  test("after STARTTLS the client must say EHLO again and the old name is gone", async () => {
+    const dir = `${import.meta.dir}/../fixtures/tls`;
+    const helos: (string | null)[] = [];
+    const server = startSmtpServer({
+      hostname: "127.0.0.1",
+      port: 0,
+      name: "t.test",
+      banner: "test",
+      tls: {
+        cert: await Bun.file(`${dir}/mx.pem`).text(),
+        key: await Bun.file(`${dir}/mx.key`).text(),
+      },
+      hooks: {
+        sender: async (_a, session) => {
+          helos.push(session.helo);
+          return null;
+        },
+        recipient: async () => null,
+        message: async () => ({ code: 250, text: "2.0.0 ok" }),
+      },
+    });
+    let text = "";
+    let wake = () => {};
+    let upgraded = false;
+    const read = (chunk: Uint8Array) => {
+      text += new TextDecoder().decode(chunk);
+      wake();
+    };
+    const next = async () => {
+      for (;;) {
+        const m = /^\d{3} .*\r\n/m.exec(text);
+        if (m) {
+          text = text.slice(m.index + m[0].length);
+          return m[0].trim();
+        }
+        await new Promise<void>((r) => {
+          wake = r;
+          setTimeout(r, 2_000);
+        });
+      }
+    };
+    const plain = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data: (_s, chunk) => {
+          if (!upgraded) read(chunk);
+        },
+      },
+    });
+    await next();
+    plain.write("EHLO before.test\r\n");
+    await next();
+    plain.write("STARTTLS\r\n");
+    expect(await next()).toStartWith("220");
+    upgraded = true;
+    const ready = Promise.withResolvers<void>();
+    const [, secure] = plain.upgradeTLS({
+      tls: { rejectUnauthorized: false },
+      socket: { data: (_s, chunk) => read(chunk), handshake: () => ready.resolve() },
+    });
+    await ready.promise;
+    const say = async (line: string) => {
+      secure.write(`${line}\r\n`);
+      return next();
+    };
+    expect(await say("MAIL FROM:<a@b.test>")).toStartWith("503 5.5.1");
+    expect(await say("EHLO after.test")).toStartWith("250");
+    expect(await say("MAIL FROM:<a@b.test>")).toStartWith("250");
+    secure.end();
+    server.stop();
+    expect(helos).toEqual(["after.test"]);
   });
 });

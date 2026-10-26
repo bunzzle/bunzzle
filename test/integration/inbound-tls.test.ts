@@ -121,6 +121,9 @@ describe("inbound STARTTLS", () => {
     expect(conn.hasBufferedData()).toBe(false);
     await conn.startTls("mx.example.test", 2000, TEST_CA);
     await conn.write("MAIL FROM:<>\r\n", 2000);
+    expect((await conn.readReply(2000)).code).toBe(503);
+    await ehlo(conn);
+    await conn.write("MAIL FROM:<>\r\n", 2000);
     expect((await conn.readReply(2000)).code).toBe(250);
     await conn.write("DATA\r\n", 2000);
     expect((await conn.readReply(2000)).code).toBe(503);

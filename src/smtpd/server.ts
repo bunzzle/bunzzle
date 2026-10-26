@@ -1,4 +1,5 @@
 import type { Socket, TCPSocketListener } from "bun";
+import { toCrlf } from "../mime/encodings.ts";
 import { toBinary } from "../mime/parse.ts";
 
 export interface SmtpReply {
@@ -58,6 +59,7 @@ interface Conn {
   chain: Promise<void>;
   idle: ReturnType<typeof setTimeout> | null;
   upgrading: boolean;
+  needHelo: boolean;
   session: SmtpSession;
   messages: number;
   authStep: { mech: "PLAIN" | "LOGIN"; stage: "initial" | "user" | "password" } | null;
@@ -196,6 +198,7 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
     const tlsMissing = o.requireTls && !c.session.tls;
     if (upper.startsWith("EHLO")) {
       c.session.helo = line.slice(4).trim() || null;
+      c.needHelo = false;
       ehlo(s, c);
     } else if (upper === "STARTTLS" || upper.startsWith("STARTTLS ")) {
       if (!o.tls) return reply(s, "502 5.5.1 STARTTLS not available");
@@ -204,6 +207,7 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
       upgrade(s, c, o.tls);
     } else if (upper.startsWith("HELO")) {
       c.session.helo = line.slice(4).trim() || null;
+      c.needHelo = false;
       reply(s, `250 ${o.name}`);
     } else if (upper.startsWith("AUTH")) {
       if (!o.hooks.auth) return reply(s, "502 5.5.1 AUTH not available");
@@ -225,6 +229,7 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
       reply(s, "504 5.5.4 Unrecognized authentication type");
     } else if (upper.startsWith("MAIL FROM:")) {
       if (tlsMissing) return reply(s, "530 5.7.0 Must issue a STARTTLS command first");
+      if (c.needHelo) return reply(s, "503 5.5.1 EHLO first");
       if (o.requireAuth && c.session.user === null) {
         return reply(s, "530 5.7.0 Authentication required");
       }
@@ -292,6 +297,8 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
     reply(s, "220 2.0.0 Ready to start TLS");
     reset(c);
     c.buffer = "";
+    c.session.helo = null;
+    c.needHelo = true;
     conns.delete(s);
     try {
       const [, secure] = s.upgradeTLS({ tls, socket: secureHandlers });
@@ -305,12 +312,14 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
     }
   };
 
-  const endOfData = async (s: Socket<undefined>, c: Conn) => {
-    const lines = c.data ?? [];
-    const rcpts = c.rcpts;
-    const from = c.from ?? "";
-    const tooBig = c.tooBig;
-    reset(c);
+  const endOfData = async (
+    s: Socket<undefined>,
+    c: Conn,
+    lines: string[],
+    rcpts: string[],
+    from: string,
+    tooBig: boolean,
+  ) => {
     if (tooBig) return reply(s, `552 5.3.4 Message larger than ${maxSize} bytes`);
     c.messages++;
     let result: SmtpReply;
@@ -325,10 +334,13 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
   const line = (s: Socket<undefined>, c: Conn, text: string) => {
     if (c.data !== null) {
       if (text === ".") {
-        c.chain = c.chain.then(() => endOfData(s, c));
+        const { data, rcpts, from, tooBig } = c;
+        reset(c);
+        c.chain = c.chain.then(() => endOfData(s, c, data, rcpts, from ?? "", tooBig));
         return;
       }
-      const content = text.startsWith(".") ? text.slice(1) : text;
+      let content = text.startsWith(".") ? text.slice(1) : text;
+      if (content.includes("\r") || content.includes("\n")) content = toCrlf(content);
       c.size += content.length + 2;
       if (c.size > maxSize) c.tooBig = true;
       else c.data.push(content);
@@ -365,6 +377,7 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
         chain: Promise.resolve(),
         idle: null,
         upgrading: false,
+        needHelo: false,
         session: {
           remote: ip,
           tls: !!o.implicitTls,
