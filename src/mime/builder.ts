@@ -146,9 +146,13 @@ export function buildMessage(input: MessageInput): BuiltMessage {
     `Message-ID: ${input.messageId}`,
   ];
 
+  const custom = new Set<string>();
   for (const [name, value] of Object.entries(input.headers ?? {})) {
     if (!HEADER_NAME.test(name)) throw new MimeError(`invalid header name: ${name}`);
-    if (RESERVED.has(name.toLowerCase())) throw new MimeError(`header not allowed: ${name}`);
+    const lower = name.toLowerCase();
+    if (RESERVED.has(lower)) throw new MimeError(`header not allowed: ${name}`);
+    if (custom.has(lower)) throw new MimeError(`header given twice: ${name}`);
+    custom.add(lower);
     if (/[\r\n]/.test(value)) throw new MimeError(`header ${name} contains a line break`);
     headers.push(foldHeader(name, unstructured(value)));
   }
