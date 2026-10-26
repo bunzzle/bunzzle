@@ -109,7 +109,14 @@ export const RETRY_MS = [
   10 * 3_600_000,
 ];
 
-export function claimDeliveries(db: Database, now: number, limit: number): Pending[] {
+export function enabledWebhooks(db: Database): string[] {
+  return db
+    .query<{ id: string }, []>("SELECT id FROM webhooks WHERE disabled_at IS NULL ORDER BY id")
+    .all()
+    .map((r) => r.id);
+}
+
+export function claimFor(db: Database, webhookId: string, now: number, limit: number): Pending[] {
   return db
     .query<
       {
@@ -120,18 +127,18 @@ export function claimDeliveries(db: Database, now: number, limit: number): Pendi
         payload: string;
         attempt: number;
       },
-      [number, number, number]
+      [number, string, number]
     >(
       `UPDATE webhook_deliveries SET state = 'sending', attempt = attempt + 1, updated_at = ?1
        WHERE id IN (
-         SELECT d.id FROM webhook_deliveries d JOIN webhooks w ON w.id = d.webhook_id
-         WHERE d.state = 'pending' AND d.next_at <= ?1 AND w.disabled_at IS NULL
-         ORDER BY d.next_at LIMIT ?3
+         SELECT id FROM webhook_deliveries INDEXED BY webhook_deliveries_pending
+         WHERE webhook_id = ?2 AND state = 'pending' AND next_at <= ?1
+         ORDER BY next_at LIMIT ?3
        )
        RETURNING id, webhook_id, (SELECT url FROM webhooks WHERE id = webhook_id) AS url, type,
          payload, attempt`,
     )
-    .all(now, now, limit)
+    .all(now, webhookId, limit)
     .map((r) => ({
       id: r.id,
       webhookId: r.webhook_id,

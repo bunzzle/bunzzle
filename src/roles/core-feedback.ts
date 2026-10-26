@@ -16,14 +16,16 @@ import {
 import { b } from "../validate/schema.ts";
 import { projectEvents } from "../webhooks/project.ts";
 import {
-  claimDeliveries,
+  claimFor,
   createWebhook,
   type Delivery,
   deleteWebhook,
   EVENT_TYPES,
+  enabledWebhooks,
   getResend,
   listDeliveries,
   listWebhooks,
+  type Pending,
   queueResend,
   type Resend,
   recordAttempt,
@@ -51,6 +53,8 @@ const tokenResult = b
   .object({ purpose: b.enum(["b", "u", "o", "c"]), messageId: b.string() })
   .nullable();
 
+const WEBHOOK_SLOTS = 64;
+const WEBHOOK_SLOTS_PER_ENDPOINT = 16;
 const iso = (t: number) => new Date(t).toISOString();
 
 const resendView = (r: Resend) => ({
@@ -373,71 +377,111 @@ export function feedbackMethods(deps: FeedbackDeps) {
 
   const projectAll = () => writer.run((d) => projectEvents(d, now()));
 
-  let sending = false;
-  const dispatch = async () => {
-    if (sending) return;
-    sending = true;
+  const busy = new Map<string, number>();
+  let inFlight = 0;
+  let turn = 0;
+  let claiming = false;
+  let again = false;
+
+  const send = async (d: Pending) => {
+    let ok = false;
+    let error: string | null = null;
+    let status: number | null = null;
+    const started = now();
     try {
-      const due = await writer.run((d) => claimDeliveries(d, now(), 20));
-      await Promise.all(
-        due.map(async (d) => {
-          let ok = false;
-          let error: string | null = null;
-          let status: number | null = null;
-          const started = now();
-          try {
-            const timestamp = Math.floor(now() / 1000);
-            const msgId = `msg_${d.id}`;
-            const signature = await signer.call(
-              "signWebhook",
-              { id: d.webhookId, msgId, timestamp, body: d.payload },
-              { result: b.string(), timeoutMs: 10_000 },
-            );
-            const r = await delivery.call(
-              "postWebhook",
-              {
-                url: d.url,
-                body: d.payload,
-                headers: {
-                  "webhook-id": msgId,
-                  "webhook-timestamp": String(timestamp),
-                  "webhook-signature": signature,
-                },
-              },
-              {
-                timeoutMs: 20_000,
-                result: b.union([
-                  b.object({ ok: b.literal(true), status: b.number() }),
-                  b.object({ ok: b.literal(false), error: b.string() }),
-                ]),
-              },
-            );
-            if (r.ok) {
-              status = r.status;
-              ok = r.status >= 200 && r.status < 300;
-              if (!ok) error = `endpoint answered ${r.status}`;
-            } else error = r.error;
-          } catch (err) {
-            error = (err as Error).message;
-          }
-          const at = now();
-          const result = await writer.run((w) => {
-            recordAttempt(w, {
-              deliveryId: d.id,
-              at,
-              status,
-              error,
-              durationMs: Math.max(0, at - started),
-            });
-            return settleDelivery(w, d, ok, error, at, deps.scale ?? 1);
-          });
-          if (result === "failed") {
-            log.warn("webhook delivery gave up", { webhook: d.webhookId, type: d.type, error });
-          }
-        }),
+      const timestamp = Math.floor(now() / 1000);
+      const msgId = `msg_${d.id}`;
+      const signature = await signer.call(
+        "signWebhook",
+        { id: d.webhookId, msgId, timestamp, body: d.payload },
+        { result: b.string(), timeoutMs: 10_000 },
       );
+      const r = await delivery.call(
+        "postWebhook",
+        {
+          url: d.url,
+          body: d.payload,
+          headers: {
+            "webhook-id": msgId,
+            "webhook-timestamp": String(timestamp),
+            "webhook-signature": signature,
+          },
+        },
+        {
+          timeoutMs: 20_000,
+          result: b.union([
+            b.object({ ok: b.literal(true), status: b.number() }),
+            b.object({ ok: b.literal(false), error: b.string() }),
+          ]),
+        },
+      );
+      if (r.ok) {
+        status = r.status;
+        ok = r.status >= 200 && r.status < 300;
+        if (!ok) error = `endpoint answered ${r.status}`;
+      } else error = r.error;
+    } catch (err) {
+      error = (err as Error).message;
+    }
+    const at = now();
+    const result = await writer.run((w) => {
+      recordAttempt(w, {
+        deliveryId: d.id,
+        at,
+        status,
+        error,
+        durationMs: Math.max(0, at - started),
+      });
+      return settleDelivery(w, d, ok, error, at, deps.scale ?? 1);
+    });
+    if (result === "failed") {
+      log.warn("webhook delivery gave up", { webhook: d.webhookId, type: d.type, error });
+    }
+  };
+
+  const start = (d: Pending) => {
+    inFlight++;
+    busy.set(d.webhookId, (busy.get(d.webhookId) ?? 0) + 1);
+    void send(d)
+      .catch((err: Error) => log.error("webhook send failed", { error: err.message }))
+      .finally(() => {
+        inFlight--;
+        const n = (busy.get(d.webhookId) ?? 1) - 1;
+        if (n > 0) busy.set(d.webhookId, n);
+        else busy.delete(d.webhookId);
+        dispatch().catch((err: Error) =>
+          log.error("webhook dispatch failed", { error: err.message }),
+        );
+      });
+  };
+
+  const dispatch = async () => {
+    if (claiming) {
+      again = true;
+      return;
+    }
+    claiming = true;
+    try {
+      do {
+        again = false;
+        if (inFlight >= WEBHOOK_SLOTS) break;
+        const due = await writer.run((w) => {
+          const ids = enabledWebhooks(w);
+          const out: Pending[] = [];
+          const first = ids.length ? turn++ % ids.length : 0;
+          for (let k = 0; k < ids.length; k++) {
+            const room = WEBHOOK_SLOTS - inFlight - out.length;
+            if (room <= 0) break;
+            const id = ids[(first + k) % ids.length] as string;
+            const free = Math.min(room, WEBHOOK_SLOTS_PER_ENDPOINT - (busy.get(id) ?? 0));
+            if (free > 0) out.push(...claimFor(w, id, now(), free));
+          }
+          return out;
+        });
+        for (const d of due) start(d);
+      } while (again);
     } finally {
-      sending = false;
+      claiming = false;
     }
   };
 
