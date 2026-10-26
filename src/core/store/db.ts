@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database, type Statement } from "bun:sqlite";
 import type { Migration } from "./migrations/index.ts";
 import { migrations as defaultMigrations } from "./migrations/index.ts";
 
@@ -7,8 +7,22 @@ export interface OpenOptions {
   migrations?: readonly Migration[];
 }
 
+const STATEMENTS = 1024;
+
+function holdStatements(db: Database): void {
+  const held = new Map<string, Statement>();
+  db.query = ((sql: string) => {
+    const known = held.get(sql);
+    if (known) return known;
+    const s = db.prepare(sql);
+    if (held.size < STATEMENTS) held.set(sql, s);
+    return s;
+  }) as Database["query"];
+}
+
 export function openDatabase({ path, migrations = defaultMigrations }: OpenOptions): Database {
   const db = new Database(path, { create: true, strict: true });
+  holdStatements(db);
   db.run("PRAGMA journal_mode = WAL");
   db.run("PRAGMA synchronous = FULL");
   db.run("PRAGMA foreign_keys = ON");
