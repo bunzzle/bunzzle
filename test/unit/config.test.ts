@@ -27,6 +27,8 @@ describe("loadConfig", () => {
       inboundHost: "0.0.0.0",
       inboundPort: null,
       inboundMaxSize: 10 * 1024 * 1024,
+      inboundGreetPauseMs: 1_000,
+      inboundRates: { connections: 300, recipients: 3_000, nullSenderRecipients: 0 },
       retryScale: 1,
       publicUrl: null,
       track: null,

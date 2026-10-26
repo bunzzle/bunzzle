@@ -69,6 +69,8 @@ export async function runInbound(config: Config, log: Logger) {
           name: config.inboundHostname ?? "bunzzle",
           tls,
           maxSize: config.inboundMaxSize,
+          greetPauseMs: config.inboundGreetPauseMs,
+          rates: config.inboundRates,
           handlers: {
             recipient: async (address) =>
               (

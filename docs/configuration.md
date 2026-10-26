@@ -86,6 +86,10 @@ Bounces, complaints, unsubscribe replies and mail for inbound routes. Off unless
 | `BUNZZLE_INBOUND_HOST` | `0.0.0.0` | Address the inbound port listens on. |
 | `BUNZZLE_INBOUND_HOSTNAME` | `BUNZZLE_EHLO_NAME` | Name of this server in the bounce MX records. |
 | `BUNZZLE_INBOUND_MAX_SIZE` | `10485760` | Largest message accepted, in bytes. Bounces and reports stay under 2 MB. |
+| `BUNZZLE_INBOUND_GREET_PAUSE_MS` | `1000` | Pause before the greeting and before the reply to DATA. A client that sends anything during the pause is refused and disconnected. Loopback clients skip it; `0` turns it off. |
+| `BUNZZLE_INBOUND_CONNECTION_RATE` | `300` | Connections per client IP per minute; more are refused with 421. `0` turns it off. |
+| `BUNZZLE_INBOUND_RECIPIENT_RATE` | `3000` | Recipients per client IP per minute; more get 450. `0` turns it off. |
+| `BUNZZLE_INBOUND_NULL_SENDER_RATE` | `0` | Recipients per client IP per minute for messages with an empty sender; more get 450. `0` turns it off. |
 | `BUNZZLE_INBOUND_TLS_CERT_FILE` | | Certificate for STARTTLS on the inbound port. |
 | `BUNZZLE_INBOUND_TLS_KEY_FILE` | | Private key for that certificate. |
 | `BUNZZLE_INBOUND_BLOCKLISTS` | | Lists the sending IP of route mail is looked up on: comma-separated, from `spamhaus`, `barracuda`, `spamcop`, `mailspike`, `psbl`. |

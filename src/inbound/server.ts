@@ -19,7 +19,12 @@ export interface InboundOptions {
   idleMs?: number;
   tls?: { cert: string; key: string } | null;
   blocking?: { maxStrikes: number; windowMs: number; banMs: number } | null;
+  greetPauseMs?: number;
+  rates?: { connections: number; recipients: number; nullSenderRecipients: number } | null;
 }
+
+const loopback = (ip: string) =>
+  ip.startsWith("127.") || ip === "::1" || ip.startsWith("::ffff:127.");
 
 export function startInboundServer(o: InboundOptions): { port: number; stop(): void } {
   return startSmtpServer({
@@ -34,6 +39,8 @@ export function startInboundServer(o: InboundOptions): { port: number; stop(): v
     maxConnectionsPerIp: 50,
     requiretls: true,
     blocking: o.blocking === undefined ? DEFAULT_BLOCKING : o.blocking,
+    greetPause: o.greetPauseMs ? { ms: o.greetPauseMs, skip: loopback } : null,
+    rates: o.rates ? { windowMs: 60_000, ...o.rates } : null,
     hooks: {
       recipient: async (address) =>
         (await o.handlers.recipient(address))

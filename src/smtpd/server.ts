@@ -47,6 +47,13 @@ export interface SmtpServerOptions {
   blocking?: { maxStrikes: number; windowMs: number; banMs: number } | null;
   utf8?: boolean;
   requiretls?: boolean;
+  greetPause?: { ms: number; skip(ip: string): boolean } | null;
+  rates?: {
+    windowMs: number;
+    connections: number;
+    recipients: number;
+    nullSenderRecipients: number;
+  } | null;
 }
 
 interface Conn {
@@ -60,6 +67,10 @@ interface Conn {
   idle: ReturnType<typeof setTimeout> | null;
   upgrading: boolean;
   needHelo: boolean;
+  pause: number;
+  afterData: boolean;
+  early: boolean;
+  greet: ReturnType<typeof setTimeout> | null;
   session: SmtpSession;
   messages: number;
   authStep: { mech: "PLAIN" | "LOGIN"; stage: "initial" | "user" | "password" } | null;
@@ -69,6 +80,23 @@ const MAX_LINE = 4096;
 
 export const DEFAULT_BLOCKING = { maxStrikes: 20, windowMs: 10 * 60_000, banMs: 15 * 60_000 };
 const say = (r: SmtpReply) => `${r.code} ${r.text}`;
+const EARLY = "554 5.5.1 Talking before the server replied";
+
+function counter(limit: number, windowMs: number): (ip: string) => boolean {
+  const windows = new Map<string, { start: number; n: number }>();
+  return (ip) => {
+    if (limit <= 0) return false;
+    const now = Date.now();
+    let w = windows.get(ip);
+    if (!w || now - w.start >= windowMs) {
+      if (!w && windows.size >= 10_000) windows.delete(windows.keys().next().value as string);
+      w = { start: now, n: 0 };
+      windows.set(ip, w);
+    }
+    w.n++;
+    return w.n > limit;
+  };
+}
 
 export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): void } {
   const maxSize = o.maxSize ?? 1024 * 1024;
@@ -81,6 +109,10 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
   const failures = new Map<string, number[]>();
   const strikes = new Map<string, number[]>();
   const banned = new Map<string, number>();
+  const rates = o.rates;
+  const connectionRate = counter(rates?.connections ?? 0, rates?.windowMs ?? 0);
+  const recipientRate = counter(rates?.recipients ?? 0, rates?.windowMs ?? 0);
+  const nullSenderRate = counter(rates?.nullSenderRecipients ?? 0, rates?.windowMs ?? 0);
   const isBanned = (ip: string) => {
     const until = banned.get(ip);
     if (until === undefined) return false;
@@ -257,6 +289,10 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
     } else if (upper.startsWith("RCPT TO:")) {
       if (c.from === null) return reply(s, "503 5.5.1 MAIL first");
       if (c.rcpts.length >= maxRcpts) return reply(s, "452 4.5.3 Too many recipients");
+      const overRate = recipientRate(c.session.remote);
+      if ((c.from === "" && nullSenderRate(c.session.remote)) || overRate) {
+        return reply(s, "450 4.7.1 Too many recipients from your address, try again later");
+      }
       const address = /<([^>]*)>/.exec(line)?.[1]?.trim() ?? "";
       if (address.length === 0 || address.length > 320) {
         return reply(s, "501 5.1.3 Bad recipient address");
@@ -274,6 +310,14 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
       c.rcpts.push(address);
       reply(s, "250 2.1.5 Ok");
     } else if (upper === "DATA") {
+      if (c.pause > 0) {
+        await Bun.sleep(c.pause);
+        c.afterData = false;
+        if (c.early || c.buffer.length > 0) {
+          reply(s, EARLY);
+          return void s.end();
+        }
+      }
       if (c.rcpts.length === 0) return reply(s, "503 5.5.1 No valid recipients");
       c.data = [];
       reply(s, "354 End data with <CR><LF>.<CR><LF>");
@@ -350,12 +394,18 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
       c.chain = c.chain.then(() => authLine(s, c, text));
       return;
     }
+    if (c.afterData) {
+      c.early = true;
+      return;
+    }
+    if (c.pause > 0 && text.toUpperCase() === "DATA") c.afterData = true;
     if (text.toUpperCase() === "STARTTLS" && o.tls && !c.session.tls) c.upgrading = true;
     c.chain = c.chain.then(() => command(s, c, text));
   };
 
   const release = (s: Socket<undefined>, c: Conn | undefined) => {
     if (c?.idle) clearTimeout(c.idle);
+    if (c?.greet) clearTimeout(c.greet);
     if (conns.delete(s) && c) {
       const ip = c.session.remote;
       const n = (open.get(ip) ?? 1) - 1;
@@ -378,6 +428,10 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
         idle: null,
         upgrading: false,
         needHelo: false,
+        pause: o.greetPause && !o.greetPause.skip(ip) ? o.greetPause.ms : 0,
+        afterData: false,
+        early: false,
+        greet: null,
         session: {
           remote: ip,
           tls: !!o.implicitTls,
@@ -389,6 +443,11 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
         messages: 0,
         authStep: null,
       };
+      if (connectionRate(ip)) {
+        reply(s, "421 4.7.0 Too many connections from your address, try again later");
+        s.end();
+        return;
+      }
       if ((open.get(ip) ?? 0) >= perIp) {
         reply(s, "421 4.7.0 Too many connections from your address");
         s.end();
@@ -407,11 +466,22 @@ export function startSmtpServer(o: SmtpServerOptions): { port: number; stop(): v
       open.set(ip, (open.get(ip) ?? 0) + 1);
       conns.set(s, c);
       touch(s, c);
-      reply(s, `220 ${o.name} ${o.banner}`);
+      if (c.pause === 0) return reply(s, `220 ${o.name} ${o.banner}`);
+      c.greet = setTimeout(() => {
+        c.greet = null;
+        reply(s, `220 ${o.name} ${o.banner}`);
+      }, c.pause);
     },
     data(s: Socket<undefined>, chunk: Uint8Array) {
       const c = conns.get(s);
       if (!c || c.upgrading) return;
+      if (c.greet) {
+        clearTimeout(c.greet);
+        c.greet = null;
+        reply(s, EARLY);
+        s.end();
+        return;
+      }
       touch(s, c);
       c.buffer += toBinary(chunk);
       let i = c.buffer.indexOf("\r\n");
