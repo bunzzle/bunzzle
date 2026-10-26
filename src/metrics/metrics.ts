@@ -5,6 +5,7 @@ import type { StorageState } from "../core/storage.ts";
 import { PROJECT_HOLDS } from "../guards/guards.ts";
 import type { NodeHealth } from "../nodes/fleet.ts";
 import type { DelegationView, NsTargetView } from "../roles/core-ns.ts";
+import type { WatchView } from "../roles/core-watch.ts";
 import type { PathView } from "../shaping/shaper.ts";
 import { VERSION } from "../version.ts";
 import type { RoleSample } from "./usage.ts";
@@ -73,6 +74,7 @@ export function collect(
   delegation?: DelegationView | null,
   nodes?: NodeHealth[] | null,
   roles?: RoleSample[] | null,
+  watch?: WatchView | null,
 ): Family[] {
   const jobs = countByState(db, project);
   const recipients = db
@@ -341,6 +343,37 @@ export function collect(
             type: "gauge" as const,
             help: "Differences between the delegation at the parent and the settings at the last check.",
             samples: [{ labels: {}, value: delegation.problems.length }],
+          },
+        ]
+      : []),
+    ...(watch
+      ? [
+          {
+            name: "bunzzle_ip_listed",
+            type: "gauge" as const,
+            help: "1 from the ip.listed event until the ip.delisted event for this IP and blocklist.",
+            samples: watch.listings.map((l) => ({
+              labels: { ip: l.ip, list: l.list },
+              value: l.listed ? 1 : 0,
+            })),
+          },
+          {
+            name: "bunzzle_domain_dns_problems",
+            type: "gauge" as const,
+            help: "Required DNS records that were wrong or missing at the last check of this sending domain.",
+            samples: watch.domains.map((d) => ({
+              labels: { domain: d.domain },
+              value: d.problems.length,
+            })),
+          },
+          {
+            name: "bunzzle_domain_dns_ok",
+            type: "gauge" as const,
+            help: "0 from the domain.dns_problem event until the domain.dns_ok event for this sending domain.",
+            samples: watch.domains.map((d) => ({
+              labels: { domain: d.domain },
+              value: d.alerted ? 0 : 1,
+            })),
           },
         ]
       : []),

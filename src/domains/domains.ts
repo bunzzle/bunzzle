@@ -136,7 +136,7 @@ export const dmarcRecord = (domain: string, inboundHost: string | null): DomainR
 export const bounceDomain = (domain: string) => `bounce.${domain}`;
 export const dmarcAddress = (domain: string) => `dmarc@${bounceDomain(domain)}`;
 
-function tags(txt: string): Map<string, string> {
+export function tags(txt: string): Map<string, string> {
   const out = new Map<string, string>();
   for (const part of txt.split(";")) {
     const eq = part.indexOf("=");

@@ -14,6 +14,7 @@ import {
 } from "../../src/domains/domains.ts";
 import type { RpcClient } from "../../src/ipc/rpc.ts";
 import { type RotationDeps, rotation } from "../../src/roles/core-rotation.ts";
+import { domainProblems } from "../../src/roles/core-watch.ts";
 import { Signer } from "../../src/signer/signer.ts";
 
 const DAY = 86_400_000;
@@ -236,4 +237,20 @@ test("slot keys switch only once every NS serves them", async () => {
   serving = true;
   expect(await r.step(DOMAIN, false)).toBe("switched to new keys");
   expect(states()).toContain("bzb-r:active");
+});
+
+test("inspect reads DNS without saving, and the watcher lists the problems", async () => {
+  const { world, r, domain } = await setup("records", "bza-");
+  for (const name of [...world.txt.keys()]) world.txt.delete(name);
+  const seen = await r.inspect(DOMAIN, await r.keys(DOMAIN));
+  expect(seen?.status).toBe("pending");
+  expect(domain()?.status).toBe("verified");
+  const problems = await domainProblems(r, DOMAIN);
+  expect(problems).toEqual([
+    ...["bza-r", "bzb-r", "bza-e", "bzb-e"].map(
+      (s) => `CNAME ${s}._domainkey.${DOMAIN} is missing`,
+    ),
+    "DKIM signatures do not verify: bza-r: no key; bza-e: no key",
+  ]);
+  expect(await domainProblems(r, "other.example")).toBeNull();
 });
