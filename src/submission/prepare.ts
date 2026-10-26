@@ -93,6 +93,9 @@ export function prepareSubmitted(raw: string, recipients: string[], now: Date): 
   const text = asText(raw);
   const split = text.indexOf("\r\n\r\n");
   const head = split < 0 ? text.replace(/\r\n$/, "") : text.slice(0, split);
+  if (/\r(?!\n)|(?<!\r)\n/.test(head)) {
+    throw new SubmitError(554, "5.6.0 Header lines must end with CRLF");
+  }
   const body = split < 0 ? "" : text.slice(split + 4);
   const all = fields(head);
   const froms = all.filter((f) => f.name === "from");

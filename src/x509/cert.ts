@@ -105,11 +105,18 @@ function time(der: Uint8Array, t: Tlv): number {
   return Date.UTC(year, Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6]));
 }
 
+const utf8 = new TextDecoder("utf-8", { fatal: true });
+const latin1 = new TextDecoder("latin1");
+
 function text(der: Uint8Array, t: Tlv): string | null {
-  if (t.tag === 0x0c) return new TextDecoder("utf-8", { fatal: true }).decode(body(der, t));
-  if (t.tag === 0x13 || t.tag === 0x16 || t.tag === 0x14) {
-    return String.fromCharCode(...body(der, t));
+  if (t.tag === 0x0c) {
+    try {
+      return utf8.decode(body(der, t));
+    } catch {
+      throw new DerError("bad certificate: UTF8String is not UTF-8");
+    }
   }
+  if (t.tag === 0x13 || t.tag === 0x16 || t.tag === 0x14) return latin1.decode(body(der, t));
   return null;
 }
 
