@@ -9,7 +9,12 @@ import { ApiError } from "../../src/http/errors.ts";
 import { prepareEmail, sendSchema } from "../../src/http/send.ts";
 import { fromDomain } from "../../src/inbound/auth.ts";
 import { classifyReport } from "../../src/inbound/parse.ts";
-import { AddressError, normalizeAddress, parseAddress } from "../../src/mime/address.ts";
+import {
+  AddressError,
+  normalizeAddress,
+  parseAddress,
+  parseAddressList,
+} from "../../src/mime/address.ts";
 import {
   decodeWords,
   MIME_LIMITS,
@@ -261,6 +266,28 @@ describe("fuzz: parsers that see outside data", () => {
             expect(p.content.length).toBeLessThanOrEqual(input.length);
             for (const v of p.headers.values()) for (const h of v) decodeWords(h);
           }
+        },
+      });
+      expect(report(findings)).toBe("");
+    },
+    LONG,
+  );
+
+  test(
+    "address lists",
+    async () => {
+      const findings = await fuzz({
+        seeds: [
+          '"Doe, John" <j@x.test>, k@y.test (Kay (nested) \\) ), =?UTF-8?Q?A=2C_B?= <ab@x.test>',
+          'Team: a@x.test, "B" <b@x.test>;, <@relay.test:r@x.test>, "a b"@[127.0.0.1]',
+        ],
+        dictionary: ['"', "<", ">", "@", ",", ";", ":", ".", "(", ")", "\\", "[", "]", "\r\n "],
+        maxLength: 8 * 1024,
+        expected: (e) => e instanceof AddressError,
+        run(input) {
+          const list = parseAddressList(latin1.decode(input));
+          expect(list.length).toBeLessThanOrEqual(input.length);
+          for (const a of list) expect(a.address).toContain("@");
         },
       });
       expect(report(findings)).toBe("");

@@ -62,6 +62,24 @@ body
   });
 });
 
+describe("address headers", () => {
+  test("To and Cc are read as address lists", () => {
+    const raw = crlf(
+      'From: "Doe, J" <j@acme.test>\nTo: =?UTF-8?Q?A=2C_B?= <ab@x.test>, Team: "q x"@x.test;\nCc: c@x.test (C)\n\nb\n',
+    );
+    const r = prepareSubmitted(raw, ["ab@x.test", "c@x.test", "h@x.test"], NOW);
+    expect(r.from).toBe("j@acme.test");
+    expect(r.meta.to).toEqual(["ab@x.test", '"q x"@x.test']);
+    expect(r.meta.cc).toEqual(["c@x.test"]);
+    expect(r.meta.bcc).toEqual(["h@x.test"]);
+  });
+
+  test("a To header that is not an address list is refused", () => {
+    const raw = crlf("From: j@acme.test\nTo: Doe, John <j@x.test>\n\nb\n");
+    expect(() => prepareSubmitted(raw, ["j@x.test"], NOW)).toThrow(/5\.6\.0 The To header/);
+  });
+});
+
 describe("duplicate singular headers", () => {
   test("a second Subject, To, Message-ID and the rest is refused", () => {
     for (const name of [

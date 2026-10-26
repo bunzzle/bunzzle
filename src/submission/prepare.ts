@@ -1,9 +1,9 @@
 import {
-  type AddressError,
+  AddressError,
   domainOf,
   needsSmtpUtf8,
   normalizeAddress,
-  parseAddress,
+  parseAddressList,
 } from "../mime/address.ts";
 import { newMessageId } from "../mime/builder.ts";
 import { rfc5322Date } from "../mime/encodings.ts";
@@ -50,7 +50,6 @@ const SINGLE = new Map(
     "Subject",
   ].map((n) => [n.toLowerCase(), n]),
 );
-const ADDR = /[^\s<>(),;:"[\]\\]+@[^\s<>(),;:"[\]\\]+/g;
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 
@@ -88,19 +87,22 @@ function fields(head: string): Field[] {
   return out;
 }
 
-const fieldText = (f: Field) =>
-  decodeWords(
-    f.lines
-      .join("")
-      .slice(f.name.length + 1)
-      .trim(),
-  );
+const rawText = (f: Field) => f.lines.join("").slice(f.name.length + 1);
+const fieldText = (f: Field) => decodeWords(rawText(f).trim());
 
 const addresses = (list: Field[], name: string) =>
   list
     .filter((f) => f.name === name)
-    .flatMap((f) => fieldText(f).match(ADDR) ?? [])
-    .map((a) => a.toLowerCase())
+    .flatMap((f) => {
+      try {
+        return parseAddressList(rawText(f)).map((a) => a.address.toLowerCase());
+      } catch {
+        throw new SubmitError(
+          554,
+          `5.6.0 The ${SINGLE.get(name)} header is not a valid address list`,
+        );
+      }
+    })
     .slice(0, 1000);
 
 export function prepareSubmitted(raw: string, recipients: string[], now: Date): Submitted {
@@ -126,7 +128,9 @@ export function prepareSubmitted(raw: string, recipients: string[], now: Date): 
   }
   let from: string;
   try {
-    from = parseAddress(fieldText(froms[0] as Field)).address;
+    const list = parseAddressList(rawText(froms[0] as Field));
+    if (list.length !== 1) throw new AddressError("expected exactly one address");
+    from = normalizeAddress((list[0] as { address: string }).address);
   } catch {
     throw new SubmitError(550, "5.1.7 The From header has no valid address");
   }
