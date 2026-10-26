@@ -56,6 +56,10 @@ const schema = b.object({
     .min(64 * 1024)
     .max(40 * 1024 * 1024)
     .default(10 * 1024 * 1024),
+  BUNZZLE_INBOUND_GREET_PAUSE_MS: b.coerce.number().int().min(0).max(30_000).default(1_000),
+  BUNZZLE_INBOUND_CONNECTION_RATE: b.coerce.number().int().min(0).default(300),
+  BUNZZLE_INBOUND_RECIPIENT_RATE: b.coerce.number().int().min(0).default(3_000),
+  BUNZZLE_INBOUND_NULL_SENDER_RATE: b.coerce.number().int().min(0).default(0),
   BUNZZLE_RETRY_SCALE: b.coerce.number().positive().max(1).default(1),
   BUNZZLE_TRACK_HOST: b.string().min(1).default("0.0.0.0"),
   BUNZZLE_TRACK_PORT: b.coerce.number().int().min(0).max(65535).optional(),
@@ -191,6 +195,8 @@ export interface Config {
   inboundHost: string;
   inboundPort: number | null;
   inboundMaxSize: number;
+  inboundGreetPauseMs: number;
+  inboundRates: { connections: number; recipients: number; nullSenderRecipients: number };
   retryScale: number;
   publicUrl: string | null;
   track: { host: string; port: number; dir: string } | null;
@@ -524,6 +530,12 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     inboundHost: c.BUNZZLE_INBOUND_HOST,
     inboundPort: c.BUNZZLE_INBOUND_PORT ?? null,
     inboundMaxSize: c.BUNZZLE_INBOUND_MAX_SIZE,
+    inboundGreetPauseMs: c.BUNZZLE_INBOUND_GREET_PAUSE_MS,
+    inboundRates: {
+      connections: c.BUNZZLE_INBOUND_CONNECTION_RATE,
+      recipients: c.BUNZZLE_INBOUND_RECIPIENT_RATE,
+      nullSenderRecipients: c.BUNZZLE_INBOUND_NULL_SENDER_RATE,
+    },
     retryScale: c.BUNZZLE_RETRY_SCALE,
     publicUrl: c.BUNZZLE_PUBLIC_URL?.replace(/\/+$/, "") ?? null,
     track:
