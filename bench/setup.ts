@@ -16,6 +16,7 @@ export interface Bench {
   url: string;
   token: string;
   recipients: string[];
+  zone: Zone;
   dir: string;
   received(): number;
   tlsSessions(): number;
@@ -85,6 +86,7 @@ export async function startBench(
     url: served.url,
     token,
     recipients,
+    zone,
     dir: served.dir,
     received: () => sink.received(),
     tlsSessions: () => sink.tlsSessions(),
