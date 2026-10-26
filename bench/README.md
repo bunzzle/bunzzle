@@ -16,6 +16,8 @@ bun bench/ns-slip.ts [seconds] [flood rates]
 - `crash`: kills roles with SIGKILL during work and counts lost and duplicate emails.
 - `ns-slip`: a spoofed UDP query flood against the `ns` rate limit, with limited answers dropped and with every second one sent as a truncated reply: bytes reflected to the spoofed address, and answers a real resolver in the same and in another network still gets.
 
+The `Bench` workflow (Actions, started by hand) runs `realistic` on a Linux runner for the chosen cases and writes the output to the job summary. Shared runners are noisy: compare runs made close together.
+
 The intake and delivery benchmarks start a full `bunzzle serve` (five roles), a fake DNS server and a fake MX, and print throughput, latency, CPU per email by role and memory. The load generator runs on the same machine, so the numbers are a lower bound.
 
 Measure memory as PSS (`/proc/<pid>/smaps_rollup`), not by adding up RSS: every role maps the same Bun executable, and summed RSS counts those shared pages six times.
