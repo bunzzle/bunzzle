@@ -20,7 +20,7 @@ export function sockets(runDir: string) {
   };
 }
 
-const b64 = b.string().regex(/^[A-Za-z0-9+/]*={0,2}$/);
+const b64 = b.string();
 
 export const sealedBodyWire = b.object({
   epoch: b.number().int().nonnegative(),
