@@ -50,6 +50,7 @@ async function start(pins = [corePin]) {
       { hostname: "127.0.0.1", port, tls: { ...node, ca, pins } },
       {
         add: method(b.object({ a: b.number(), b: b.number() }), ({ a, b }) => a + b),
+        bytes: method(b.object({ data: b.bytes() }), ({ data }) => ({ data, n: data.length })),
         hang: method(
           b.object({}),
           () =>
@@ -88,6 +89,14 @@ describe("rpc over TCP with mutual TLS", () => {
     const { port, refused } = await start();
     const c = client(port);
     expect(await c.call("add", { a: 2, b: 3 })).toBe(5);
+    const data = crypto.getRandomValues(new Uint8Array(70_000));
+    const back = await c.call(
+      "bytes",
+      { data },
+      { result: b.object({ data: b.bytes(), n: b.number() }) },
+    );
+    expect(back.n).toBe(data.length);
+    expect(back.data).toEqual(data);
     expect(await c.call("add", { a: 4, b: 5 })).toBe(9);
     expect(c.path).toBe(`127.0.0.1:${port}`);
     expect(refused).toEqual([]);

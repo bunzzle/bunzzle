@@ -25,6 +25,8 @@ async function start(path = `${dir}/${crypto.randomUUID()}.sock`) {
     await serveRpc(path, {
       add: method(b.object({ a: b.number(), b: b.number() }), ({ a, b }) => a + b),
       echo: method(b.object({ text: b.string() }), ({ text }) => ({ text })),
+      mirror: method(b.unknown(), (p) => p),
+      bytes: method(b.object({ data: b.bytes() }), ({ data }) => ({ data, n: data.length })),
       boom: method(b.object({}), () => {
         throw new RpcError("no-key", "no DKIM key for example.test");
       }),
@@ -201,5 +203,107 @@ describe("progress", () => {
     await proc.exited;
     expect(seen).toEqual([1]);
     expect(err.code).toBe("lost");
+  });
+});
+
+describe("binary frames between local roles", () => {
+  test("bytes and large strings arrive unchanged", async () => {
+    const { client } = await start();
+    const data = crypto.getRandomValues(new Uint8Array(300_000));
+    const back = await client.call(
+      "bytes",
+      { data },
+      { result: b.object({ data: b.bytes(), n: b.number() }) },
+    );
+    expect(back.n).toBe(data.length);
+    expect(back.data).toEqual(data);
+    const values = {
+      mime: `Subject: x\r\n\r\n${'line "q" \\ \u00e7\u00ff\r\n'.repeat(2000)}`,
+      lone: `a${"\ud800".repeat(5000)}`,
+      small: "short",
+      user: { "\u0000": 1, nested: ["\u0000", { "\u0000": "x" }] },
+      list: [new Uint8Array([1, 2, 3]), "y".repeat(5000)],
+    };
+    const mirrored = (await client.call("mirror", values)) as typeof values;
+    expect(mirrored.mime).toBe(values.mime);
+    expect(mirrored.lone).toBe(values.lone);
+    expect(mirrored.user).toEqual(values.user);
+    expect(mirrored.small).toBe("short");
+    expect(mirrored.list[1]).toBe("y".repeat(5000));
+  });
+
+  async function raw(path: string) {
+    let text = "";
+    let closed = false;
+    const socket = await Bun.connect({
+      unix: path,
+      socket: {
+        data: (_s, chunk) => {
+          text += new TextDecoder("latin1").decode(chunk);
+        },
+        close: () => {
+          closed = true;
+        },
+      },
+    });
+    const wait = async (done: () => boolean) => {
+      for (let i = 0; i < 200 && !done(); i++) await Bun.sleep(5);
+    };
+    return { socket, wait, text: () => text, closed: () => closed };
+  }
+
+  function frame(head: unknown, sections: Uint8Array[]): Uint8Array {
+    const json = new TextEncoder().encode(JSON.stringify(head));
+    const size =
+      11 + 4 * sections.length + json.length + sections.reduce((n, s) => n + s.length, 0);
+    const out = new Uint8Array(size);
+    const view = new DataView(out.buffer);
+    view.setUint32(1, size - 5);
+    view.setUint32(5, json.length);
+    view.setUint16(9, sections.length);
+    let at = 11;
+    for (const s of sections) {
+      view.setUint32(at, s.length);
+      at += 4;
+    }
+    out.set(json, at);
+    at += json.length;
+    for (const s of sections) {
+      out.set(s, at);
+      at += s.length;
+    }
+    return out;
+  }
+
+  test("frames split into single bytes and mixed with JSON lines", async () => {
+    const { path } = await start();
+    const c = await raw(path);
+    const bin = frame({ id: 1, method: "bytes", params: { data: { "\u0000": 0 } } }, [
+      new Uint8Array(5000).fill(7),
+    ]);
+    const all = new Uint8Array([
+      ...bin,
+      ...new TextEncoder().encode(
+        `${JSON.stringify({ id: 2, method: "add", params: { a: 1, b: 2 } })}\n`,
+      ),
+      ...bin,
+    ]);
+    for (const byte of all) {
+      while (c.socket.write(new Uint8Array([byte])) === 0) await Bun.sleep(1);
+    }
+    await c.wait(() => c.text().split('"n":5000').length > 2 && c.text().includes('"result":3'));
+    expect(c.text().split('"n":5000').length).toBe(3);
+    expect(c.text()).toContain('"result":3');
+    c.socket.end();
+  });
+
+  test("a frame whose sections do not add up closes the connection", async () => {
+    const { path } = await start();
+    const c = await raw(path);
+    const bad = frame({ id: 1, method: "add", params: { a: 1, b: 2 } }, [new Uint8Array(10)]);
+    new DataView(bad.buffer).setUint32(11, 9999);
+    c.socket.write(bad);
+    await c.wait(c.closed);
+    expect(c.closed()).toBe(true);
   });
 });

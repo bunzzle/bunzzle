@@ -99,51 +99,183 @@ export class Outbox {
   }
 }
 
+const BIN = 0x00;
+const MARK = "\u0000";
+const SECTION_MIN = 4096;
+
+const toJson = (_key: string, v: unknown) => (v instanceof Uint8Array ? v.toBase64() : v);
+
+function encodeBinary(value: unknown): Uint8Array | null {
+  const sections: Uint8Array[] = [];
+  let clash = false;
+  const json = JSON.stringify(value, function (this: unknown, _key: string, v: unknown) {
+    if (v instanceof Uint8Array) {
+      sections.push(v);
+      return { [MARK]: sections.length - 1 };
+    }
+    if (typeof v === "string" && v.length >= SECTION_MIN && v.isWellFormed()) {
+      sections.push(enc.encode(v));
+      return { [MARK]: -sections.length };
+    }
+    if (v !== null && typeof v === "object" && Object.hasOwn(v, MARK)) clash = true;
+    return v;
+  });
+  if (clash || sections.length === 0 || sections.length > 0xffff) return null;
+  const head = enc.encode(json);
+  const fixed = 4 + 2 + 4 * sections.length;
+  let size = 1 + 4 + fixed + head.length;
+  for (const sec of sections) size += sec.length;
+  const out = new Uint8Array(size);
+  const view = new DataView(out.buffer);
+  out[0] = BIN;
+  view.setUint32(1, size - 5);
+  view.setUint32(5, head.length);
+  view.setUint16(9, sections.length);
+  let at = 11;
+  for (const sec of sections) {
+    view.setUint32(at, sec.length);
+    at += 4;
+  }
+  out.set(head, at);
+  at += head.length;
+  for (const sec of sections) {
+    out.set(sec, at);
+    at += sec.length;
+  }
+  return out;
+}
+
+function decodeBinary(frame: Uint8Array): unknown {
+  const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
+  const jsonLength = view.getUint32(5);
+  const count = view.getUint16(9);
+  let at = 11 + 4 * count;
+  const head = frame.subarray(at, at + jsonLength);
+  at += jsonLength;
+  const sections: Uint8Array[] = [];
+  for (let k = 0; k < count; k++) {
+    const length = view.getUint32(11 + 4 * k);
+    if (at + length > frame.length) throw new Error("section past the end of the frame");
+    sections.push(frame.subarray(at, at + length));
+    at += length;
+  }
+  if (at !== frame.length) throw new Error("frame length mismatch");
+  return JSON.parse(dec.decode(head), (_key, v: unknown) => {
+    if (v === null || typeof v !== "object" || !Object.hasOwn(v, MARK)) return v;
+    const ref = (v as Record<string, unknown>)[MARK];
+    if (typeof ref !== "number" || Object.keys(v).length !== 1) throw new Error("bad section mark");
+    const sec = ref >= 0 ? sections[ref] : sections[-ref - 1];
+    if (!sec) throw new Error("unknown section");
+    return ref >= 0 ? sec.slice() : dec.decode(sec);
+  });
+}
+
 class Framer {
   #chunks: Uint8Array[] = [];
   #size = 0;
+  #scanned = 0;
+  #need = 0;
   readonly #out: Outbox;
   rest: Uint8Array | null = null;
 
   constructor(
     private readonly socket: Socket<undefined>,
     private readonly onFrame: (frame: unknown) => boolean | undefined,
+    private readonly binary = false,
   ) {
     this.#out = new Outbox(socket);
   }
 
+  #take(n: number): Uint8Array {
+    const out = new Uint8Array(n);
+    let at = 0;
+    while (at < n) {
+      const head = this.#chunks[0] as Uint8Array;
+      const part = Math.min(head.length, n - at);
+      out.set(head.subarray(0, part), at);
+      at += part;
+      if (part === head.length) this.#chunks.shift();
+      else this.#chunks[0] = head.subarray(part);
+    }
+    this.#size -= n;
+    return out;
+  }
+
+  #byte(i: number): number {
+    for (const c of this.#chunks) {
+      if (i < c.length) return c[i] as number;
+      i -= c.length;
+    }
+    return -1;
+  }
+
+  #newline(): number {
+    let base = 0;
+    for (const c of this.#chunks) {
+      if (this.#scanned < base + c.length) {
+        const i = c.indexOf(NL, Math.max(0, this.#scanned - base));
+        if (i !== -1) return base + i;
+      }
+      base += c.length;
+    }
+    this.#scanned = this.#size;
+    return -1;
+  }
+
   push(chunk: Uint8Array) {
-    let start = 0;
-    for (let i = chunk.indexOf(NL); i !== -1; i = chunk.indexOf(NL, start)) {
-      this.#chunks.push(chunk.subarray(start, i));
-      const frame = concat(this.#chunks);
-      this.#chunks = [];
-      this.#size = 0;
-      start = i + 1;
+    if (chunk.length === 0) return;
+    this.#chunks.push(chunk.slice());
+    this.#size += chunk.length;
+    while (this.#size > 0 && this.rest === null) {
       let parsed: unknown;
-      try {
-        parsed = JSON.parse(dec.decode(frame));
-      } catch {
-        this.socket.end();
-        return;
+      if (this.#byte(0) === BIN) {
+        if (this.#need === 0) {
+          if (this.#size < 11) return;
+          const len =
+            ((this.#byte(1) << 24) >>> 0) +
+            (this.#byte(2) << 16) +
+            (this.#byte(3) << 8) +
+            this.#byte(4);
+          if (len + 5 > MAX_FRAME || len < 6) {
+            this.socket.end();
+            return;
+          }
+          this.#need = len + 5;
+        }
+        if (this.#size < this.#need) return;
+        const frame = this.#take(this.#need);
+        this.#need = 0;
+        try {
+          parsed = decodeBinary(frame);
+        } catch {
+          this.socket.end();
+          return;
+        }
+      } else {
+        const nl = this.#newline();
+        if (nl === -1) {
+          if (this.#size > MAX_FRAME) this.socket.end();
+          return;
+        }
+        const frame = this.#take(nl + 1);
+        this.#scanned = 0;
+        try {
+          parsed = JSON.parse(dec.decode(frame.subarray(0, nl)));
+        } catch {
+          this.socket.end();
+          return;
+        }
       }
       if (this.onFrame(parsed) === true) {
-        this.rest = chunk.slice(start);
+        this.rest = this.#size > 0 ? this.#take(this.#size) : new Uint8Array(0);
         return;
       }
-    }
-    if (start < chunk.length) {
-      this.#size += chunk.length - start;
-      if (this.#size > MAX_FRAME) {
-        this.socket.end();
-        return;
-      }
-      this.#chunks.push(chunk.slice(start));
     }
   }
 
   send(value: unknown) {
-    this.#out.write(enc.encode(`${JSON.stringify(value)}\n`));
+    const frame = this.binary ? encodeBinary(value) : null;
+    this.#out.write(frame ?? enc.encode(`${JSON.stringify(value, toJson)}\n`));
   }
 
   flush() {
@@ -315,13 +447,17 @@ export async function serveRpc(
   };
   const accept = (s: Socket<undefined>, pin: string | null = null) => {
     let first = true;
-    const framer = new Framer(s, (frame) => {
-      const opening = first && pin !== null && streamFrame.safeParse(frame).success;
-      first = false;
-      if (opening) return startStream(s, framer, frame, pin);
-      void respond(framer, frame, pin);
-      return undefined;
-    });
+    const framer = new Framer(
+      s,
+      (frame) => {
+        const opening = first && pin !== null && streamFrame.safeParse(frame).success;
+        first = false;
+        if (opening) return startStream(s, framer, frame, pin);
+        void respond(framer, frame, pin);
+        return undefined;
+      },
+      pin === null,
+    );
     framers.set(s, framer);
   };
   const closed = (s: Socket<undefined>) => {
@@ -530,7 +666,7 @@ export class RpcClient {
     const endpoint = this.#endpoint;
     if (typeof endpoint === "string") {
       const socket = await Bun.connect({ unix: endpoint, socket: handlers });
-      framer = new Framer(socket, (frame) => void this.#onFrame(frame));
+      framer = new Framer(socket, (frame) => void this.#onFrame(frame), true);
       this.#socket = socket;
       this.#framer = framer;
       return framer;

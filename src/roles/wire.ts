@@ -1,4 +1,4 @@
-import type { EpochPublicKey, SealedBody } from "../crypto/envelope.ts";
+import type { EpochPublicKey } from "../crypto/envelope.ts";
 import type { DeliverRequest } from "../delivery/transport.ts";
 import type { Destination } from "../dns/mx.ts";
 import type { DeliveryReport } from "../smtp/deliver.ts";
@@ -24,22 +24,10 @@ const b64 = b.string();
 
 export const sealedBodyWire = b.object({
   epoch: b.number().int().nonnegative(),
-  wrapped: b64,
-  body: b64,
+  wrapped: b.bytes(),
+  body: b.bytes(),
 });
 export type SealedBodyWire = b.infer<typeof sealedBodyWire>;
-
-export const toWire = (b: SealedBody): SealedBodyWire => ({
-  epoch: b.epoch,
-  wrapped: b.wrapped.toBase64(),
-  body: b.body.toBase64(),
-});
-
-export const fromWire = (b: SealedBodyWire): SealedBody => ({
-  epoch: b.epoch,
-  wrapped: Uint8Array.fromBase64(b.wrapped),
-  body: Uint8Array.fromBase64(b.body),
-});
 
 export const epochKeyWire = b.object({ epoch: b.number().int(), publicKey: b64 });
 
@@ -197,14 +185,14 @@ export const deliverRequestWire = b.object({
 
 export const requestToWire = ({ body, opened, ...r }: DeliverRequest) => ({
   ...r,
-  ...(opened ? { opened } : body ? { body: toWire(body) } : {}),
+  ...(opened ? { opened } : body ? { body: body } : {}),
 });
 export const requestFromWire = ({
   body,
   ...r
 }: b.infer<typeof deliverRequestWire>): DeliverRequest => ({
   ...r,
-  ...(body ? { body: fromWire(body) } : {}),
+  ...(body ? { body: body } : {}),
 });
 
 export const MESSAGE_ID = /^[A-Za-z0-9._-]{1,64}$/;

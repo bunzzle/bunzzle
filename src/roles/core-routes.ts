@@ -23,7 +23,7 @@ import {
 import { type Methods, method, type RpcClient, RpcError } from "../ipc/rpc.ts";
 import { b } from "../validate/schema.ts";
 import { resolveActor } from "./actor.ts";
-import { DOMAIN, project, tokenHash, toWire } from "./wire.ts";
+import { DOMAIN, project, tokenHash } from "./wire.ts";
 
 export interface RouteDeps {
   db: Database;
@@ -163,7 +163,7 @@ export function routeMethods(deps: RouteDeps) {
           try {
             r = await delivery.call(
               "postInbound",
-              { routeId: d.routeId, id: d.id, url: d.url, body: toWire(d.sealed) },
+              { routeId: d.routeId, id: d.id, url: d.url, body: d.sealed },
               { timeoutMs: 90_000, result: posted },
             );
           } catch (err) {
