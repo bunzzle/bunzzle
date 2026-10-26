@@ -29,7 +29,10 @@ export interface WatchView {
 
 interface IpListings {
   ip: string;
-  listings?: { list: string; name: string; status: string; removal: string | null }[] | null;
+  listings?:
+    | { list: string; name: string; status: string; removal: string | null }[]
+    | null
+    | undefined;
 }
 
 function lastEvents(
@@ -82,7 +85,7 @@ export function listingWatch(deps: { db: Database; raise: Raise; log: Logger }) 
 
 export interface DomainWatchDeps {
   db: Database;
-  domains: () => string[];
+  domains: () => { name: string; verified: boolean }[];
   problems: (domain: string) => Promise<string[] | null>;
   raise: Raise;
   log: Logger;
@@ -100,12 +103,17 @@ export function domainWatch(deps: DomainWatchDeps) {
     alerted ??= lastEvents(deps.db, ["domain.dns_problem", "domain.dns_ok"], (d) =>
       String(d["domain"]),
     );
-    const names = deps.domains();
+    const all = deps.domains();
+    const names = all
+      .filter((d) => d.verified || state.has(d.name) || alerted?.get(d.name))
+      .map((d) => d.name);
     for (const name of state.keys()) if (!names.includes(name)) state.delete(name);
     for (const domain of names) {
       const s = state.get(domain);
       const at = now();
-      const due = !s || at - s.checkedAt >= (s.bad > 0 ? DOMAIN_RETRY_MS : DOMAIN_EVERY_MS);
+      const was = alerted.get(domain) ?? false;
+      const watching = was || (s?.bad ?? 0) > 0;
+      const due = !s || at - s.checkedAt >= (watching ? DOMAIN_RETRY_MS : DOMAIN_EVERY_MS);
       if (!due) continue;
       const problems = await deps.problems(domain).catch(() => null);
       if (problems === null) continue;
@@ -117,7 +125,6 @@ export function domainWatch(deps: DomainWatchDeps) {
         checkedAt: at,
       };
       state.set(domain, next);
-      const was = alerted.get(domain) ?? false;
       if (!was && next.bad >= RUNS_TO_CHANGE) {
         alerted.set(domain, true);
         deps.log.error("a sending domain's DNS records are wrong", { domain, problems });

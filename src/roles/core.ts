@@ -71,6 +71,7 @@ import { routeMethods } from "./core-routes.ts";
 import { telemetry } from "./core-telemetry.ts";
 import { templateMethods } from "./core-templates.ts";
 import { trackingMethods } from "./core-tracking.ts";
+import { domainProblems, domainWatch, listingWatch } from "./core-watch.ts";
 import { delegatedDomains, zonePublisher } from "./core-zone.ts";
 import { every, onStop, privateDir, ready } from "./runtime.ts";
 import {
@@ -297,17 +298,31 @@ export async function runCore(config: Config, log: Logger) {
         .catch((err: Error) => log.error("could not save path state", { error: err.message }));
     },
   });
+  const raiseAdmin = (kind: string, data: Record<string, unknown>) =>
+    writer.run((w) =>
+      recordAdminEvent(w, { kind, project: SYSTEM_PROJECT, actor: "core", data }, Date.now()),
+    );
+  const listings = listingWatch({ db, raise: raiseAdmin, log });
   const listed = new Set<string>();
   const refreshListed = () =>
     delivery
       .call("ips", {}, { result: ipInfo, timeoutMs: 10_000 })
-      .then((ips) => {
+      .then(async (ips) => {
         listed.clear();
         for (const ip of ips) {
           if (ip.listings?.some((l) => l.status === "listed")) listed.add(ip.ip);
         }
+        const remote = await Promise.all(
+          links.names().flatMap((name) => {
+            const client = links.client(name);
+            return client
+              ? [client.call("ips", {}, { result: ipInfo, timeoutMs: 10_000 }).catch(() => [])]
+              : [];
+          }),
+        );
+        await listings.update([...ips, ...remote.flat()]);
       })
-      .catch(() => {});
+      .catch((err: Error) => log.warn("blocklist watch failed", { error: err.message }));
   const storage = new StorageWatch(config.dataDir, () => config.minFreeMb, log);
   await storage.check();
   const handleEmail = deliveryHandler({
@@ -416,14 +431,7 @@ export async function runCore(config: Config, log: Logger) {
               },
             ),
           pushed: () => zone.pushed(),
-          raise: (kind, data) =>
-            writer.run((w) =>
-              recordAdminEvent(
-                w,
-                { kind, project: SYSTEM_PROJECT, actor: "core", data },
-                Date.now(),
-              ),
-            ),
+          raise: raiseAdmin,
           log,
         })
       : null;
@@ -449,14 +457,7 @@ export async function runCore(config: Config, log: Logger) {
                 }),
               },
             ),
-          raise: (kind, data) =>
-            writer.run((w) =>
-              recordAdminEvent(
-                w,
-                { kind, project: SYSTEM_PROJECT, actor: "core", data },
-                Date.now(),
-              ),
-            ),
+          raise: raiseAdmin,
           log,
         })
       : null;
@@ -491,6 +492,7 @@ export async function runCore(config: Config, log: Logger) {
     nsDelegation: () => delegation?.view() ?? null,
     nodes: () => fleet.health(),
     roles: () => usage.samples(),
+    watch: () => ({ listings: listings.view(), domains: watchDomains.view() }),
     ...(config.ns && zone
       ? {
           nsCheck: async () => {
@@ -564,6 +566,13 @@ export async function runCore(config: Config, log: Logger) {
     nsZone: config.ns?.zone ?? null,
     zoneServes,
     rotateDays: () => config.dkimRotateDays,
+  });
+  const watchDomains = domainWatch({
+    db,
+    domains: () => allDomains(db).map((d) => ({ name: d.name, verified: d.status === "verified" })),
+    problems: (domain) => domainProblems(rotate, domain),
+    raise: raiseAdmin,
+    log,
   });
   const tracking = trackingMethods({
     db,
@@ -759,6 +768,12 @@ export async function runCore(config: Config, log: Logger) {
   );
   setTimeout(() => void readPostmaster().catch(() => {}), Math.max(1_000, scaled(2 * MIN)));
   const stopRotation = every(Math.max(1_000, scaled(HOUR)), () => rotate.tick());
+  const stopDomainWatch = every(Math.max(1_000, scaled(HOUR)), () =>
+    watchDomains
+      .tick()
+      .catch((err: Error) => log.warn("domain DNS watch failed", { error: err.message })),
+  );
+  setTimeout(() => void watchDomains.tick().catch(() => {}), Math.max(1_000, scaled(5 * MIN)));
   const stopStorage = every(30_000, () => storage.check());
   const stopListed = config.sourceIps.length
     ? every(Math.max(1_000, scaled(10 * MIN)), refreshListed)
@@ -839,6 +854,7 @@ export async function runCore(config: Config, log: Logger) {
     stopProject();
     stopGuards();
     stopRotation();
+    stopDomainWatch();
     stopStorage();
     stopPostmaster();
     stopListed();

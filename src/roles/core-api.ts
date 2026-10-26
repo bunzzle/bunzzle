@@ -94,6 +94,7 @@ import {
 import { domainName, knownPool, usablePool } from "./checks.ts";
 import type { DelegationView, NsCheckView, NsTargetView } from "./core-ns.ts";
 import { intakeSpan } from "./core-telemetry.ts";
+import type { WatchView } from "./core-watch.ts";
 import { DOMAIN, enqueueParams, MESSAGE_ID, project, tokenHash } from "./wire.ts";
 
 const SUSPEND_TARGET =
@@ -149,6 +150,7 @@ export interface CoreDeps {
   nsDelegation?: () => DelegationView | null;
   nodes?: () => NodeHealth[];
   roles?: () => RoleSample[];
+  watch?: () => WatchView;
   nsCheck?: () => Promise<NsCheckView>;
   paths?: () => PathView[];
   storage?: () => StorageState;
@@ -1142,6 +1144,7 @@ export function coreMethods(deps: CoreDeps): {
             deps.nsDelegation?.() ?? null,
             deps.nodes?.() ?? null,
             deps.roles?.() ?? null,
+            scope === null ? (deps.watch?.() ?? null) : null,
           ),
         ),
       };
@@ -1230,6 +1233,7 @@ export function coreMethods(deps: CoreDeps): {
       deps.nsDelegation?.() ?? null,
       deps.nodes?.() ?? null,
       deps.roles?.() ?? null,
+      deps.watch?.() ?? null,
     );
 
   return { methods, verifyPending, enqueueInternal, families };

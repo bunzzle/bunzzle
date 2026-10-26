@@ -3,6 +3,7 @@ import { listProjects, type ProjectId } from "../accounts/projects.ts";
 import { fromPem } from "../asn1/der.ts";
 import type { Config } from "../config.ts";
 import type { StorageState } from "../core/storage.ts";
+import { bimiCheck, bimiName } from "../domains/bimi.ts";
 import { allDomains, domainPool, findDomain, getDomain, listDomains } from "../domains/domains.ts";
 import { latestPostmaster } from "../guards/gmail.ts";
 import { listHolds } from "../guards/guards.ts";
@@ -43,6 +44,8 @@ export interface DoctorDeps {
 const DAY = 86_400_000;
 const CA_WARN_DAYS = 60;
 const NODE_WARN_DAYS = 3;
+
+const txtAnswer = b.record(b.string(), b.array(b.string()));
 
 const dnssecInfo = b.object({ mode: b.enum(["resolver", "own", "off"]), detail: b.string() });
 
@@ -309,6 +312,16 @@ export function doctorMethods(deps: DoctorDeps): Methods {
               : `${r.type} ${r.name} is missing: add "${r.value}"`;
         add(`domain ${d.name}`, r.record, status, detail);
       }
+      const bimi = await delivery
+        .call(
+          "dns",
+          { queries: [{ name: bimiName(d.name), type: "TXT" }] },
+          { result: txtAnswer, timeoutMs: 30_000 },
+        )
+        .catch(() => null);
+      const dmarc = records.find((r) => r.record === "DMARC")?.found ?? null;
+      const logo = bimi ? bimiCheck(bimi[`TXT:${bimiName(d.name)}`] ?? [], dmarc) : null;
+      if (logo) add(`domain ${d.name}`, "BIMI", logo.status, logo.detail);
       if ((fresh ?? d).status === "verified") {
         const check = await rotation.selfCheck(d.name, "active").catch((err: Error) => ({
           ok: false,
