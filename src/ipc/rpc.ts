@@ -114,8 +114,7 @@ class Framer {
 
   push(chunk: Uint8Array) {
     let start = 0;
-    for (let i = 0; i < chunk.length; i++) {
-      if (chunk[i] !== NL) continue;
+    for (let i = chunk.indexOf(NL); i !== -1; i = chunk.indexOf(NL, start)) {
       this.#chunks.push(chunk.subarray(start, i));
       const frame = concat(this.#chunks);
       this.#chunks = [];
