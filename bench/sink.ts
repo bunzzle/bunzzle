@@ -41,6 +41,7 @@ interface State {
   active: Socket<undefined>;
   buffer: string;
   inData: boolean;
+  scan: number;
   from: string;
   behavior: Behavior;
   rcpts: number;
@@ -51,8 +52,12 @@ const EXTENSIONS = ["PIPELINING", "SIZE 10485760", "8BITMIME", "ENHANCEDSTATUSCO
 const multiline = (lines: string[]) =>
   lines.map((l, i) => `250${i === lines.length - 1 ? " " : "-"}${l}\r\n`).join("");
 
-export function startSink(total: number, o: { slowMs?: number; random?: () => number } = {}): Sink {
+export function startSink(
+  total: number,
+  o: { slowMs?: number; random?: () => number; behavior?: (domainIndex: number) => Behavior } = {},
+): Sink {
   const random = o.random ?? Math.random;
+  const behaviorFor = o.behavior ?? behaviorOf;
   const slowMs = o.slowMs ?? 3_000;
   const counts = new Uint8Array(total);
   const probes = new Map<number, number>();
@@ -108,7 +113,7 @@ export function startSink(total: number, o: { slowMs?: number; random?: () => nu
       sock.write("250 2.1.0 Ok\r\n");
     } else if (cmd.startsWith("RCPT TO:")) {
       const domain = /@d(\d+)\.example>/.exec(line);
-      state.behavior = domain ? behaviorOf(Number(domain[1])) : "normal";
+      state.behavior = domain ? behaviorFor(Number(domain[1])) : "normal";
       if (state.behavior === "defer" && random() < 0.3) {
         s.deferred++;
         sock.write("421 4.7.0 Try again later, closing connection\r\n");
@@ -158,11 +163,15 @@ export function startSink(total: number, o: { slowMs?: number; random?: () => nu
   const pump = (state: State) => {
     for (;;) {
       if (state.inData) {
-        const end = state.buffer.indexOf("\r\n.\r\n");
-        if (end < 0) return;
+        const end = state.buffer.indexOf("\r\n.\r\n", state.scan);
+        if (end < 0) {
+          state.scan = Math.max(0, state.buffer.length - 4);
+          return;
+        }
         const body = state.buffer.slice(0, end + 2);
         state.buffer = state.buffer.slice(end + 5);
         state.inData = false;
+        state.scan = 0;
         if (!finish(state, body)) return;
         continue;
       }
@@ -185,6 +194,7 @@ export function startSink(total: number, o: { slowMs?: number; random?: () => nu
         active: sock,
         buffer: "",
         inData: false,
+        scan: 0,
         from: "",
         behavior: "normal",
         rcpts: 0,
