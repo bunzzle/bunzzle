@@ -249,7 +249,7 @@ test(
         )
         .get() as { n: number }
     ).n;
-    expect(took).toBeLessThan(1_500);
+    expect(took).toBeLessThan(250);
     expect(bulkDone).toBeLessThan(500);
     const attempts = p.db.query("SELECT max(attempt) AS m FROM jobs").get() as { m: number };
     expect(attempts.m).toBeLessThanOrEqual(1);
