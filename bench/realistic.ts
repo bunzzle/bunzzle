@@ -152,6 +152,7 @@ try {
   const warm = Math.ceil(destinations / rcpts);
   await load(bench, warm, concurrency, (i) => message(bench, i));
   while (sink.received() < warm * rcpts) await Bun.sleep(50);
+  if (on.has("webhooks")) while (hooks.count < warm * rcpts) await Bun.sleep(50);
   await Bun.sleep(1_000);
 
   const base = sink.received();
