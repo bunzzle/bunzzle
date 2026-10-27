@@ -8,6 +8,7 @@ describe("loadConfig", () => {
       port: 3000,
       dataDir: "./data",
       dbPath: "./data/bunzzle.db",
+      bodiesDir: "./data/bodies",
       logLevel: "info",
       ehloName: null,
       sourceIp: null,

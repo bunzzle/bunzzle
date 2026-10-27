@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import type { Config } from "../config.ts";
+import { bodyPath } from "../core/store/bodies.ts";
 import { readMasterKeyText } from "../crypto/load.ts";
 import { masterKeyFrom } from "../crypto/master.ts";
 import { adminSocket } from "../roles/admin-socket.ts";
@@ -14,13 +15,16 @@ interface Entry {
 }
 
 interface Manifest {
-  format: 1;
+  format: 1 | 2;
   created_at: string;
   master_key_id: string | null;
   files: Entry[];
 }
 
 const DB = "bunzzle.db";
+const BODIES = "bodies";
+const BODY_SUMS = "bodies.sha256";
+const BODY_PATH = /^bodies\/\d+\/[0-9a-f]{2}\/[A-Za-z0-9._-]{1,64}$/;
 
 async function digest(path: string): Promise<{ size: number; sha256: string }> {
   const bytes = await Bun.file(path).bytes();
@@ -62,11 +66,79 @@ async function running(config: Config): Promise<boolean> {
   }
 }
 
+async function isDir(path: string): Promise<boolean> {
+  return Bun.file(path)
+    .stat()
+    .then((s) => s.isDirectory())
+    .catch(() => false);
+}
+
 async function isEmptyDir(dir: string): Promise<boolean> {
   const any = await Array.fromAsync(new Bun.Glob("*").scan({ cwd: dir, dot: true })).catch(
     () => [] as string[],
   );
   return any.length === 0;
+}
+
+async function copyBodies(config: Config, to: string): Promise<boolean> {
+  const snap = new Database(`${to}/${DB}`);
+  try {
+    if (!snap.query("SELECT 1 FROM sqlite_master WHERE name = 'body_files'").get()) return false;
+    const rows = snap
+      .query<{ message_id: string; epoch: number }, []>(
+        "SELECT message_id, epoch FROM body_files ORDER BY epoch, message_id",
+      )
+      .all();
+    const made = new Set<string>();
+    const lines: string[] = [];
+    const gone: string[] = [];
+    for (const r of rows) {
+      const rel = bodyPath(BODIES, r.message_id, r.epoch);
+      const dir = parentOf(rel);
+      if (!made.has(dir)) {
+        await privateDir(`${to}/${dir}`);
+        made.add(dir);
+      }
+      try {
+        await Bun.write(
+          `${to}/${rel}`,
+          Bun.file(`${config.bodiesDir}/${rel.slice(BODIES.length + 1)}`),
+        );
+      } catch {
+        gone.push(r.message_id);
+        continue;
+      }
+      const { size, sha256 } = await digest(`${to}/${rel}`);
+      lines.push(`${sha256} ${size} ${rel}`);
+    }
+    snap.transaction(() => {
+      const drop = snap.query<unknown, [string]>("DELETE FROM body_files WHERE message_id = ?");
+      for (const id of gone) drop.run(id);
+      snap.run("DELETE FROM body_trash");
+    })();
+    await Bun.write(`${to}/${BODY_SUMS}`, lines.length > 0 ? `${lines.join("\n")}\n` : "");
+    return true;
+  } finally {
+    snap.close();
+  }
+}
+
+async function checkBodies(from: string): Promise<string[]> {
+  const text = await Bun.file(`${from}/${BODY_SUMS}`).text();
+  const paths: string[] = [];
+  for (const line of text.split("\n")) {
+    if (line === "") continue;
+    const [sha256, size, path] = line.split(" ");
+    if (!path || !BODY_PATH.test(path) || path.endsWith("/.") || path.endsWith("/..")) {
+      throw new UsageError(`unsafe body path in ${BODY_SUMS}: ${line}`);
+    }
+    const got = await digest(`${from}/${path}`).catch(() => null);
+    if (!got || got.sha256 !== sha256 || String(got.size) !== size) {
+      throw new UsageError(`${path} is missing or changed since the backup was made`);
+    }
+    paths.push(path);
+  }
+  return paths;
 }
 
 export async function backup(config: Config, to: string): Promise<Manifest> {
@@ -86,13 +158,14 @@ export async function backup(config: Config, to: string): Promise<Manifest> {
     await privateDir(`${to}/keys/${parentOf(f)}`);
     await Bun.write(`${to}/keys/${f}`, Bun.file(`${config.keysDir}/${f}`));
   }
+  const sums = await copyBodies(config, to);
   const files: Entry[] = [];
-  for (const rel of [DB, ...keys.map((k) => `keys/${k}`)]) {
+  for (const rel of [DB, ...keys.map((k) => `keys/${k}`), ...(sums ? [BODY_SUMS] : [])]) {
     const { size, sha256 } = await digest(`${to}/${rel}`);
     files.push({ path: rel, size, sha256 });
   }
   const manifest: Manifest = {
-    format: 1,
+    format: 2,
     created_at: new Date().toISOString(),
     master_key_id: await masterIdOf(config.keysDir, keys),
     files,
@@ -106,7 +179,7 @@ export async function restore(config: Config, from: string, now = new Date()): P
   const manifest = (await Bun.file(`${from}/manifest.json`)
     .json()
     .catch(() => null)) as Manifest | null;
-  if (manifest?.format !== 1 || !Array.isArray(manifest.files)) {
+  if ((manifest?.format !== 1 && manifest?.format !== 2) || !Array.isArray(manifest.files)) {
     throw new UsageError(`${from} has no valid manifest.json`);
   }
   for (const e of manifest.files) {
@@ -118,6 +191,7 @@ export async function restore(config: Config, from: string, now = new Date()): P
       throw new UsageError(`${e.path} is missing or changed since the backup was made`);
     }
   }
+  const bodies = manifest.files.some((e) => e.path === BODY_SUMS) ? await checkBodies(from) : [];
   const text = await readMasterKeyText(config);
   if (!text) {
     throw new UsageError(
@@ -141,14 +215,28 @@ export async function restore(config: Config, from: string, now = new Date()): P
     await privateDir(`${aside}/keys/${parentOf(f)}`);
     await Bun.$`mv ${`${config.keysDir}/${f}`} ${`${aside}/keys/${f}`}`.quiet();
   }
+  if (await isDir(config.bodiesDir))
+    await Bun.$`mv ${config.bodiesDir} ${`${aside}/${BODIES}`}`.quiet();
   await privateDir(config.dataDir);
   await privateDir(config.keysDir);
+  await privateDir(config.bodiesDir);
+  const made = new Set<string>();
+  for (const path of bodies) {
+    const target = `${config.bodiesDir}/${path.slice(BODIES.length + 1)}`;
+    const dir = parentOf(target);
+    if (!made.has(dir)) {
+      await privateDir(dir);
+      made.add(dir);
+    }
+    await Bun.write(target, Bun.file(`${from}/${path}`));
+  }
   for (const e of manifest.files) {
+    if (e.path === BODY_SUMS) continue;
     const target = e.path === DB ? config.dbPath : `${config.keysDir}/${e.path.slice(5)}`;
     await privateDir(parentOf(target));
     await Bun.write(target, Bun.file(`${from}/${e.path}`));
   }
-  await Bun.$`chmod -R go-rwx ${config.keysDir} ${config.dbPath}`.quiet();
+  await Bun.$`chmod -R go-rwx ${config.keysDir} ${config.dbPath} ${config.bodiesDir}`.quiet();
   return aside;
 }
 
@@ -157,8 +245,16 @@ export async function backupCommand(argv: string[], config: Config) {
   const to = args.strings.get("to");
   if (!to) throw new UsageError("usage: bunzzle backup --to DIR");
   const m = await backup(config, to.replace(/\/+$/, ""));
-  const size = m.files.reduce((n, f) => n + f.size, 0);
-  console.log(`backup written to ${to}: ${m.files.length} files, ${size} bytes`);
+  const dir = to.replace(/\/+$/, "");
+  const bodies = m.files.some((f) => f.path === BODY_SUMS)
+    ? (await Bun.file(`${dir}/${BODY_SUMS}`).text()).split("\n").filter((l) => l !== "")
+    : [];
+  const size =
+    m.files.reduce((n, f) => n + f.size, 0) +
+    bodies.reduce((n, l) => n + Number(l.split(" ")[1]), 0);
+  console.log(
+    `backup written to ${to}: ${m.files.length + bodies.length} files (${bodies.length} email bodies), ${size} bytes`,
+  );
   console.log(
     "It does not contain the master key. Keep the master key somewhere else: without it the backup cannot be read.",
   );

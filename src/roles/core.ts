@@ -19,6 +19,7 @@ import { defaultRetryPolicy, type RetryPolicy } from "../core/retry.ts";
 import { StorageWatch } from "../core/storage.ts";
 import { BodyStore } from "../core/store/bodies.ts";
 import { moveBodiesToFiles } from "../core/store/bodies-move.ts";
+import { sweepBodyFiles } from "../core/store/body-sweep.ts";
 import { emptyBodyTrash } from "../core/store/body-trash.ts";
 import { openDatabase } from "../core/store/db.ts";
 import { Writer } from "../core/store/writer.ts";
@@ -117,7 +118,7 @@ export async function runCore(config: Config, log: Logger) {
   const db = openDatabase({ path: config.dbPath });
   holdStats(db);
   const writer = new Writer(db);
-  const bodies = await BodyStore.open(`${config.dataDir}/bodies`);
+  const bodies = await BodyStore.open(config.bodiesDir);
   await moveBodiesToFiles(db, bodies, log, { minFreeMb: config.minFreeMb });
   const eventLog = config.eventLog ? new EventLog(config.eventLog) : null;
   if (eventLog && config.eventLog) {
@@ -657,6 +658,16 @@ export async function runCore(config: Config, log: Logger) {
       shredBodies(d, Date.now(), config.retentionDays * 24 * HOUR),
     );
     if (ids.length > 0) log.info("shredded bodies past retention", { count: ids.length });
+    try {
+      const swept = await sweepBodyFiles(
+        db,
+        bodies,
+        epochOf(Date.now() - config.retentionDays * 24 * HOUR),
+      );
+      if (swept.removed > 0) log.info("removed body files without an email", swept);
+    } catch (err) {
+      log.warn("body files were not swept", { error: (err as Error).message });
+    }
   };
   const stopShred = every(Math.max(1_000, scaled(HOUR)), shred);
   const stopTrash = every(1_000, async () => {
