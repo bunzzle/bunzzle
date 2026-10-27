@@ -17,6 +17,7 @@ import type { Logger } from "../core/log.ts";
 import { fail, type Outcome } from "../core/outcome.ts";
 import { defaultRetryPolicy, type RetryPolicy } from "../core/retry.ts";
 import { StorageWatch } from "../core/storage.ts";
+import { BodyStore } from "../core/store/bodies.ts";
 import { openDatabase } from "../core/store/db.ts";
 import { Writer } from "../core/store/writer.ts";
 import { type EpochPublicKey, epochOf } from "../crypto/envelope.ts";
@@ -114,6 +115,7 @@ export async function runCore(config: Config, log: Logger) {
   const db = openDatabase({ path: config.dbPath });
   holdStats(db);
   const writer = new Writer(db);
+  const bodies = await BodyStore.open(`${config.dataDir}/bodies`);
   const eventLog = config.eventLog ? new EventLog(config.eventLog) : null;
   if (eventLog && config.eventLog) {
     await privateDir(config.eventLog.dir, "750");
@@ -869,6 +871,7 @@ export async function runCore(config: Config, log: Logger) {
     await scheduler.stop();
     await writer.run((d) => flushStats(d)).catch(() => {});
     writer.close();
+    bodies.close();
     db.close();
   });
   log.info("core ready", { db: config.dbPath });

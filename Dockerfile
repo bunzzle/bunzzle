@@ -4,7 +4,7 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
 COPY tsconfig.json ./
 COPY src ./src
-RUN bun build src/cli/main.ts --compile --minify --sourcemap --outfile dist/bunzzle && ./dist/bunzzle --version
+RUN bun build src/cli/main.ts src/core/store/body-worker.ts --compile --minify --sourcemap --outfile dist/bunzzle && ./dist/bunzzle --version
 
 FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 RUN groupadd --system --gid 10001 bunzzle \

@@ -32,7 +32,7 @@ jobs:
         run: |
           mkdir -p release
           for target in linux-x64 linux-arm64 darwin-arm64 darwin-x64; do
-            bun build src/cli/main.ts --compile --minify --sourcemap \
+            bun build src/cli/main.ts src/core/store/body-worker.ts --compile --minify --sourcemap \
               --target="bun-$target" --outfile "release/bunzzle-$target"
           done
           rm -f release/*.map
