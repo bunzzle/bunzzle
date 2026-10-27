@@ -176,6 +176,7 @@ export interface Config {
   port: number;
   dataDir: string;
   dbPath: string;
+  bodiesDir: string;
   logLevel: "debug" | "info" | "warn" | "error";
   ehloName: string | null;
   sourceIp: string | null;
@@ -500,6 +501,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     port: c.BUNZZLE_PORT,
     dataDir: c.BUNZZLE_DATA_DIR,
     dbPath: `${c.BUNZZLE_DATA_DIR.replace(/\/+$/, "")}/bunzzle.db`,
+    bodiesDir: `${c.BUNZZLE_DATA_DIR.replace(/\/+$/, "")}/bodies`,
     logLevel: c.BUNZZLE_LOG_LEVEL,
     ehloName: c.BUNZZLE_EHLO_NAME,
     sourceIp: c.BUNZZLE_SOURCE_IP,

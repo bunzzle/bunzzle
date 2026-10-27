@@ -13,7 +13,8 @@ export type BodyJob =
       body: Uint8Array;
       replace: boolean;
     }
-  | { seq: number; op: "remove"; paths: string[] };
+  | { seq: number; op: "remove"; paths: string[] }
+  | { seq: number; op: "prune"; paths: string[] };
 
 export type BodyReply =
   | { seq: number; ok: true; value: number }
@@ -105,7 +106,16 @@ function drain(): void {
     try {
       const l = c();
       if (job.op === "probe") replies.push({ seq: job.seq, ok: true, value: probe(l, job.root) });
-      else if (job.op === "remove") {
+      else if (job.op === "prune") {
+        let n = 0;
+        for (const p of job.paths) {
+          if (l.rmdir(p)) {
+            known.delete(p);
+            n++;
+          }
+        }
+        replies.push({ seq: job.seq, ok: true, value: n });
+      } else if (job.op === "remove") {
         let n = 0;
         for (const p of job.paths) if (l.unlink(p)) n++;
         replies.push({ seq: job.seq, ok: true, value: n });

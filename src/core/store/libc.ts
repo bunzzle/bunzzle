@@ -5,6 +5,7 @@ const MAC = suffix === "dylib";
 export const EEXIST = 17;
 export const EINTR = 4;
 export const ENOENT = 2;
+const ENOTEMPTY = MAC ? 66 : 39;
 
 const CREATE_NEW = MAC ? 0x1 | 0x200 | 0x800 | 0x1000000 : 0x1 | 0x40 | 0x80 | 0x80000;
 
@@ -28,6 +29,7 @@ export function openLibc() {
     close: { args: [FFIType.i32], returns: FFIType.i32 },
     mkdir: { args: [FFIType.cstring, FFIType.u32], returns: FFIType.i32 },
     unlink: { args: [FFIType.cstring], returns: FFIType.i32 },
+    rmdir: { args: [FFIType.cstring], returns: FFIType.i32 },
     [MAC ? "__error" : "__errno_location"]: { args: [], returns: FFIType.ptr },
   });
   const errnoAt = symbols[MAC ? "__error" : "__errno_location"] as () => number | null;
@@ -93,6 +95,12 @@ export function openLibc() {
       if (retry(() => symbols.mkdir(c(path), mode)) === 0) return true;
       if (errno() === EEXIST) return false;
       throw fail("mkdir", path);
+    },
+    rmdir(path: string): boolean {
+      if (retry(() => symbols.rmdir(c(path))) === 0) return true;
+      const n = errno();
+      if (n === ENOENT || n === ENOTEMPTY || n === EEXIST) return false;
+      throw fail("rmdir", path);
     },
     unlink(path: string): boolean {
       if (retry(() => symbols.unlink(c(path))) === 0) return true;

@@ -52,6 +52,14 @@ export function decodeBody(bytes: Uint8Array, epoch: number): StoredBody {
   return { epoch, wrapped: bytes.subarray(FIXED, end), body: bytes.subarray(end) };
 }
 
+export function bodyPath(root: string, id: string, epoch: number): string {
+  if (!ID.test(id) || id === "." || id === "..")
+    throw new BodyStoreError(`not a valid message id: ${id}`);
+  if (!Number.isSafeInteger(epoch) || epoch < 0) throw new BodyStoreError(`not an epoch: ${epoch}`);
+  const shard = (Bun.hash.crc32(id) & 0xff).toString(16).padStart(2, "0");
+  return `${root}/${epoch}/${shard}/${id}`;
+}
+
 export interface BodyFiles {
   write(id: string, b: StoredBody, o?: { replace?: boolean }): Promise<number>;
   read(id: string, epoch: number): Promise<StoredBody | null>;
@@ -98,12 +106,12 @@ export class BodyStore implements BodyFiles {
   }
 
   path(id: string, epoch: number): string {
-    if (!ID.test(id) || id === "." || id === "..")
-      throw new BodyStoreError(`not a valid message id: ${id}`);
-    if (!Number.isSafeInteger(epoch) || epoch < 0)
-      throw new BodyStoreError(`not an epoch: ${epoch}`);
-    const shard = (Bun.hash.crc32(id) & 0xff).toString(16).padStart(2, "0");
-    return `${this.root}/${epoch}/${shard}/${id}`;
+    return bodyPath(this.root, id, epoch);
+  }
+
+  prune(dirs: string[]): Promise<number> {
+    if (dirs.length === 0) return Promise.resolve(0);
+    return this.#send({ op: "prune", paths: dirs.map((d) => `${this.root}/${d}`) });
   }
 
   write(
