@@ -15,6 +15,7 @@ import type { JobContext } from "../../src/scheduler/scheduler.ts";
 import { Shaper } from "../../src/shaping/shaper.ts";
 import type { DeliveryReport } from "../../src/smtp/deliver.ts";
 import type { OnOutcomes, RecipientResult } from "../../src/smtp/session.ts";
+import { memoryBodies } from "../support/bodies.ts";
 
 type Deliver = (req: DeliverRequest, onOutcomes?: OnOutcomes) => Promise<DeliveryReport>;
 
@@ -52,13 +53,20 @@ function setup(deliver: Deliver) {
     }),
     deliver,
   };
-  const handle = deliveryHandler({ db, log, transport, clock, shaper: new Shaper({ log, clock }) });
+  const handle = deliveryHandler({
+    bodies: memoryBodies(),
+    db,
+    log,
+    transport,
+    clock,
+    shaper: new Shaper({ log, clock }),
+  });
   enqueueEmail(
     db,
     DEFAULT_PROJECT,
     {
       id: "m",
-      body: { epoch: 1, wrapped: new Uint8Array(1), body: new Uint8Array(1) },
+      body: { epoch: 1, size: 1 },
       from: "a@bunzzle.test",
       recipients: ["x@example.test", "y@example.test", "z@example.test"],
       smtpUtf8: false,

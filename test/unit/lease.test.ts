@@ -9,6 +9,7 @@ import { enqueueEmail } from "../../src/delivery/queue.ts";
 import type { DeliveryTransport } from "../../src/delivery/transport.ts";
 import { leaseTimes } from "../../src/roles/core.ts";
 import { Shaper } from "../../src/shaping/shaper.ts";
+import { memoryBodies } from "../support/bodies.ts";
 
 function setup(lookupMs: number) {
   const clock = manualClock();
@@ -33,13 +34,20 @@ function setup(lookupMs: number) {
       throw new Error("sent");
     },
   };
-  const handle = deliveryHandler({ db, log, transport, clock, shaper: new Shaper({ log, clock }) });
+  const handle = deliveryHandler({
+    bodies: memoryBodies(),
+    db,
+    log,
+    transport,
+    clock,
+    shaper: new Shaper({ log, clock }),
+  });
   enqueueEmail(
     db,
     DEFAULT_PROJECT,
     {
       id: "m",
-      body: { epoch: 1, wrapped: new Uint8Array(1), body: new Uint8Array(1) },
+      body: { epoch: 1, size: 1 },
       from: "a@bunzzle.test",
       recipients: ["x@example.test"],
       smtpUtf8: false,

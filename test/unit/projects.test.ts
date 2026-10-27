@@ -84,12 +84,12 @@ import {
 import { createTemplate, findTemplate, listTemplates } from "../../src/templates/store.ts";
 import { projectEvents } from "../../src/webhooks/project.ts";
 import { createWebhook, deleteWebhook, listWebhooks } from "../../src/webhooks/store.ts";
+import { memoryBodies } from "../support/bodies.ts";
 
 const T0 = Date.UTC(2026, 9, 21, 12);
 const A = DEFAULT_PROJECT;
 const B = "p-other" as ProjectId;
 const DAY = 86_400_000;
-const sealed = { epoch: 1, wrapped: new Uint8Array([1]), body: new Uint8Array([2]) };
 
 function setup() {
   const db = openDatabase({ path: ":memory:" });
@@ -113,7 +113,7 @@ function setup() {
     A,
     {
       id,
-      body: sealed,
+      body: { epoch: 1, size: 1 },
       from: "x@a.test",
       recipients: ["r@dest.test"],
       smtpUtf8: false,
@@ -323,7 +323,7 @@ describe("projects", () => {
       project,
       {
         id,
-        body: sealed,
+        body: { epoch: 1, size: 1 },
         from: "x@a.test",
         recipients: ["r@dest.test"],
         smtpUtf8: false,
@@ -407,7 +407,7 @@ describe("projects", () => {
       B,
       {
         id,
-        body: sealed,
+        body: { epoch: 1, size: 1 },
         from: "x@a.test",
         recipients: ["r@dest.test"],
         smtpUtf8: false,
@@ -458,6 +458,7 @@ describe("projects", () => {
       call: async (m: string) => (m === "domains" ? ["b.test"] : null),
     } as unknown as RpcClient;
     const { methods, enqueueInternal } = coreMethods({
+      bodies: memoryBodies(),
       db,
       writer: new Writer(db),
       log: createLogger("error", {}, () => {}),
@@ -504,6 +505,7 @@ describe("projects", () => {
       call: async (m: string) => (m === "domains" ? ["a.test"] : null),
     } as unknown as RpcClient;
     const { methods } = coreMethods({
+      bodies: memoryBodies(),
       db,
       writer: new Writer(db),
       log: createLogger("error", {}, () => {}),
@@ -565,6 +567,7 @@ describe("projects", () => {
     } as unknown as RpcClient;
     const hash = recipientHasher(new Uint8Array(32));
     const { methods } = coreMethods({
+      bodies: memoryBodies(),
       db,
       writer: new Writer(db),
       log: createLogger("error", {}, () => {}),
@@ -643,6 +646,7 @@ describe("projects", () => {
       call: async (m: string) => (m === "domains" ? ["a.test"] : null),
     } as unknown as RpcClient;
     const { methods } = coreMethods({
+      bodies: memoryBodies(),
       db,
       writer: new Writer(db),
       log: createLogger("error", {}, () => {}),
@@ -725,6 +729,7 @@ describe("projects", () => {
       call: async (m: string) => (m === "domains" ? ["a.test", "b.test"] : null),
     } as unknown as RpcClient;
     const { methods } = coreMethods({
+      bodies: memoryBodies(),
       db,
       writer: new Writer(db),
       log: createLogger("error", {}, () => {}),

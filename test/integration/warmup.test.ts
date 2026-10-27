@@ -15,6 +15,7 @@ import { createResolver } from "../../src/dns/resolver.ts";
 import { DAY_MS, getWarmup, rollover } from "../../src/ips/warmup.ts";
 import { Shaper } from "../../src/shaping/shaper.ts";
 import { Signer } from "../../src/signer/signer.ts";
+import { memoryBodies } from "../support/bodies.ts";
 import { type FakeDns, startFakeDns } from "../support/fake-dns.ts";
 import { type FakeMx, startFakeMx, TEST_CA } from "../support/fake-mx.ts";
 
@@ -55,8 +56,10 @@ test("a new IP sends only its warm-up budget, waits for tomorrow, then gets more
     clock,
   });
   const ips = [{ ip: "127.0.0.1", pool: "main", established: false }];
+  const bodies = memoryBodies();
   const handle = deliveryHandler({
     db,
+    bodies,
     log,
     clock,
     ips,
@@ -83,13 +86,14 @@ test("a new IP sends only its warm-up budget, waits for tomorrow, then gets more
   for (let i = 0; i < 150; i++) {
     const id = Bun.randomUUIDv7();
     const body = await sealBody(key, id, `From: a@bunzzle.test\r\nSubject: ${i}\r\n\r\nhi\r\n`);
+    const size = await bodies.write(id, body);
     ids.push(
       enqueueEmail(
         db,
         DEFAULT_PROJECT,
         {
           id,
-          body,
+          body: { epoch: body.epoch, size },
           from: "a@bunzzle.test",
           recipients: [`u${i}@example.test`],
           smtpUtf8: false,

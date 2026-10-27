@@ -238,7 +238,7 @@ function removeWhere(
       data: action === "cancel" ? { reason } : { code: "operator", reason },
     });
     if (action === "cancel" && (live.get(id)?.n ?? 0) === 0) {
-      db.query<unknown, [string]>("DELETE FROM bodies WHERE message_id = ?").run(id);
+      db.query<unknown, [string]>("DELETE FROM body_files WHERE message_id = ?").run(id);
     }
   }
   return result;

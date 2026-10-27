@@ -28,6 +28,7 @@ import { appendEvent } from "../core/events.ts";
 import { countByState } from "../core/jobs.ts";
 import type { Logger } from "../core/log.ts";
 import type { StorageState } from "../core/storage.ts";
+import { type BodyFiles, BodyStoreError } from "../core/store/bodies.ts";
 import type { Writer } from "../core/store/writer.ts";
 import { BodySealer, type EpochPublicKey } from "../crypto/envelope.ts";
 import {
@@ -125,6 +126,7 @@ class LimitReached extends RpcError {
 export interface CoreDeps {
   db: Database;
   writer: Writer;
+  bodies: Pick<BodyFiles, "write" | "remove">;
   log: Logger;
   signer: RpcClient;
   delivery: RpcClient;
@@ -384,10 +386,23 @@ export function coreMethods(deps: CoreDeps): {
           user: key?.id ?? project,
         })
       : p.data;
-    const body = await sealer.seal(await deps.currentKey(), id, data);
+    const sealed = await sealer.seal(await deps.currentKey(), id, data);
+    let size: number;
+    try {
+      size = await deps.bodies.write(id, sealed);
+    } catch (err) {
+      if (err instanceof BodyStoreError && err.exists && p.id !== undefined) {
+        if (projectOfMessage(db, id) === project) return { id, existed: true as const };
+        throw new RpcError("unavailable", "an email with this id is being accepted, retry");
+      }
+      log.error("email body could not be stored", { id, error: (err as Error).message });
+      throw new RpcError("unavailable", "the email body could not be stored, retry");
+    }
+    const body = { epoch: sealed.epoch, size };
     return {
       id,
       existed: false as const,
+      epoch: sealed.epoch,
       persist: (d: Database) => {
         if (idem) {
           const prev = findIdempotent(d, idemOwner, idem.key, t);
@@ -511,6 +526,20 @@ export function coreMethods(deps: CoreDeps): {
     throw new RpcError("invalid", (err as Error).message);
   };
 
+  const discard = (prepared: { id: string; existed: boolean; epoch?: number }[]) => {
+    const gone = prepared.flatMap((r) =>
+      r.existed || r.epoch === undefined || projectOfMessage(db, r.id) !== null
+        ? []
+        : [{ id: r.id, epoch: r.epoch }],
+    );
+    if (gone.length > 0)
+      void deps.bodies
+        .remove(gone)
+        .catch((err: Error) =>
+          log.warn("unused email bodies were not removed", { error: err.message }),
+        );
+  };
+
   const enqueueAll = async (
     p: b.infer<typeof batchParams>,
     ready: Awaited<ReturnType<typeof prepareEnqueue>>[],
@@ -520,17 +549,19 @@ export function coreMethods(deps: CoreDeps): {
       try {
         ready.push(await prepareEnqueue(e, actor));
       } catch (err) {
+        discard(ready);
         if (err instanceof RpcError) throw new RpcError(err.code, `emails[${i}]: ${err.message}`);
         throw err;
       }
     }
     try {
-      return {
-        data: await writer.run((d) =>
-          ready.map((r) => (r.existed ? { id: r.id, existed: true } : r.persist(d))),
-        ),
-      };
+      const data = await writer.run((d) =>
+        ready.map((r) => (r.existed ? { id: r.id, existed: true } : r.persist(d))),
+      );
+      discard(ready.filter((r, i) => data[i]?.id !== r.id));
+      return { data };
     } catch (err) {
+      discard(ready);
       await noteRefusal(err);
       return enqueueFailed(err);
     }
@@ -606,8 +637,11 @@ export function coreMethods(deps: CoreDeps): {
         existed = r.existed;
         if (r.existed) return { id: r.id, existed: true };
         try {
-          return await writer.run((d) => r.persist(d));
+          const done = await writer.run((d) => r.persist(d));
+          if (done.id !== r.id) discard([r]);
+          return done;
         } catch (err) {
+          discard([r]);
           if (!(err instanceof RpcError) && projectOfMessage(db, r.id) === actor.project) {
             existed = true;
             return { id: r.id, existed: true };
@@ -1218,7 +1252,14 @@ export function coreMethods(deps: CoreDeps): {
       { kind: "operator", project: SYSTEM_PROJECT, key: null },
     );
     if (r.existed) return r.id;
-    return (await writer.run((d) => r.persist(d))).id;
+    try {
+      const done = await writer.run((d) => r.persist(d));
+      if (done.id !== r.id) discard([r]);
+      return done.id;
+    } catch (err) {
+      discard([r]);
+      throw err;
+    }
   };
 
   const families = () =>

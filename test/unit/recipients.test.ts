@@ -17,7 +17,6 @@ import { loadRecipientKey } from "../../src/signer/recipient-key.ts";
 
 const B = "p-other" as ProjectId;
 const T0 = Date.UTC(2026, 9, 22, 12);
-const sealed = { epoch: 1, wrapped: new Uint8Array([1]), body: new Uint8Array([2]) };
 
 describe("known recipients", () => {
   test("hashes ignore case and depend on the key", () => {
@@ -75,7 +74,7 @@ describe("known recipients", () => {
         project,
         {
           id: Bun.randomUUIDv7(),
-          body: sealed,
+          body: { epoch: 1, size: 1 },
           from: "x@a.test",
           recipients: to,
           smtpUtf8: false,

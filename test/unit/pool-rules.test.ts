@@ -16,6 +16,7 @@ import { enqueueEmail } from "../../src/delivery/queue.ts";
 import type { DeliveryTransport } from "../../src/delivery/transport.ts";
 import { providerOfTargets } from "../../src/routing/providers.ts";
 import { Shaper } from "../../src/shaping/shaper.ts";
+import { memoryBodies } from "../support/bodies.ts";
 
 const T0 = Date.UTC(2026, 9, 22);
 const SHOP = "shop" as ProjectId;
@@ -130,6 +131,7 @@ describe("the delivery handler sends where the rules say", () => {
       { ip: "203.0.113.2", pool: "warm", established: true },
     ];
     const handle = deliveryHandler({
+      bodies: memoryBodies(),
       db,
       log,
       transport,
@@ -148,7 +150,7 @@ describe("the delivery handler sends where the rules say", () => {
         DEFAULT_PROJECT,
         {
           id,
-          body: { epoch: 1, wrapped: new Uint8Array(1), body: new Uint8Array(1) },
+          body: { epoch: 1, size: 1 },
           from: "a@bunzzle.test",
           recipients: ["x@company.example"],
           smtpUtf8: false,

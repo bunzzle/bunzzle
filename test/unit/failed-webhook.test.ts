@@ -20,7 +20,7 @@ function setup() {
     DEFAULT_PROJECT,
     {
       id: "m",
-      body: { epoch: 1, wrapped: new Uint8Array(1), body: new Uint8Array(1) },
+      body: { epoch: 1, size: 1 },
       from: "a@bunzzle.test",
       recipients: ["x@example.test"],
       smtpUtf8: false,
