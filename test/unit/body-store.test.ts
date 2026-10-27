@@ -87,12 +87,12 @@ describe("BodyStore", () => {
     const store = await open(root);
     const b = sealed();
     const size = await store.write(ID, b);
-    const path = `${root}/${b.epoch}/7b/${ID}`;
+    const path = `${root}/${b.epoch}/da/${ID}`;
     expect(store.path(ID, b.epoch)).toBe(path);
     expect(size).toBe((await Bun.file(path).stat()).size);
     expect(await modeOf(path)).toBe(0o600);
     expect(await modeOf(`${root}/${b.epoch}`)).toBe(0o700);
-    expect(await modeOf(`${root}/${b.epoch}/7b`)).toBe(0o700);
+    expect(await modeOf(`${root}/${b.epoch}/da`)).toBe(0o700);
     expect(await store.read(ID, b.epoch)).toEqual(b);
     expect(await Bun.file(`${root}/.probe`).exists()).toBe(false);
   });
@@ -131,7 +131,7 @@ describe("BodyStore", () => {
 
   test("refuses ids that are not plain names", async () => {
     const store = await open(`${await tempDir()}/bodies`);
-    for (const id of ["../../etc/passwd", "a/b", "", "x", "a".repeat(65)])
+    for (const id of ["../../etc/passwd", "a/b", "", ".", "..", "a".repeat(65)])
       expect(() => store.path(id, 1)).toThrow(BodyStoreError);
     expect(() => store.path(ID, -1)).toThrow(BodyStoreError);
   });
@@ -140,22 +140,28 @@ describe("BodyStore", () => {
     const root = `${await tempDir()}/bodies`;
     const store = await open(root);
     await store.write(ID, sealed(10));
-    await Bun.$`chmod 500 ${root}/20388/7b`.quiet();
-    await expect(
-      store.write("0199c5a2-7d1e-7c3a-9b2f-4e8a1c6d3f7b-2-7b", sealed(10)),
-    ).rejects.toThrow(/body store: create .* failed/);
-    await Bun.$`chmod 700 ${root}/20388/7b`.quiet();
-    const other = "0199c5a2-7d1e-7c3a-9b2f-4e8a1c6d3fff";
-    await store.write(other, sealed(10));
-    expect(await store.read(other, 20_388)).not.toBeNull();
+    const shard = store.path(ID, 20_388).slice(0, -ID.length - 1);
+    let same = "";
+    for (let i = 0; !same; i++) {
+      const id = `${ID}-${i}`;
+      if (store.path(id, 20_388).startsWith(`${shard}/`)) same = id;
+    }
+    await Bun.$`chmod 500 ${shard}`.quiet();
+    const err = await store.write(same, sealed(10)).catch((e: Error) => e);
+    expect(String(err)).toMatch(/body store: create .* failed/);
+    await Bun.$`chmod 700 ${shard}`.quiet();
+    await store.write(same, sealed(10));
+    expect(await store.read(same, 20_388)).not.toBeNull();
   });
 
   test("open fails when the store cannot be written", async () => {
     const dir = await tempDir();
     await Bun.write(`${dir}/file`, "x");
-    await expect(BodyStore.open(`${dir}/file/bodies`)).rejects.toThrow(/body store: mkdir/);
+    const notDir = await BodyStore.open(`${dir}/file/bodies`).catch((e: Error) => e);
+    expect(String(notDir)).toMatch(/body store: mkdir/);
     await Bun.$`mkdir ${dir}/ro && chmod 500 ${dir}/ro`.quiet();
-    await expect(BodyStore.open(`${dir}/ro`)).rejects.toThrow(/body store: create/);
+    const readOnly = await BodyStore.open(`${dir}/ro`).catch((e: Error) => e);
+    expect(String(readOnly)).toMatch(/body store: create/);
   });
 
   test("calls after close reject", async () => {

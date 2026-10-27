@@ -9,6 +9,8 @@ import { type ClaimedJob, waitOnNodes } from "../core/jobs.ts";
 import type { Logger } from "../core/log.ts";
 import { type Apply, defer, fail, type Outcome, ok, requeue, unknown } from "../core/outcome.ts";
 import { clampHint } from "../core/retry.ts";
+import type { BodyFiles } from "../core/store/bodies.ts";
+import type { SealedBody } from "../crypto/envelope.ts";
 import type { Destination } from "../dns/mx.ts";
 import { countEmail } from "../emails/search.ts";
 import { activeHold, countSender } from "../guards/guards.ts";
@@ -35,6 +37,7 @@ import type { DeliveryTransport } from "./transport.ts";
 
 export interface DeliveryHandlerOptions {
   db: Database;
+  bodies: Pick<BodyFiles, "read">;
   log: Logger;
   transport: DeliveryTransport;
   clock?: Clock;
@@ -231,7 +234,16 @@ export function deliveryHandler(o: DeliveryHandlerOptions) {
       };
     }
 
-    const body = bodyOf(db, job.messageId);
+    const stored = bodyOf(db, job.messageId);
+    let body: SealedBody | null;
+    try {
+      body = stored ? await o.bodies.read(job.messageId, stored.epoch) : null;
+    } catch (err) {
+      return {
+        ...requeue(`the email body could not be read: ${(err as Error).message}`, busyRetryMs),
+        apply: record(job, [], none),
+      };
+    }
     if (!body) {
       return {
         ...fail("body-gone", "the email body no longer exists"),

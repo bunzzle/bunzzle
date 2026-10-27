@@ -2,7 +2,6 @@ import type { Database } from "bun:sqlite";
 import type { ProjectId } from "../accounts/projects.ts";
 import { appendEvent } from "../core/events.ts";
 import { enqueue, jobId } from "../core/jobs.ts";
-import type { SealedBody } from "../crypto/envelope.ts";
 import { countEmail, indexEmail } from "../emails/search.ts";
 import { domainOf, normalizeAddress } from "../mime/address.ts";
 
@@ -14,7 +13,7 @@ export interface EmailPayload {
 
 export interface NewEmail extends EmailPayload {
   id: string;
-  body: SealedBody;
+  body: { epoch: number; size: number };
   recipients: string[];
   priority?: number;
   runAfter?: number;
@@ -122,9 +121,9 @@ export function enqueueEmail(
   }
   countEmail(db, id, "sent", sent, now);
   countEmail(db, id, "suppressed", suppressedCount, now);
-  db.query<unknown, [string, number, Uint8Array, Uint8Array]>(
-    "INSERT INTO bodies (message_id, epoch, wrapped, body) VALUES (?, ?, ?, ?)",
-  ).run(id, email.body.epoch, email.body.wrapped, email.body.body);
+  db.query<unknown, [string, number, number]>(
+    "INSERT INTO body_files (message_id, epoch, size) VALUES (?, ?, ?)",
+  ).run(id, email.body.epoch, email.body.size);
   return id;
 }
 
@@ -134,21 +133,18 @@ export function emailExists(db: Database, id: string): boolean {
   );
 }
 
-export function bodyOf(db: Database, messageId: string): SealedBody | null {
-  const r = db
-    .query<{ epoch: number; wrapped: Uint8Array; body: Uint8Array }, [string]>(
-      "SELECT epoch, wrapped, body FROM bodies WHERE message_id = ?",
+export function bodyOf(db: Database, messageId: string): { epoch: number; size: number } | null {
+  return db
+    .query<{ epoch: number; size: number }, [string]>(
+      "SELECT epoch, size FROM body_files WHERE message_id = ?",
     )
     .get(messageId);
-  return r
-    ? { epoch: r.epoch, wrapped: new Uint8Array(r.wrapped), body: new Uint8Array(r.body) }
-    : null;
 }
 
 export function shredBodies(db: Database, now: number, retentionMs: number): string[] {
   const ids = db
     .query<{ message_id: string }, [number]>(
-      `DELETE FROM bodies WHERE message_id IN (
+      `DELETE FROM body_files WHERE message_id IN (
          SELECT m.id FROM messages m
          WHERE m.created_at < ?
            AND NOT EXISTS (
@@ -237,7 +233,7 @@ export function cancelEmail(
     `UPDATE recipients SET status = 'failed', class = 'canceled', reply = 'canceled', updated_at = ?
      WHERE status = 'queued' AND job_id IN (SELECT id FROM jobs WHERE message_id = ?)`,
   ).run(now, id);
-  db.query<unknown, [string]>("DELETE FROM bodies WHERE message_id = ?").run(id);
+  db.query<unknown, [string]>("DELETE FROM body_files WHERE message_id = ?").run(id);
   appendEvent(db, { messageId: id, kind: "canceled", source: "api", at: now });
   return "ok";
 }

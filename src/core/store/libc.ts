@@ -6,10 +6,22 @@ export const EEXIST = 17;
 export const EINTR = 4;
 export const ENOENT = 2;
 
+const CREATE_NEW = MAC ? 0x1 | 0x200 | 0x800 | 0x1000000 : 0x1 | 0x40 | 0x80 | 0x80000;
+
+export class Errno extends Error {
+  constructor(
+    message: string,
+    readonly errno: number,
+  ) {
+    super(message);
+  }
+}
+
 export function openLibc() {
   const { symbols } = dlopen(MAC ? "/usr/lib/libSystem.B.dylib" : "libc.so.6", {
     creat: { args: [FFIType.cstring, FFIType.u32], returns: FFIType.i32 },
     open: { args: [FFIType.cstring, FFIType.i32], returns: FFIType.i32 },
+    fchmod: { args: [FFIType.i32, FFIType.u32], returns: FFIType.i32 },
     write: { args: [FFIType.i32, FFIType.ptr, FFIType.u64], returns: FFIType.i64_fast },
     fsync: { args: [FFIType.i32], returns: FFIType.i32 },
     fdatasync: { args: [FFIType.i32], returns: FFIType.i32 },
@@ -25,8 +37,10 @@ export function openLibc() {
     const p = errnoAt();
     return p === null ? -1 : read.i32(p, 0);
   };
-  const fail = (what: string, path: string) =>
-    new Error(`body store: ${what} ${path} failed (errno ${errno()})`);
+  const fail = (what: string, path: string) => {
+    const n = errno();
+    return new Errno(`body store: ${what} ${path} failed (errno ${n})`, n);
+  };
   const retry = (call: () => number) => {
     for (;;) {
       const r = call();
@@ -38,6 +52,17 @@ export function openLibc() {
     create(path: string, mode: number): number {
       const fd = retry(() => symbols.creat(c(path), mode));
       if (fd < 0) throw fail("create", path);
+      return fd;
+    },
+    createNew(path: string, mode: number): number {
+      const fd = retry(() => symbols.open(c(path), CREATE_NEW));
+      if (fd < 0) throw fail("create", path);
+      if (retry(() => symbols.fchmod(fd, mode)) !== 0) {
+        const err = fail("chmod", path);
+        symbols.close(fd);
+        symbols.unlink(c(path));
+        throw err;
+      }
       return fd;
     },
     openRead(path: string): number {

@@ -37,6 +37,7 @@ import jobWaitNodes from "./0036_job_wait_nodes.sql" with { type: "text" };
 import nodeKind from "./0037_node_kind.sql" with { type: "text" };
 import newRecipientsAuto from "./0038_new_recipients_auto.sql" with { type: "text" };
 import webhookPending from "./0039_webhook_pending.sql" with { type: "text" };
+import bodyFiles from "./0040_body_files.sql" with { type: "text" };
 
 export interface Migration {
   version: number;
@@ -84,4 +85,5 @@ export const migrations: readonly Migration[] = [
   { version: 37, name: "node kind", sql: nodeKind },
   { version: 38, name: "new recipients auto", sql: newRecipientsAuto },
   { version: 39, name: "webhook pending", sql: webhookPending },
+  { version: 40, name: "body files", sql: bodyFiles },
 ];

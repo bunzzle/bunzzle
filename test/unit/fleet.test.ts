@@ -22,6 +22,7 @@ import { collect } from "../../src/metrics/metrics.ts";
 import { DeliveryFleet } from "../../src/nodes/fleet.ts";
 import type { NodeLinks } from "../../src/nodes/links.ts";
 import { Shaper } from "../../src/shaping/shaper.ts";
+import { memoryBodies } from "../support/bodies.ts";
 
 const A = "203.0.113.1";
 const B = "203.0.113.2";
@@ -55,6 +56,7 @@ function harness(
     },
   };
   const handle = deliveryHandler({
+    bodies: memoryBodies(),
     db,
     log,
     transport,
@@ -74,7 +76,7 @@ function harness(
       DEFAULT_PROJECT,
       {
         id: `m${n++}`,
-        body: { epoch: 1, wrapped: new Uint8Array(1), body: new Uint8Array(1) },
+        body: { epoch: 1, size: 1 },
         from: "a@bunzzle.test",
         recipients: ["x@company.example"],
         smtpUtf8: false,

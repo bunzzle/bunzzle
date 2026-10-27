@@ -1,15 +1,23 @@
-import { type Libc, openLibc } from "./libc.ts";
+import { Errno, type Libc, openLibc } from "./libc.ts";
 
 declare const self: Worker;
 
 export type BodyJob =
   | { seq: number; op: "probe"; root: string }
-  | { seq: number; op: "write"; dirs: string[]; path: string; head: Uint8Array; body: Uint8Array }
+  | {
+      seq: number;
+      op: "write";
+      dirs: string[];
+      path: string;
+      head: Uint8Array;
+      body: Uint8Array;
+      replace: boolean;
+    }
   | { seq: number; op: "remove"; paths: string[] };
 
 export type BodyReply =
   | { seq: number; ok: true; value: number }
-  | { seq: number; ok: false; error: string };
+  | { seq: number; ok: false; error: string; errno: number | null };
 
 const FILE_MODE = 0o600;
 const DIR_MODE = 0o700;
@@ -23,6 +31,12 @@ let scheduled = false;
 
 const parentOf = (path: string) => path.slice(0, path.lastIndexOf("/"));
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
+const failed = (seq: number, err: unknown): BodyReply => ({
+  seq,
+  ok: false,
+  error: message(err),
+  errno: err instanceof Errno ? err.errno : null,
+});
 
 function c(): Libc {
   if (broken) throw new Error(broken);
@@ -52,8 +66,8 @@ function syncDir(l: Libc, dir: string): void {
   }
 }
 
-function writeFile(l: Libc, path: string, parts: Uint8Array[]): void {
-  const fd = l.create(path, FILE_MODE);
+function writeFile(l: Libc, path: string, parts: Uint8Array[], replace = true): void {
+  const fd = replace ? l.create(path, FILE_MODE) : l.createNew(path, FILE_MODE);
   try {
     for (const p of parts) l.writeAll(fd, p, path);
     l.syncData(fd, path);
@@ -97,31 +111,32 @@ function drain(): void {
         replies.push({ seq: job.seq, ok: true, value: n });
       } else {
         for (const d of job.dirs) ensureDir(l, d, dirty);
-        writeFile(l, job.path, [job.head, job.body]);
+        writeFile(l, job.path, [job.head, job.body], job.replace);
         dirty.add(parentOf(job.path));
         writes.push({ job, size: job.head.length + job.body.length });
       }
     } catch (err) {
-      replies.push({ seq: job.seq, ok: false, error: message(err) });
+      replies.push(failed(job.seq, err));
     }
   }
 
-  const failedDirs = new Map<string, string>();
+  const failedDirs = new Map<string, unknown>();
   for (const d of dirty) {
     try {
       syncDir(c(), d);
     } catch (err) {
-      failedDirs.set(d, message(err));
+      failedDirs.set(d, err);
       known.delete(d);
     }
   }
   for (const w of writes) {
-    const error = [...failedDirs].find(([d]) => w.job.path.startsWith(`${d}/`))?.[1];
-    replies.push(
-      error === undefined
-        ? { seq: w.job.seq, ok: true, value: w.size }
-        : { seq: w.job.seq, ok: false, error },
-    );
+    const hit = [...failedDirs].find(([d]) => w.job.path.startsWith(`${d}/`));
+    if (hit) {
+      try {
+        c().unlink(w.job.path);
+      } catch {}
+    }
+    replies.push(hit ? failed(w.job.seq, hit[1]) : { seq: w.job.seq, ok: true, value: w.size });
   }
   for (const r of replies) self.postMessage(r);
 }

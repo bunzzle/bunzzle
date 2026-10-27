@@ -10,7 +10,7 @@ const MESSAGE_CHILDREN = [
   "DELETE FROM recipients WHERE job_id IN (SELECT id FROM jobs WHERE message_id IN (SELECT value FROM json_each(?)))",
   "DELETE FROM jobs WHERE message_id IN (SELECT value FROM json_each(?))",
   "DELETE FROM events WHERE message_id IN (SELECT value FROM json_each(?))",
-  "DELETE FROM bodies WHERE message_id IN (SELECT value FROM json_each(?))",
+  "DELETE FROM body_files WHERE message_id IN (SELECT value FROM json_each(?))",
   "DELETE FROM email_tags WHERE message_id IN (SELECT value FROM json_each(?))",
   "DELETE FROM email_index WHERE message_id IN (SELECT value FROM json_each(?))",
   "DELETE FROM idempotency WHERE message_id IN (SELECT value FROM json_each(?))",

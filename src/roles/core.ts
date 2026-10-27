@@ -18,6 +18,8 @@ import { fail, type Outcome } from "../core/outcome.ts";
 import { defaultRetryPolicy, type RetryPolicy } from "../core/retry.ts";
 import { StorageWatch } from "../core/storage.ts";
 import { BodyStore } from "../core/store/bodies.ts";
+import { moveBodiesToFiles } from "../core/store/bodies-move.ts";
+import { emptyBodyTrash } from "../core/store/body-trash.ts";
 import { openDatabase } from "../core/store/db.ts";
 import { Writer } from "../core/store/writer.ts";
 import { type EpochPublicKey, epochOf } from "../crypto/envelope.ts";
@@ -116,6 +118,7 @@ export async function runCore(config: Config, log: Logger) {
   holdStats(db);
   const writer = new Writer(db);
   const bodies = await BodyStore.open(`${config.dataDir}/bodies`);
+  await moveBodiesToFiles(db, bodies, log, { minFreeMb: config.minFreeMb });
   const eventLog = config.eventLog ? new EventLog(config.eventLog) : null;
   if (eventLog && config.eventLog) {
     await privateDir(config.eventLog.dir, "750");
@@ -327,6 +330,7 @@ export async function runCore(config: Config, log: Logger) {
   const storage = new StorageWatch(config.dataDir, () => config.minFreeMb, log);
   await storage.check();
   const handleEmail = deliveryHandler({
+    bodies,
     db,
     log,
     transport,
@@ -472,6 +476,7 @@ export async function runCore(config: Config, log: Logger) {
   };
   let spanSink: ((s: Span) => void) | null = null;
   const api = coreMethods({
+    bodies,
     ...(config.otlp ? { span: (s: Span) => spanSink?.(s) } : {}),
     db,
     writer,
@@ -654,6 +659,15 @@ export async function runCore(config: Config, log: Logger) {
     if (ids.length > 0) log.info("shredded bodies past retention", { count: ids.length });
   };
   const stopShred = every(Math.max(1_000, scaled(HOUR)), shred);
+  const stopTrash = every(1_000, async () => {
+    try {
+      let removed = 0;
+      do removed = await emptyBodyTrash(db, writer, bodies);
+      while (removed > 0);
+    } catch (err) {
+      log.warn("email body files were not removed", { error: (err as Error).message });
+    }
+  });
   const stopPrune = every(Math.max(1_000, scaled(HOUR)), () =>
     writer.run((d) => {
       pruneIdempotency(d, Date.now());
@@ -846,6 +860,7 @@ export async function runCore(config: Config, log: Logger) {
     stopProbe();
     stopDelegation();
     stopShred();
+    stopTrash();
     stopPrune();
     stopPurge();
     stopSuspensions();

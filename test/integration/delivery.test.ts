@@ -17,6 +17,7 @@ import { createResolver } from "../../src/dns/resolver.ts";
 import { deliverRequestWire, requestFromWire, requestToWire } from "../../src/roles/wire.ts";
 import { Shaper } from "../../src/shaping/shaper.ts";
 import { Signer, SignerError } from "../../src/signer/signer.ts";
+import { memoryBodies } from "../support/bodies.ts";
 import { verifyDkim } from "../support/dkim-verify.ts";
 import { type FakeDns, startFakeDns } from "../support/fake-dns.ts";
 import { type FakeMx, type MxScenario, startFakeMx, TEST_CA } from "../support/fake-mx.ts";
@@ -83,16 +84,18 @@ async function setup(scenario: MxScenario = {}) {
     clock,
     limits: () => ({ connections: 10, ratePerSec: 1000, perConnection: 100 }),
   });
-  const handle = deliveryHandler({ db, log, clock, transport, shaper });
+  const bodies = memoryBodies();
+  const handle = deliveryHandler({ db, bodies, log, clock, transport, shaper });
   const send = async (recipients: string[], extra: { expiresAt?: number } = {}) => {
     const id = Bun.randomUUIDv7();
     const body = await sealBody(await signer.epochKey(), id, DATA);
+    const size = await bodies.write(id, body);
     return enqueueEmail(
       db,
       DEFAULT_PROJECT,
       {
         id,
-        body,
+        body: { epoch: body.epoch, size },
         from: "a@bunzzle.test",
         recipients,
         smtpUtf8: false,
@@ -122,7 +125,7 @@ async function setup(scenario: MxScenario = {}) {
   const job = (id: string) =>
     db.query<Record<string, unknown>, [string]>("SELECT * FROM jobs WHERE id = ?").get(id) ?? {};
   const kinds = (id: string) => eventsFor(db, id).map((e) => e.kind);
-  return { db, clock, signer, shaper, handle, send, step, settleAll, statuses, job, kinds };
+  return { db, bodies, clock, signer, shaper, handle, send, step, settleAll, statuses, job, kinds };
 }
 
 const sessions = () => mx?.sessions.length ?? 0;
@@ -345,7 +348,7 @@ describe("delivery: encryption at rest and crypto-shredding", () => {
       DEFAULT_PROJECT,
       {
         id,
-        body,
+        body: { epoch: body.epoch, size: body.body.length },
         from: "a@bunzzle.test",
         recipients: ["x@example.test"],
         smtpUtf8: false,
@@ -369,11 +372,7 @@ describe("delivery: encryption at rest and crypto-shredding", () => {
     const t = await setup();
     const id = await t.send(["x@example.test"]);
     await t.step(T0);
-    const backup = t.db
-      .query<{ epoch: number; wrapped: Uint8Array; body: Uint8Array }, [string]>(
-        "SELECT epoch, wrapped, body FROM bodies WHERE message_id = ?",
-      )
-      .get(id);
+    const backup = t.bodies.files.get(id);
     if (!backup) throw new Error("no body stored");
     const copied = {
       epoch: backup.epoch,
@@ -386,7 +385,10 @@ describe("delivery: encryption at rest and crypto-shredding", () => {
     expect(await t.signer.shred(30)).toEqual([copied.epoch]);
     expect(shredBodies(t.db, t.clock.now(), 30 * 24 * HOUR)).toEqual([id]);
     expect(t.kinds(id)).toContain("shredded");
-    expect(t.db.query("SELECT 1 FROM bodies WHERE message_id = ?").get(id)).toBeNull();
+    expect(t.db.query("SELECT 1 FROM body_files WHERE message_id = ?").get(id)).toBeNull();
+    expect(t.db.query("SELECT epoch FROM body_trash WHERE message_id = ?").get(id)).toEqual({
+      epoch: copied.epoch,
+    });
     const err = await t.signer.open(id, copied).catch((e: SignerError) => e);
     expect(err).toBeInstanceOf(SignerError);
     expect((err as SignerError).code).toBe("epoch-gone");
@@ -397,7 +399,7 @@ describe("delivery: encryption at rest and crypto-shredding", () => {
     const id = await t.send(["x@example.test"]);
     await t.step(T0);
     expect(shredBodies(t.db, T0 + 40 * 24 * HOUR, 30 * 24 * HOUR)).toEqual([]);
-    expect(t.db.query("SELECT 1 FROM bodies WHERE message_id = ?").get(id)).not.toBeNull();
+    expect(t.db.query("SELECT 1 FROM body_files WHERE message_id = ?").get(id)).not.toBeNull();
   });
 
   test("an email from a domain the signer has no key for is never sent unsigned", async () => {
@@ -408,12 +410,13 @@ describe("delivery: encryption at rest and crypto-shredding", () => {
       id,
       DATA.replace("a@bunzzle.test", "ceo@other.test"),
     );
+    const size = await t.bodies.write(id, body);
     enqueueEmail(
       t.db,
       DEFAULT_PROJECT,
       {
         id,
-        body,
+        body: { epoch: body.epoch, size },
         from: "ceo@other.test",
         recipients: ["x@example.test"],
         smtpUtf8: false,

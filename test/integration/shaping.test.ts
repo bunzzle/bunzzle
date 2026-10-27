@@ -22,6 +22,7 @@ import { Signer } from "../../src/signer/signer.ts";
 import type { Relay } from "../../src/smtp/deliver.ts";
 import { SessionPool } from "../../src/smtp/pool.ts";
 import { startSmtpServer } from "../../src/smtpd/server.ts";
+import { memoryBodies } from "../support/bodies.ts";
 import { type FakeDns, startFakeDns } from "../support/fake-dns.ts";
 import { type FakeMx, type MxScenario, startFakeMx, TEST_CA } from "../support/fake-mx.ts";
 
@@ -93,8 +94,10 @@ async function pipeline(scenario: MxScenario, limits: Limits, tuning = {}, route
     },
     (id, body, o) => signer.open(id, body, o),
   );
+  const bodies = memoryBodies();
   const handle = deliveryHandler({
     db,
+    bodies,
     log,
     transport,
     shaper,
@@ -121,11 +124,12 @@ async function pipeline(scenario: MxScenario, limits: Limits, tuning = {}, route
     tag: string,
     requireTls = false,
   ) => {
-    const emails: { id: string; body: Awaited<ReturnType<typeof sealBody>> }[] = [];
+    const emails: { id: string; body: { epoch: number; size: number } }[] = [];
     for (let i = 0; i < n; i++) {
       const id = Bun.randomUUIDv7();
       const data = `From: a@bunzzle.test\r\nTo: x@example.test\r\nSubject: ${tag}-${i}\r\n\r\nHi\r\n`;
-      emails.push({ id, body: await sealBody(key, id, data) });
+      const body = await sealBody(key, id, data);
+      emails.push({ id, body: { epoch: body.epoch, size: await bodies.write(id, body) } });
     }
     await writer.run((d) => {
       for (const e of emails) {
