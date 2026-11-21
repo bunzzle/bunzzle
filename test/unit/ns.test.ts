@@ -92,6 +92,15 @@ describe("ns answers", () => {
     );
   });
 
+  test("refuses a name whose label holds a dot even when its text ends in the zone", () => {
+    const q = query(`k3dz.mxdz.mail.test`, RRType.TXT);
+    q[12 + 5 + 2] = ".".charCodeAt(0);
+    const r = respond(q, APEX, zone, true);
+    const msg = decodeMessage(r?.bytes as Uint8Array);
+    expect(msg.rcode).toBe(Rcode.REFUSED);
+    expect(msg.authority).toEqual([]);
+  });
+
   test("never recurses: RD is echoed, RA stays clear", () => {
     const { flags } = ask("example.com", RRType.A);
     expect(flags & 0x0100).toBe(0x0100);

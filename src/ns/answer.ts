@@ -27,6 +27,7 @@ interface Query {
   flags: number;
   question: Uint8Array;
   name: string;
+  dotted: boolean;
   nameLength: number;
   type: number;
   qclass: number;
@@ -92,7 +93,17 @@ function parse(buf: Uint8Array): Parsed | null {
   if (p !== buf.length) return formerr;
   return {
     ok: true,
-    q: { id, flags, question, name: labels.join("."), nameLength, type, qclass, edns },
+    q: {
+      id,
+      flags,
+      question,
+      name: labels.join("."),
+      dotted: labels.some((l) => l.includes(".")),
+      nameLength,
+      type,
+      qclass,
+      edns,
+    },
   };
 }
 
@@ -182,7 +193,7 @@ export function respond(
   const fail = (rcode: number, aa = false) =>
     done(message(q, rcode, aa, null, 0, null), "error", rcode);
   if (q.edns && q.edns.version !== 0) return fail(BADVERS);
-  if (q.qclass !== CLASS_IN || !inZone(q.name, apex)) return fail(Rcode.REFUSED);
+  if (q.qclass !== CLASS_IN || q.dotted || !inZone(q.name, apex)) return fail(Rcode.REFUSED);
   if (q.type === AXFR || q.type === IXFR) return fail(Rcode.REFUSED);
   if (q.type === MAILA || q.type === MAILB) return fail(Rcode.NOTIMP, true);
   if (!zone) return fail(Rcode.SERVFAIL);
