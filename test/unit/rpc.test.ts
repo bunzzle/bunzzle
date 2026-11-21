@@ -54,6 +54,14 @@ describe("rpc over unix sockets", () => {
     expect((await failure(client.call("nope", {}))).code).toBe("invalid");
   });
 
+  test("names inherited from Object are unknown methods", async () => {
+    const { client } = await start();
+    for (const name of ["toString", "constructor", "__proto__", "hasOwnProperty"]) {
+      expect((await failure(client.call(name, {}))).code).toBe("invalid");
+    }
+    expect(await client.call("add", { a: 1, b: 1 })).toBe(2);
+  });
+
   test("validates results on the client", async () => {
     const { client } = await start();
     const r = await failure(
