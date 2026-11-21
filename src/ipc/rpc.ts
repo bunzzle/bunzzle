@@ -388,7 +388,7 @@ export async function serveRpc(
       });
       return;
     }
-    const m = methods[req.data.method];
+    const m = Object.hasOwn(methods, req.data.method) ? methods[req.data.method] : undefined;
     if (!m) {
       framer.send({ id, error: { code: "invalid", message: `unknown method ${req.data.method}` } });
       return;
