@@ -249,7 +249,8 @@ export class TestWorld {
     let current = name;
     let rcode: number = Rcode.NOERROR;
     for (let hops = 0; hops < 8; hops++) {
-      const zone = this.zoneOf(current, type === RRType.DS) as WorldZone;
+      const zone = (this.zoneOf(current, type === RRType.DS) ??
+        this.zoneOf(current, false)) as WorldZone;
       const direct = this.#lookup(zone, current, type);
       if (direct.length > 0) {
         answers.push(...direct);
